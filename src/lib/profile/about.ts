@@ -27,6 +27,8 @@ export const ABOUT_OPTIONS = {
   dealsWanted12m: ['1', '2-5', '6+'],
   blocker: ['finding', 'numbers', 'funding', 'consent', 'time'],
   risk: ['avoid', 'consider', 'go'],
+  /** Batch 30: "Where are you at?" */
+  stage: ['none', '1-2', '3-10', '10+'],
 } as const;
 
 export type AboutOption<K extends keyof typeof ABOUT_OPTIONS> = (typeof ABOUT_OPTIONS)[K][number];
@@ -47,6 +49,8 @@ export interface AboutYou {
   dealsWanted12m: AboutOption<'dealsWanted12m'> | null;
   blocker: AboutOption<'blocker'> | null;
   risk: AboutOption<'risk'> | null;
+  /** Batch 30: "Where are you at?" (replaced deals done + units now); null until answered. */
+  stage: AboutOption<'stage'> | null;
 }
 
 export const DEFAULT_ABOUT: AboutYou = {
@@ -62,6 +66,7 @@ export const DEFAULT_ABOUT: AboutYou = {
   dealsWanted12m: null,
   blocker: null,
   risk: null,
+  stage: null,
 };
 
 export function isRole(v: unknown): v is Role {
@@ -104,6 +109,7 @@ export function parseAboutYou(raw: unknown): AboutYou | null {
     dealsWanted12m: aboutOption('dealsWanted12m', o.dealsWanted12m),
     blocker: aboutOption('blocker', o.blocker),
     risk: aboutOption('risk', o.risk),
+    stage: aboutOption('stage', o.stage),
   };
 }
 
@@ -150,3 +156,43 @@ export function jobRole(about: AboutYou | null | undefined): 'sourcer' | 'manage
 export const TIME_TO_MANAGEMENT: Record<AboutOption<'time'>, Management> = { hands_on: 'self', part_time: 'self', hands_off: 'managed' };
 
 export const RISK_TO_APPETITE: Record<AboutOption<'risk'>, RiskAppetite> = { avoid: 'cautious', consider: 'balanced', go: 'tolerant' };
+
+/**
+ * Batch 30: what "Where are you at?" writes into the two older fields, so every
+ * reader of dealsDone / unitsNow keeps working (they only test "0" against
+ * anything else).
+ */
+export const STAGE_TO_ABOUT: Record<AboutOption<'stage'>, { dealsDone: AboutOption<'dealsDone'>; unitsNow: AboutOption<'unitsNow'> }> = {
+  none: { dealsDone: '0', unitsNow: '0' },
+  '1-2': { dealsDone: '1-3', unitsNow: '1-2' },
+  '3-10': { dealsDone: '4-10', unitsNow: '3-5' },
+  '10+': { dealsDone: '10+', unitsNow: '16+' },
+};
+
+/** Where a member is at: the stage if answered, else worked out from their units, else from their deals done. */
+export function stageOf(about: Pick<AboutYou, 'stage' | 'unitsNow' | 'dealsDone'> | null | undefined): AboutOption<'stage'> | null {
+  if (!about) return null;
+  if (about.stage) return about.stage;
+  switch (about.unitsNow) {
+    case '0':
+      return 'none';
+    case '1-2':
+      return '1-2';
+    case '3-5':
+      return '3-10';
+    case '6-15':
+    case '16+':
+      return '10+';
+  }
+  switch (about.dealsDone) {
+    case '0':
+      return 'none';
+    case '1-3':
+      return '1-2';
+    case '4-10':
+      return '3-10';
+    case '10+':
+      return '10+';
+  }
+  return null;
+}

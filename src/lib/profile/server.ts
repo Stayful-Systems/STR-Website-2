@@ -31,7 +31,7 @@ import { isAdminEmail } from '../admin';
 import { DEFAULT_GOALS, parseMarketGoals, type MarketGoals } from '../market/goals';
 import { areaCodeFrom } from '../market/lead-goals';
 import { parseAboutYou } from './about';
-import { applyAnswer, clearAnswer, emptyAnswers, questionById, questionsFor, SECTION_TOKENS, type Answers, type QuestionId, type WhereAnswer } from './questions';
+import { applyAnswer, clearAnswer, emptyAnswers, MARKS_WRITTEN, questionById, questionsFor, SECTION_TOKENS, type Answers, type QuestionId, type WhereAnswer } from './questions';
 import { EMPTY_QUIZ, parseQuizRow, progress, seedFromGoals, type AnsweredMap, type Progress, type QuizRecord } from './state';
 import { profileFilters, profileFiltersByType } from './matching';
 import { typesShown } from './deal-types';
@@ -272,7 +272,9 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   if (!s) return fail('Your profile cannot be saved right now. Please try again shortly.');
   const q = questionById(input.questionId);
   if (!q) return fail('Unknown question.');
-  if (!questionsFor(s.answers).some((x) => x.id === q.id)) return fail('That question is not part of your profile.');
+  // A retired question that is still editable (budget, max rent, rent-to-rent minimum, what's holding you back, the rate)
+  // saves from the profile page, chat, what-if and the Home card though it is no longer asked.
+  if (q.retired !== 'editable' && !questionsFor(s.answers).some((x) => x.id === q.id)) return fail('That question is not part of your profile.');
   if (input.notSure && q.mandatory) return fail('This one needs an answer.');
 
   let next: Answers;
@@ -321,7 +323,10 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   await syncSavedAreas(supabase, userId, s.answers.savedAreas, next.savedAreas);
 
   // ── The bookkeeping, as the service role ──
-  const answered: AnsweredMap = { ...s.quiz.answered, [q.id]: { at: nowIso, notSure: input.notSure } };
+  const mark = { at: nowIso, notSure: input.notSure };
+  const answered: AnsweredMap = { ...s.quiz.answered, [q.id]: mark };
+  // A question that replaced older ones also leaves their marks, so the readers of those marks work unchanged (Batch 30).
+  for (const old of MARKS_WRITTEN[q.id] ?? []) answered[old] = mark;
   const quiz: QuizRecord = { ...s.quiz, answered, startedAt: s.quiz.startedAt ?? nowIso, lastQuestion: q.id };
   const prog = progress(next, quiz);
   if (prog.complete && !quiz.completedAt) quiz.completedAt = nowIso;

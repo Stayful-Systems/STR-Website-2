@@ -21,7 +21,7 @@
  */
 import { DEFAULT_GOALS } from '../market/goals.ts';
 import { emptyAnswers } from '../profile/questions.ts';
-import { EMPTY_QUIZ, progress, type AnsweredMap } from '../profile/state.ts';
+import { EMPTY_QUIZ, isAnswered, progress, type AnsweredMap } from '../profile/state.ts';
 import { SHARED_QUESTION_IDS, type SavedProfile } from './rules.ts';
 
 export const RESET_ANSWERS = ['search', 'everything'] as const;
@@ -154,7 +154,7 @@ export function afterRestart<T>(entries: readonly T[], at: (e: T) => string | nu
  */
 export function awaitingAnswers(p: Pick<SavedProfile, 'goals' | 'areas' | 'answered'>): boolean {
   const prog = progress(emptyAnswers(p.goals ?? DEFAULT_GOALS, null, p.areas), { ...EMPTY_QUIZ, answered: p.answered });
-  return prog.mandatory.some((id) => !SHARED_QUESTION_IDS.includes(id) && !p.answered[id]);
+  return prog.mandatory.some((id) => !SHARED_QUESTION_IDS.includes(id) && !isAnswered(id, p.answered));
 }
 
 // ── Writes ──

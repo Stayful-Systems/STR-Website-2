@@ -33,6 +33,7 @@ import type { Benchmark } from './benchmark.ts';
 import { judgedOf, type BtlCard } from './card.ts';
 import { DEFAULT_BTL_SETTINGS, type BtlSettings } from './config.ts';
 import { inBudget, type CashBand } from './deal.ts';
+import { buyingCashTop } from '../profile/buying-power.ts';
 import { passesFor, type BtlPriority } from './rules.ts';
 
 /** What a member's buy-to-let deals are judged on when they have not said (decided: a bit of both). */
@@ -172,6 +173,8 @@ export async function chooseBtlDay(input: BtlChooseInput, reads: BtlReads): Prom
   const goals = input.goals;
   const priority = btlPriorityOf(goals);
   const band = goals?.btl?.cashBand ?? null;
+  // Batch 30: a real Buying cash answer is the exact ceiling (cash in at the middle of its range); without one, the stored band as before.
+  const exactTop = goals ? buyingCashTop(goals) : null;
   const filters = filtersForType(goals, input.savedAreas, 'btl');
   const own = filters.areas;
   const centreArea = centreAreaOf(goals, own);
@@ -196,7 +199,7 @@ export async function chooseBtlDay(input: BtlChooseInput, reads: BtlReads): Prom
       if (row.postcode_area && rules.badAreas.has(row.postcode_area.toUpperCase())) continue;
       const card = row.btl ?? null;
       if (!card || !card.floorsOk) continue;
-      if (band && !inBudget(card.cashIn.mid, band, s.bands)) continue;
+      if (exactTop !== null ? card.cashIn.mid > exactTop : band && !inBudget(card.cashIn.mid, band, s.bands)) continue;
       // The benchmark for their band (or the deal's own band when they have not said).
       const bm = await benchmarkFor(band ?? card.band);
       if (!passesFor(priority, judgedOf(card), bm).pass) continue;

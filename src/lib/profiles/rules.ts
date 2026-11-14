@@ -33,7 +33,7 @@ export const CLIENT_PERMISSION_LINE = 'Only add a client’s details with their 
  * the member's own, shared by every profile. Every other answer belongs to
  * the profile it was given in. Switching keeps these marks as they are.
  */
-export const SHARED_QUESTION_IDS: readonly QuestionId[] = ['roles', 'deals_done', 'units_now', 'unit_areas', 'time', 'next_deal', 'deals_wanted', 'blocker', 'risk'];
+export const SHARED_QUESTION_IDS: readonly QuestionId[] = ['roles', 'stage', 'deals_done', 'units_now', 'unit_areas', 'time', 'next_deal', 'deals_wanted', 'blocker', 'risk'];
 
 /** "Which deals should this profile show?" when a profile is made (Batch 17: the deal types, not a path). */
 export const TYPE_CHOICES: readonly { value: DealType; label: string; soon: boolean }[] = DEAL_TYPES.map((t) => ({ value: t, label: DEAL_TYPE_LONG_LABELS[t], soon: !isAvailableDealType(t) }));

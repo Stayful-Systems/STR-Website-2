@@ -120,7 +120,7 @@ test('version 2 round-trips every quiz field and drops values that are not allow
     path: 'r2r',
     where: 'near_plus_best',
     buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '60-100', funding: 'btl', entity: 'company', mainGoal: 'both', propertyType: 'house', condition: 'project', leaseholdOk: 'depends', restrictedAreas: 'warn' },
-    r2r: { setupBudget: '3-6k', dealStructure: 'company_let', breakEvenOccupancyPct: 60, paybackMonths: 12, furnished: 'furnished' },
+    r2r: { setupBudget: '10-15k', dealStructure: 'company_let', breakEvenOccupancyPct: 60, paybackMonths: 12, furnished: 'furnished' },
     sourcer: { sourceFor: 'both', sourcingFee: '2-4k', dealsPerMonth: '3-5' },
     manager: { unitsManaged: '11-30', operatingAreas: ['ng', 'M', 'ZZ', 'ng'], lookingFor: 'landlords', growthTarget: 10 },
   };
@@ -175,4 +175,24 @@ test('Batch 22c: the goal summary names every budget, the legacy Under £200k in
   assert.ok(describeGoals({ ...DEFAULT_GOALS, budget: 'u200' }).includes('Under £200k'));
   assert.equal(parseMarketGoals({ ...DEFAULT_GOALS, budget: 'u100' })?.budget, 'u100');
   assert.equal(parseMarketGoals({ ...DEFAULT_GOALS, budget: 'u200' })?.budget, 'u200', 'a stored legacy answer is kept');
+});
+
+test('Batch 30: every old setup band reads as a new band; an old goals object gets the new fields at their defaults', () => {
+  const read = (v: string) => parseMarketGoals({ ...DEFAULT_GOALS, r2r: { ...DEFAULT_GOALS.r2r, setupBudget: v } })!.r2r.setupBudget;
+  assert.equal(read('u3k'), 'u10k');
+  assert.equal(read('3-6k'), 'u10k');
+  assert.equal(read('6-10k'), 'u10k');
+  assert.equal(read('10k+'), '10-15k');
+  for (const v of ['u10k', '10-15k', '15-20k', '20k+']) assert.equal(read(v), v);
+  assert.equal(read('nonsense'), null);
+  const old = { version: 2, finance: { depositPct: 25, mortgageRatePct: 6, termYears: 25, targetYieldPct: 10, targetMarginPcm: 500 }, buyer: { cashAvailable: '30-60' } };
+  const g = parseMarketGoals(old)!;
+  assert.equal(g.finance.rateSet, false);
+  assert.equal(g.finance.rateAsOf, null);
+  assert.equal(g.buyer.cashFromBudget, false);
+  const set = parseMarketGoals({ ...old, finance: { ...old.finance, rateSet: true, rateAsOf: '2026-11-14' }, buyer: { cashAvailable: '30-60', cashFromBudget: true } })!;
+  assert.equal(set.finance.rateSet, true);
+  assert.equal(set.finance.rateAsOf, '2026-11-14');
+  assert.equal(set.buyer.cashFromBudget, true);
+  assert.equal(parseMarketGoals({ ...old, finance: { ...old.finance, rateAsOf: 'yesterday' } })!.finance.rateAsOf, null);
 });

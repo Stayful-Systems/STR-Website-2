@@ -192,6 +192,22 @@ test('a profile with no mandatory search answers is waiting; About you is not it
   assert.equal(awaitingAnswers(profile({ goals: answers.goals, answered: { deal_types: mark, where: mark } })), true, 'the money question for its type too');
 });
 
+test('Batch 30: a profile that answered the old money question, or the new one, is not waiting (the same rule as the gate)', () => {
+  const { answers } = answeredMember();
+  const w = (answered: AnsweredMap) => awaitingAnswers(profile({ goals: answers.goals, answered }));
+  assert.equal(w({ deal_types: mark, where: mark, budget: mark }), false, 'the old budget counts');
+  assert.equal(w({ deal_types: mark, where: mark, cash_available: mark }), false, 'Buying cash counts');
+  assert.equal(w({ deal_types: mark, where: mark, brrr_budget: mark }), false, 'the old project budget counts');
+  assert.equal(w({ deal_types: mark, where: mark }), true);
+  assert.equal(w({ where: mark, cash_available: mark }), true, 'what they are looking for is still theirs to answer');
+  // R2R: setup cash, or the old rent ceiling.
+  const r2r = emptyAnswers({ ...DEFAULT_GOALS, dealTypes: ['r2r'], sourcingKind: 'rent' }, null, []);
+  const wr = (answered: AnsweredMap) => awaitingAnswers(profile({ goals: r2r.goals, answered }));
+  assert.equal(wr({ deal_types: mark, where: mark, max_rent: mark }), false);
+  assert.equal(wr({ deal_types: mark, where: mark, setup_budget: mark }), false);
+  assert.equal(wr({ deal_types: mark, where: mark }), true);
+});
+
 test('seats: a waiting profile that is not active gets no daily deals and no charge; the active one is left to the member-level rule', () => {
   const seats = seatsFor('u', [
     profile({ id: 'act', isActive: true, awaitingAnswers: true, createdAt: '2026-01-01T00:00:00Z' }),

@@ -24,7 +24,7 @@ test('the four types in the question’s order, all of them available; nothing i
 test('the question offers Buy to let like the others, and a profile can save it', () => {
   const q = questionById('deal_types')!;
   const options = typeof q.options === 'function' ? q.options(emptyAnswers(DEFAULT_GOALS, null, [])) : q.options!;
-  assert.deepEqual(options.map((o) => o.value), ['buy_str', 'brrr', 'r2r', 'btl', ALL_DEAL_TYPES]);
+  assert.deepEqual(options.map((o) => o.value), ['buy_str', 'brrr', 'r2r', 'btl', ALL_DEAL_TYPES, 'source', 'manage', 'exploring'], 'Batch 30: the four types, All of them, then the three roles');
   assert.ok(options.every((o) => !o.soon));
   const only = applyAnswer('deal_types', ['btl'], emptyAnswers(DEFAULT_GOALS, null, []));
   assert.ok(only.ok);

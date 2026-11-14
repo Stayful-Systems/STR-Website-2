@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bandBelow, KEEP_MY_ANSWER, mayAsk, promptsFor, promptToShow, roundUpToFifty, type PassAnswer, type PromptState } from './behaviour.ts';
+import { bandBelow, cashBandBelow, KEEP_MY_ANSWER, mayAsk, promptsFor, promptToShow, roundUpToFifty, type PassAnswer, type PromptState } from './behaviour.ts';
 import { plainProfile, type Signal } from './profile.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 
@@ -158,4 +158,52 @@ test('Batch 17: Keeps of a deal type the profile does not show ask to add it; ac
   }
   // Every type already shown: nothing to ask.
   assert.equal(promptsFor(profile({ dealTypes: ['buy_str', 'brrr', 'r2r'] }, [...times(9, brrr), ...times(11, () => keep({ propertyKind: 'flat' }))])).some((x) => x.question === 'kind'), false);
+});
+
+// ── Batch 30: Buying cash and the stored-only max rent ──
+
+test('Batch 30: a member with Buying cash is asked about the cash, not the budget it worked out', () => {
+  const cashProfile = (cash: 'u30' | '30-60' | '60-100', signals: Signal[], over: Partial<MarketGoals['buyer']> = {}, modes = {}) =>
+    profile({ budget: 'u200', buyer: { ...DEFAULT_GOALS.buyer, funding: 'btl', cashAvailable: cash, ...over } }, signals, { answered: { cash_available: real }, modes });
+  const pad = (k: number) => times(k, () => keep({ propertyKind: 'flat', amount: 40_000 }));
+  // Kept deals that need more than £30k of cash.
+  const k = promptsFor(cashProfile('u30', [...times(9, () => keep({ amount: 190_000 })), ...pad(11)]));
+  const cash = k.find((x) => x.question === 'budget')!;
+  assert.equal(cash.text, 'I’ve noticed you’ve kept 9 deals that need more cash than your Buying cash. Want me to show those too?');
+  assert.equal(cash.accept, 'Make Buying cash a nice-to-have');
+  assert.deepEqual(cash.change, { kind: 'mode', criterion: 'cash', to: 'nice' });
+  // A member without a real Buying cash answer keeps the budget prompt.
+  const old = promptsFor(profile({ budget: '100-200' }, [...times(9, () => keep({ amount: 250_000 })), ...times(11, () => keep({ propertyKind: 'flat', amount: 150_000 }))]));
+  assert.equal(old.find((x) => x.question === 'budget')!.text, 'I’ve noticed you’ve kept 9 deals outside your budget. Want me to show deals outside it too?');
+  // A worked-out band is not an answer: the budget prompt stays.
+  const worked = promptsFor(cashProfile('u30', [...times(9, () => keep({ amount: 250_000 })), ...times(11, () => keep({ propertyKind: 'flat', amount: 150_000 }))], { cashFromBudget: true }));
+  assert.equal(worked.find((x) => x.question === 'budget')?.change.kind === 'mode' && (worked.find((x) => x.question === 'budget')!.change as { criterion: string }).criterion, 'budget');
+  // Already a nice-to-have: nothing to offer.
+  assert.ok(!promptsFor(cashProfile('u30', [...times(9, () => keep({ amount: 190_000 })), ...pad(11)], {}, { cash: 'nice' })).some((x) => x.question === 'budget'));
+});
+
+test('Batch 30: passing deals that need more cash offers the Buying cash band below, and never the budget band', () => {
+  const p = profile({ budget: 'u200', buyer: { ...DEFAULT_GOALS.buyer, funding: 'btl', cashAvailable: '60-100' } }, [...times(4, () => keep({ amount: 120_000 })), ...times(8, () => keep({ amount: 60_000, propertyKind: 'flat' }))], { answered: { cash_available: real } });
+  const prompts = promptsFor(p, times(9, () => pass({ amount: 190_000 })));
+  const band = prompts.find((x) => x.question === 'budget_band')!;
+  assert.match(band.text, /^I’ve noticed you pass on every deal needing over £60k cash\. Want me to change your Buying cash to £30–60k\?$/);
+  assert.equal(band.accept, 'Change my Buying cash');
+  assert.equal(band.change.kind === 'goals' && band.change.goals.buyer.cashAvailable, '30-60');
+  assert.equal(band.change.kind === 'goals' && band.change.goals.btl.cashBand, '25k_50k', 'the Buy to let band follows');
+  assert.equal(cashBandBelow('u30'), null);
+  assert.equal(cashBandBelow('200+'), '100-200');
+  // Without Buying cash: today's budget band prompt, as before.
+  const old = promptsFor(profile({ budget: '200-350' }, [...times(4, () => keep({ amount: 180_000 })), ...times(8, () => keep({ amount: 120_000, propertyKind: 'flat' }))]), [...times(8, () => pass({ amount: 300_000 })), pass({ amount: 260_000 })]);
+  assert.match(old.find((x) => x.question === 'budget_band')!.text, /change your budget to/);
+});
+
+test('Batch 30: the lower-rent prompt only fires for a member who has a maximum rent stored', () => {
+  const rent = (amount: number) => ({ kind: 'rent' as const, amount, dealType: 'r2r' as const });
+  const signals = times(12, () => keep(rent(1_120)));
+  const passes = times(8, () => pass(rent(1_600)));
+  const without = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', maxRentPcm: null }, signals);
+  assert.ok(!promptsFor(without, passes).some((x) => x.question === 'max_rent'), 'no ceiling: nothing to lower, and nothing is written back');
+  const stored = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', maxRentPcm: 2_000 }, signals);
+  assert.ok(promptsFor(stored, passes).some((x) => x.question === 'max_rent'));
+  for (const p of [without, stored]) assert.ok(!promptsFor(p, passes).some((x) => /break-even|payback/i.test(x.text)), 'never break-even or payback');
 });

@@ -83,7 +83,7 @@ export const TAILORING = {
   /** A cash-available band's top, the most the member can put in (null: no ceiling). */
   cashAvailableTop: { u30: 30_000, '30-60': 60_000, '60-100': 100_000, '100-200': 200_000, '200+': null },
   /** A setup budget band's top (null: no ceiling). */
-  setupBudgetTop: { u3k: 3_000, '3-6k': 6_000, '6-10k': 10_000, '10k+': null },
+  setupBudgetTop: { u10k: 10_000, '10-15k': 15_000, '15-20k': 20_000, '20k+': null },
   /** The room below the area's typical value that covers a sourcer's fee: the top of their band ("£4k or more" reads as £4k). */
   sourcingFeeRoom: { u2k: 2_000, '2-4k': 4_000, '4k+': 4_000 },
 } as const;

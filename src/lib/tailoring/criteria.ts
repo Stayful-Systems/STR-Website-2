@@ -51,6 +51,7 @@ import { getLicensing, type LicensingStatus } from '../data/str-licensing.ts';
 import { goalAreas } from '../onboarding/deal-filters.ts';
 import { placedForPreview } from '../profile/matching.ts';
 import type { QuestionId } from '../profile/questions.ts';
+import { buyingCashTop } from '../profile/buying-power.ts';
 import { profitRange, type ProfitRange } from '../marketplace/profit-range.ts';
 import { memberFinance } from '../marketplace/most-you-can-pay.ts';
 import type { DealCard } from '../marketplace/grid.ts';
@@ -83,7 +84,8 @@ export const CRITERIA: Record<CriterionKey, CriterionSpec> = {
   type: { label: 'Flat or house', kinds: ['sale'], defaultMode: 'nice', questions: ['property_type'] },
   leasehold: { label: 'No leasehold', kinds: ['sale'], defaultMode: 'nice', questions: ['leasehold'] },
   restricted: { label: 'No short-let restrictions', kinds: ['sale'], defaultMode: 'nice', questions: ['restricted_areas'] },
-  setup: { label: 'Setup budget', kinds: ['rent'], defaultMode: 'nice', questions: ['setup_budget'] },
+  // Batch 30: R2R setup cash is a must-have for new members; the backfill keeps it a nice-to-have for those who answered the old question.
+  setup: { label: 'Setup budget', kinds: ['rent'], defaultMode: 'must', questions: ['setup_budget'] },
   breakeven: { label: 'Break-even occupancy', kinds: ['rent'], defaultMode: 'nice', questions: ['break_even'] },
   payback: { label: 'Payback', kinds: ['rent'], defaultMode: 'nice', questions: ['payback'] },
   motivation: { label: 'Motivated sellers', kinds: ['sale', 'rent'], defaultMode: 'nice', questions: ['motivated_sellers'] },
@@ -114,6 +116,12 @@ export interface Wants {
   minProfit: number | null;
   /** Batch 17: the rent-to-rent minimum, its own answer now (it used to overwrite the buyer's): judges rentals. */
   minProfitR2r: number | null;
+  /**
+   * Batch 30: which end of a deal's profit range has to reach the minimum. "Play it safe"
+   * (the answer 'avoid') is the low end, as it always was; 'consider' and unanswered the
+   * middle; 'go' the top end. One place: only checksFor reads it.
+   */
+  profitEnd: ProfitEnd;
   bedrooms: 1 | 2 | 3 | 4 | null;
   propertyType: 'flat' | 'house' | null;
   noLeasehold: boolean;
@@ -136,6 +144,7 @@ export const NO_WANTS: Wants = {
   rentMax: null,
   minProfit: null,
   minProfitR2r: null,
+  profitEnd: 'low',
   bedrooms: null,
   propertyType: null,
   noLeasehold: false,
@@ -147,6 +156,25 @@ export const NO_WANTS: Wants = {
 };
 
 const set = (codes: string[]): ReadonlySet<string> | null => (codes.length > 0 ? new Set(codes) : null);
+
+/** Which end of the profit range a deal must reach (Batch 30). */
+export type ProfitEnd = 'low' | 'mid' | 'high';
+
+/** The end a member's answer picks: "Play it safe" the low end, "Consider it" or no answer the middle, "Go for it" the top end. */
+export function profitEndFor(about: Pick<TailoringProfile['about'], 'risk'> | null | undefined): ProfitEnd {
+  const risk = about?.risk ?? null;
+  return risk === 'avoid' ? 'low' : risk === 'go' ? 'high' : 'mid';
+}
+
+/** The figure of a profit range at this end, £ a month. */
+export function profitAt(range: Pick<ProfitRange, 'lowPcm' | 'midPcm' | 'highPcm'>, end: ProfitEnd): number {
+  return end === 'low' ? range.lowPcm : end === 'high' ? range.highPcm : range.midPcm;
+}
+
+/** "Low end used, as you asked" for the deal card and page (Batch 30); null for no profit check. */
+export function profitEndNote(end: ProfitEnd): string {
+  return end === 'low' ? 'Low end used, as you asked' : end === 'high' ? 'Top end used, as you asked' : 'Middle of the range used, as you asked';
+}
 
 export function wantsFor(p: TailoringProfile): Wants {
   const g = p.goals;
@@ -163,8 +191,10 @@ export function wantsFor(p: TailoringProfile): Wants {
     // inside (the untailored path keeps only the home's own area for it).
     areas = set(goalAreas(g.maxDistanceMiles ? placed : { ...placed, home: null }, p.savedAreas));
   }
-  const buyProfit = asked(p, 'min_profit') && realAnswer(p, 'min_profit');
-  const r2rProfit = asked(p, 'r2r_min_profit') && realAnswer(p, 'r2r_min_profit');
+  // Minimum profit is asked of everyone now (Batch 30), but its buyer figure still judges only profiles that buy a short-let or a project.
+  const buyProfit = asked(p, 'main_goal') && realAnswer(p, 'min_profit');
+  // The rent-to-rent figure: the one answer (min_profit, which also writes this one) or the older rent-to-rent answer.
+  const r2rProfit = asked(p, 'r2r_min_profit') && (realAnswer(p, 'r2r_min_profit') || realAnswer(p, 'min_profit'));
   const b = g.buyer;
   const r = g.r2r;
   return {
@@ -174,18 +204,21 @@ export function wantsFor(p: TailoringProfile): Wants {
     budget: g.budget ? budgetBounds(g.budget) : null,
     brrrBudget: g.brrr.budget ? budgetBounds(g.brrr.budget) : null,
     brrrWork: asked(p, 'brrr_work') && g.brrr.work === 'light' ? 'light' : null,
-    cashTop: asked(p, 'cash_available') && b.cashAvailable ? TAILORING.cashAvailableTop[b.cashAvailable] : null,
+    // A real Buying cash answer only: a band worked out from an older budget never filters (buyingCashTop, Batch 30).
+    cashTop: asked(p, 'cash_available') && realAnswer(p, 'cash_available') ? buyingCashTop(g) : null,
     rentMax: g.maxRentPcm,
     minProfit: buyProfit ? g.finance.targetMarginPcm : null,
     // Answered before the split, the one figure stood for both.
     minProfitR2r: r2rProfit ? (g.r2r.minMarginPcm ?? g.finance.targetMarginPcm) : null,
+    profitEnd: profitEndFor(p.about),
     bedrooms: g.bedrooms,
     propertyType: asked(p, 'property_type') && (b.propertyType === 'flat' || b.propertyType === 'house') ? b.propertyType : null,
     noLeasehold: asked(p, 'leasehold') && b.leaseholdOk === 'no',
     restricted: asked(p, 'restricted_areas') ? b.restrictedAreas : null,
     setupTop: asked(p, 'setup_budget') && r.setupBudget ? TAILORING.setupBudgetTop[r.setupBudget] : null,
-    breakEvenMax: asked(p, 'break_even') ? r.breakEvenOccupancyPct : null,
-    paybackMax: asked(p, 'payback') ? r.paybackMonths : null,
+    // Batch 30: no longer asked. The criteria and the stored answers stay so old modes still parse; neither ever hides a deal.
+    breakEvenMax: null,
+    paybackMax: null,
     motivation: g.motivation.mode === 'off' ? null : g.motivation.mode,
   };
 }
@@ -442,7 +475,7 @@ export function checksFor(f: DealFacts, fig: MemberFigures, w: Wants, mode: (key
     if (w.brrrWork === 'light' && typeOfFacts(f) === 'brrr') push('work', f.project ? (f.project.level === 'light' ? 'pass' : 'fail') : 'unknown');
   } else if (w.rentMax !== null) push('rent', atMost(f.amount, w.rentMax));
   const minProfit = minProfitFor(f, w);
-  if (minProfit !== null) push('profit', fig.range === null ? 'unknown' : fig.range.lowPcm >= minProfit ? 'pass' : 'fail');
+  if (minProfit !== null) push('profit', fig.range === null ? 'unknown' : profitAt(fig.range, w.profitEnd) >= minProfit ? 'pass' : 'fail');
   if (w.bedrooms !== null) push('bedrooms', f.bedrooms === null ? 'unknown' : (w.bedrooms === 4 ? f.bedrooms >= 4 : f.bedrooms === w.bedrooms) ? 'pass' : 'fail');
   if (f.kind === 'sale') {
     if (w.propertyType) push('type', f.propertyKind === 'unknown' ? 'unknown' : f.propertyKind === w.propertyType ? 'pass' : 'fail');
