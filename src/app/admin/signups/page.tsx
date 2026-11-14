@@ -216,6 +216,33 @@ function MetaStatus({ meta }: { meta: MetaStatusLoad }) {
         </div>
       </dl>
 
+      {meta.counts && (
+        <>
+          <h3 className="mt-6 text-sm font-semibold text-foreground">The last 30 days, by event (live site)</h3>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full min-w-[480px] text-sm">
+              <thead className="text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="py-1 pr-3">Event</th>
+                  <th className="pr-3">Recorded</th>
+                  <th>Sent by the server</th>
+                </tr>
+              </thead>
+              <tbody>
+                {meta.counts.map((c) => (
+                  <tr key={c.event} className="border-t border-border/60">
+                    <td className="py-1 pr-3">{c.event}</td>
+                    <td className="pr-3 tabular-nums">{c.recorded}</td>
+                    <td className="tabular-nums">{c.sent}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">Purchase is the starter pack only (once per member); RepeatPurchase is a pack buyer&apos;s first payment after it. A conversion without cookie consent is recorded but not sent.</p>
+        </>
+      )}
+
       <h3 className="mt-6 text-sm font-semibold text-foreground">The last 20 conversions</h3>
       {meta.status === "schema_missing" ? (
         <p className="mt-2 text-sm text-muted-foreground">The Batch 19 section of supabase/schema.sql has not been run yet.</p>

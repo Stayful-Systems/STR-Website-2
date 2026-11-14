@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
 import { handleStripeEvent, reasonFromStripeFeedback, type WebhookActivity, type WebhookDeps } from './webhook.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
-import { dedupeKeyFor, purchaseFromTopup, subscribeFromInvoice } from '../meta/events.ts';
+import { dedupeKeyFor, purchaseFromPack, repeatPurchaseDue, repeatValue, subscribeFromInvoice } from '../meta/events.ts';
 
 const env = { STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_PRO_ANNUAL: 'price_annual' };
 
@@ -535,20 +535,34 @@ test('an activity log that throws does not fail the delivery', async () => {
   assert.equal(deps.calls.grantTopup!.length, 1);
 });
 
-// ── Batch 19: Meta's Subscribe and Purchase ──
-// The fake records with the same once-only key and rules as src/lib/meta/conversions.ts.
+// ── Batch 19: Meta's Subscribe; Batch 29: Purchase (the pack) and RepeatPurchase ──
+// The fake records with the same once-only key and rules as src/lib/meta/conversions.ts. `packAt`: when
+// each member's pack was granted (none: they joined before the pack). A RepeatPurchase is due only for the
+// first further payment the fake has seen since the pack (the server reads member_payments for that).
 const TRACKING_SINCE = '2026-09-01T00:00:00.000Z';
 
-function withConversions(deps: ReturnType<typeof fakeDeps>) {
+function withConversions(deps: ReturnType<typeof fakeDeps>, packAt: Record<string, string> = {}) {
   const recorded: Array<{ key: string; name: string; eventId: string | null; valuePence: number }> = [];
+  const payments = new Map<string, Set<string>>();
   deps.recordConversion = async (c) => {
-    const key = dedupeKeyFor(c.name, { userId: c.userId, paymentIntentId: c.name === 'Purchase' ? c.paymentIntentId : null });
+    const key = dedupeKeyFor(c.name, { userId: c.userId });
     if (!key || recorded.some((r) => r.key === key)) return;
-    const v = c.name === 'Subscribe' ? subscribeFromInvoice(c.invoice, TRACKING_SINCE) : purchaseFromTopup(c.topup);
+    let v: { valuePence: number } | null = null;
+    if (c.name === 'Subscribe') v = subscribeFromInvoice(c.invoice, TRACKING_SINCE);
+    else if (c.name === 'Purchase') v = purchaseFromPack(c.pack);
+    else {
+      const seen = payments.get(c.userId) ?? new Set<string>();
+      const earlier = [...seen].some((id) => id !== c.repeat.paymentId);
+      seen.add(c.repeat.paymentId);
+      payments.set(c.userId, seen);
+      v = repeatPurchaseDue({ packAt: packAt[c.userId] ?? null, trackingSince: TRACKING_SINCE, earlierFurtherPayment: earlier }) ? repeatValue(c.repeat) : null;
+    }
     if (v) recorded.push({ key, name: c.name, eventId: c.eventId, valuePence: v.valuePence });
   };
   return recorded;
 }
+
+const PACKED = { u1: '2026-10-01T09:00:00.000Z' };
 
 const subStarted = (iso: string) =>
   ({ id: 'sub_1', status: 'active', start_date: Date.parse(iso) / 1000, cancel_at_period_end: false, customer: 'cus_1', items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] } }) as unknown as Stripe.Subscription;
@@ -564,24 +578,73 @@ const paidInvoice = (id: string, reason: string, paid: number, exVat: number) =>
   lines: { data: [{ period: { end: 1_800_000_000 }, pricing: { price_details: { price: 'price_starter' } } }] },
 });
 
-test('Batch 19: a Checkout top-up and its payment_intent.succeeded, each delivered twice, are one Purchase at the credit bought', async () => {
+test('Batch 29: a pack buyer’s first top-up (Checkout and payment_intent.succeeded, each delivered twice) is one RepeatPurchase at the credit bought, and never a Purchase', async () => {
   const deps = fakeDeps();
-  const recorded = withConversions(deps);
+  const recorded = withConversions(deps, PACKED);
   const session = { id: 'cs_1', mode: 'payment', client_reference_id: 'u1', customer: 'cus_1', payment_intent: 'pi_7', amount_total: 3000, customer_details: { email: 'a@example.com' } };
   const pi = { id: 'pi_7', customer: 'cus_1', payment_method: 'pm_1', amount: 3000, amount_received: 3000, currency: 'gbp', metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } };
   for (let i = 0; i < 2; i += 1) {
     await handleStripeEvent(ev('checkout.session.completed', session), deps);
     await handleStripeEvent(ev('payment_intent.succeeded', pi), deps);
   }
-  assert.deepEqual(recorded, [{ key: 'Purchase:pi_7', name: 'Purchase', eventId: 'pi_7', valuePence: 2500 }]);
+  assert.deepEqual(recorded, [{ key: 'RepeatPurchase:u1', name: 'RepeatPurchase', eventId: 'pi_7', valuePence: 2500 }]);
 });
 
-test('Batch 19: an automatic top-up is never a Purchase', async () => {
+const topupPi = (id: string, pence: number, auto?: '1') => ({ id, customer: 'cus_1', amount: pence, amount_received: pence, currency: 'gbp', metadata: { kind: 'topup', user_id: 'u1', amount_pence: String(pence), ...(auto ? { auto } : {}) } });
+
+test('Batch 29: a top-up by a member who joined before the pack sends nothing (Zac, question 10)', async () => {
   const deps = fakeDeps();
   const recorded = withConversions(deps);
-  await handleStripeEvent(ev('payment_intent.succeeded', { id: 'pi_auto', customer: 'cus_1', amount: 1000, amount_received: 1000, currency: 'gbp', metadata: { kind: 'topup', user_id: 'u1', amount_pence: '1000', auto: '1' } }), deps);
+  await handleStripeEvent(ev('payment_intent.succeeded', topupPi('pi_old', 1000)), deps);
   assert.deepEqual(recorded, []);
   assert.equal(deps.calls.grantTopup?.length, 1, 'the credit is still granted');
+});
+
+test('Batch 29: a pack buyer’s automatic first top-up is their RepeatPurchase; the next payment sends nothing new', async () => {
+  const deps = fakeDeps();
+  const recorded = withConversions(deps, PACKED);
+  await handleStripeEvent(ev('payment_intent.succeeded', topupPi('pi_auto', 1000, '1')), deps);
+  await handleStripeEvent(ev('payment_intent.succeeded', topupPi('pi_next', 2000)), deps);
+  assert.deepEqual(recorded, [{ key: 'RepeatPurchase:u1', name: 'RepeatPurchase', eventId: 'pi_auto', valuePence: 1000 }]);
+});
+
+test('Batch 29: a second top-up is never a RepeatPurchase, even when the first was not recorded', async () => {
+  const deps = fakeDeps();
+  const recorded = withConversions(deps, PACKED);
+  // The first further payment (say its Meta record failed) still makes the next one a "later payment".
+  const first = deps.recordConversion!;
+  deps.recordConversion = async (c) => {
+    if (c.name === 'RepeatPurchase' && c.eventId === 'pi_first') {
+      await first({ ...c, repeat: { ...c.repeat, topup: { ...c.repeat.topup!, currency: 'usd' } } });
+      return;
+    }
+    await first(c);
+  };
+  await handleStripeEvent(ev('payment_intent.succeeded', topupPi('pi_first', 1000)), deps);
+  await handleStripeEvent(ev('payment_intent.succeeded', topupPi('pi_second', 1000)), deps);
+  assert.deepEqual(recorded, []);
+});
+
+test('Batch 29: a pack buyer whose first payment after the pack is a plan invoice sends Subscribe and RepeatPurchase (question 10)', async () => {
+  const deps = fakeDeps();
+  const recorded = withConversions(deps, PACKED);
+  deps.setSub(subStarted('2026-10-10T09:00:00Z'));
+  await handleStripeEvent(ev('invoice.paid', paidInvoice('in_first', 'subscription_create', 1200, 1000)), deps);
+  await handleStripeEvent(ev('invoice.paid', paidInvoice('in_first', 'subscription_create', 1200, 1000)), deps);
+  await handleStripeEvent(ev('invoice.paid', paidInvoice('in_second', 'subscription_cycle', 1200, 1000)), deps);
+  assert.deepEqual(recorded, [
+    { key: 'Subscribe:u1', name: 'Subscribe', eventId: 'in_first', valuePence: 1000 },
+    { key: 'RepeatPurchase:u1', name: 'RepeatPurchase', eventId: 'in_first', valuePence: 1000 },
+  ]);
+});
+
+test('Batch 29: a plan taken after a top-up sends Subscribe only (the top-up was the RepeatPurchase)', async () => {
+  const deps = fakeDeps();
+  const recorded = withConversions(deps, PACKED);
+  await handleStripeEvent(ev('payment_intent.succeeded', topupPi('pi_t', 1000)), deps);
+  deps.setSub(subStarted('2026-10-10T09:00:00Z'));
+  await handleStripeEvent(ev('invoice.paid', paidInvoice('in_1', 'subscription_create', 1200, 1000)), deps);
+  assert.deepEqual(recorded.map((r) => [r.name, r.eventId]), [['RepeatPurchase', 'pi_t'], ['Subscribe', 'in_1']]);
 });
 
 test('Batch 19: a 100%-off first invoice is not a Subscribe; the first paid one is, excluding VAT, once', async () => {
@@ -749,7 +812,8 @@ test('Batch 20: a captured pack is granted, logged, measured and booked once, ho
   for (let i = 0; i < 3; i += 1) await handleStripeEvent(ev('payment_intent.succeeded', packPi()), deps);
   assert.deepEqual(granted, ['pi_pack', 'pi_pack', 'pi_pack']);
   assert.deepEqual(deps.activity.map((a) => [a.kind, a.dedupeKey]), [['starter_pack', 'starter_pack:pi:pi_pack']]);
-  assert.deepEqual(recorded, [{ key: 'Purchase:pi_pack', name: 'Purchase', eventId: 'pi_pack', valuePence: 1000 }]);
+  // Batch 29: the pack is the Purchase, once per member, at its price excluding VAT.
+  assert.deepEqual(recorded, [{ key: 'Purchase:u1', name: 'Purchase', eventId: 'pi_pack', valuePence: 1000 }]);
   assert.deepEqual([...payments.entries()].map(([k, v]) => [k, v.kind, v.amountPence]), [['pi:pi_pack', 'starter_pack', 1000]]);
   assert.equal(deps.calls.grantTopup, undefined);
 });
@@ -757,9 +821,12 @@ test('Batch 20: a captured pack is granted, logged, measured and booked once, ho
 test('Batch 20: a repeat that was charged anyway becomes a top-up and is logged as one', async () => {
   const deps = fakeDeps();
   withPack(deps, ['blocked']);
+  // Batch 29: and it sends Meta nothing: neither the pack's Purchase nor a RepeatPurchase.
+  const recorded = withConversions(deps, PACKED);
   const r = await handleStripeEvent(ev('payment_intent.succeeded', packPi()), deps);
   assert.equal(r.note, 'starter pack blocked');
   assert.deepEqual(deps.activity.map((a) => a.kind), ['topup']);
+  assert.deepEqual(recorded, []);
 });
 
 test('Batch 20: a pack payment the grant will not take (not captured) is not handled', async () => {

@@ -45,7 +45,9 @@ import { payerFor } from '../team';
 import { getBillingSettings } from '../credit/unit-costs';
 import { openCreditBase } from '../credit/deal-pricing';
 import { quoterFor } from '../credit/quote-server';
-import { debit, getBalance, release, reserve, InsufficientCreditError } from '../credit/ledger';
+import { debit, release, reserve, spendableFor, InsufficientCreditError } from '../credit/ledger';
+import { claimFreshReport, packStateForPayer, releaseFreshReport } from '../credit/pack-server';
+import { NOT_PACK, PACK_COPY, SAVED_ANALYSIS_ACTION, analysisHoldAction, deepNeedsTopUp, type PackState } from '../credit/pack-rules';
 import { isEnforcing } from '../credit/http';
 import { afterDebit } from '../credit/after-debit';
 import { startAction, SeatPausedError } from '../credit/action';
@@ -66,6 +68,7 @@ import { enhancedEnabled, fetchSecondOpinion, runAnalysis, type PreparedAnalysis
 import { noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
 import { dealAnalysisInput, dealListingPrice } from './deal-input';
 import { analysisComplete, rebuildForMember, reusable, sharedInputs, toShared, type SharedAnalysis } from './reuse';
+import { savedAnalysisExists } from './saved-server';
 import { logActivity, recordActivity } from '../activity/log';
 import { activeProfileIdOf } from '../profiles/server';
 import { reminderEvent } from './take-up';
@@ -179,6 +182,8 @@ async function failPurchase(admin: Admin, row: Pick<PurchaseRow, 'id' | 'reserva
     if (opts.unclaimed) return false;
   }
   await release(row.reservation_id);
+  // Batch 29: a purchase that ends with nothing charged gives its fresh-report slot back.
+  await releaseFreshReport(row.id);
   return true;
 }
 
@@ -238,6 +243,7 @@ async function settleIfAbandoned(admin: Admin, row: PurchaseRow, now: Date): Pro
   }
   if ((settled ?? []).length === 0) return 'running';
   await release(row.reservation_id);
+  if (!reportId) await releaseFreshReport(row.id);
   if (reportId) console.warn(`[deal-analysis] purchase ${row.id} settled as complete after its run stopped`);
   return { reportId };
 }
@@ -301,6 +307,9 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   }
   const withPmi = Boolean(input.withPmi);
   if (withPmi && !enhancedEnabled(true)) return fail('pmi_unavailable');
+  // Batch 29 (section G): a pack-only member's second opinion needs credit beyond the pack.
+  const pack: PackState = input.adminUser ? NOT_PACK : await packStateForPayer(accountId);
+  if (withPmi && deepNeedsTopUp(pack)) return fail('pack_topup_needed');
   const { listing, snapshot } = await dealListingFor(admin, deal);
   if (!snapshot) return fail('invalid');
   const inputs = dealAnalysisInput(
@@ -320,15 +329,27 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   const ladderPence = openPricePence(await openBasisOf(admin, deal), settings.dealOpenLadder);
   const quote = analysisQuote({ admin: input.adminUser, pricing, opened: isOpen, openPaidBasePence: isOpen ? openCreditBase(open) : 0, openPricePence: ladderPence, withPmi });
   if (!quoteMatches(input.quotedBasePence, quote.due)) return fail('price_changed', { quote });
+  // Batch 29: a saved analysis of this deal on these inputs is held as one (the
+  // starter pack's bonus may pay for it, and it never counts toward the cap);
+  // anything else is a fresh one. The run checks again.
+  const saved = await savedAnalysisExists(admin, deal.id, inputs.key, settings.dealPricing.analysisReuseDays, now);
+  const holdAction = analysisHoldAction(saved, withPmi);
   if (!input.adminUser && quote.due.purchaseBasePence > 0 && mustAfford) {
-    const bal = await getBalance(accountId).catch(() => null);
-    const available = bal?.spendableBasePence ?? 0;
-    if (available < quote.due.purchaseBasePence) return fail('insufficient_credit', { requiredPence: quote.due.purchaseBasePence, availablePence: Math.max(0, Math.round(available)) });
+    // Everything the purchase takes (the open included), and the analysis itself from what IT may spend.
+    const [all, forHold] = await Promise.all([
+      spendableFor(accountId, 'deal_open').catch(() => 0),
+      holdAction === SAVED_ANALYSIS_ACTION ? Promise.resolve<number | null>(null) : spendableFor(accountId, holdAction).catch(() => 0),
+    ]);
+    const holdShort = forHold !== null && forHold < quote.due.totalBasePence;
+    if (all < quote.due.purchaseBasePence || holdShort) {
+      const bonusOnly = pack.packOnly && all >= quote.due.purchaseBasePence;
+      return fail('insufficient_credit', { requiredPence: quote.due.purchaseBasePence, availablePence: Math.max(0, Math.round(holdShort ? Math.min(all, forHold ?? all) : all)), ...(bonusOnly ? { message: PACK_COPY.bonusOnly } : {}) });
+    }
   }
   // And what they pay from their own credit, as the button showed it: a
   // daily charge or a top-up since the page loaded can move it.
   if (!input.adminUser && quote.due.purchaseBasePence > 0) {
-    const walk = (await quoterFor(accountId, false)).quote(quote.due.purchaseBasePence);
+    const walk = (await quoterFor(accountId, false)).quoteDue(quote.due, { saved });
     if (walk.shortfallBasePence <= 0 && !faceMatches(input.quotedFacePence, walk.facePence)) return fail('price_changed', { quote });
   }
 
@@ -368,6 +389,15 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   }
   const purchaseId = String(claimed.id);
 
+  // ── Batch 29: a pack-only member's fresh-report slot, before anything is charged ──
+  if (!input.adminUser && !saved) {
+    const slot = await claimFreshReport({ payerId: accountId, actionId: purchaseId, kind: 'full_analysis', state: pack });
+    if (!slot.ok) {
+      await failPurchase(admin, { id: purchaseId, reservation_id: null }, slot.reason);
+      return slot.reason === 'pack_cap' ? fail('pack_cap', { message: PACK_COPY.capReached(slot.cap ?? pack.freshCap) }) : fail('failed');
+    }
+  }
+
   // ── Open it first, when it is not open to the account yet ──
   let openCredit = quote.openPaidBasePence;
   let openedNow = false;
@@ -398,11 +428,11 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   let reservationId: string | null = null;
   if (!input.adminUser && due.totalBasePence > 0) {
     try {
-      reservationId = await reserve(accountId, 'full_analysis', purchaseId, due.totalBasePence, ANALYSIS_RESERVATION_MINUTES);
+      reservationId = await reserve(accountId, holdAction, purchaseId, due.totalBasePence, ANALYSIS_RESERVATION_MINUTES);
     } catch (err) {
       if (err instanceof InsufficientCreditError && mustAfford) {
         await failPurchase(admin, { id: purchaseId, reservation_id: null }, 'insufficient_credit');
-        return fail('insufficient_credit', { requiredPence: due.totalBasePence, availablePence: Math.max(0, Math.round(err.availablePence)), openedByPurchase: openedNow });
+        return fail('insufficient_credit', { requiredPence: due.totalBasePence, availablePence: Math.max(0, Math.round(err.availablePence)), openedByPurchase: openedNow, ...(pack.packOnly ? { message: PACK_COPY.bonusOnly } : {}) });
       }
       // Shadow mode (or a hold that failed to write): the run goes ahead unheld, as every metered action does.
       console.warn('[deal-analysis] reservation not held:', (err as Error)?.message ?? err);
@@ -473,6 +503,13 @@ interface SavedAnalysis {
   shared: SharedAnalysis;
 }
 
+/** The action a purchase's hold was taken under (Batch 29: 'full_analysis_saved' or 'full_analysis'). */
+async function reservationActionOf(admin: Admin, reservationId: string | null): Promise<string | null> {
+  if (!reservationId) return null;
+  const { data } = await admin.from('credit_reservations').select('action').eq('id', reservationId).maybeSingle();
+  return ((data as { action?: string } | null)?.action as string | undefined) ?? null;
+}
+
 async function latestSaved(admin: Admin, dealId: string, inputKey: string, reuseDays: number, now: Date): Promise<SavedAnalysis | null> {
   const since = new Date(now.getTime() - reuseDays * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await admin.from('deal_analyses').select('id, result, analysed_at').eq('deal_id', dealId).eq('input_key', inputKey).gt('analysed_at', since).order('analysed_at', { ascending: false }).limit(1);
@@ -498,7 +535,8 @@ async function rawCostOf(admin: Admin, actionId: string): Promise<{ total: numbe
   return { total, pmi };
 }
 
-export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: boolean; onProgress?: (e: { stage: string; progress: number; message: string }) => void }): Promise<RunResult> {
+export async function runDealAnalysis(row: PurchaseRow, opts: { adminUser: boolean; onProgress?: (e: { stage: string; progress: number; message: string }) => void }): Promise<RunResult> {
+  let purchase = row;
   const admin = createAdminClient();
   const progress = (stage: string, pct: number, message: string) => opts.onProgress?.({ stage, progress: pct, message });
   const failed = async (code: AnalysisErrorCode, reason: string): Promise<AnalysisFailure> => {
@@ -525,6 +563,27 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
     let analysedAt = nowIso;
     let rawCost = { total: 0, pmi: 0 };
     const saved = await latestSaved(admin, purchase.deal_id, purchase.input_key, pricing.analysisReuseDays, now);
+    if (!saved && !opts.adminUser) {
+      // Batch 29: held as a saved analysis at the start, but the saved copy has
+      // gone since: a fresh one now. It takes a fresh-report slot and is held
+      // again as fresh (the pack's bonus may not pay for it), or fails with
+      // nothing charged.
+      const holdNow = await reservationActionOf(admin, purchase.reservation_id);
+      if (holdNow === SAVED_ANALYSIS_ACTION) {
+        const slot = await claimFreshReport({ payerId: purchase.user_id, actionId: purchase.id, kind: 'full_analysis' });
+        if (!slot.ok) return failed(slot.reason === 'pack_cap' ? 'pack_cap' : 'failed', 'saved analysis gone; fresh-report cap');
+        try {
+          // The saved hold goes first, so the fresh one is not refused for credit the old hold still counts.
+          await release(purchase.reservation_id);
+          const fresh = await reserve(purchase.user_id, 'full_analysis', purchase.id, purchase.analysis_base_pence + purchase.pmi_base_pence, ANALYSIS_RESERVATION_MINUTES);
+          purchase = { ...purchase, reservation_id: fresh };
+          await admin.from('analysis_purchases').update({ reservation_id: fresh }).eq('id', purchase.id);
+        } catch (err) {
+          if (err instanceof InsufficientCreditError) return failed('insufficient_credit', 'saved analysis gone; not enough paid credit for a fresh one');
+          throw err;
+        }
+      }
+    }
     if (saved) {
       reused = true;
       analysisId = saved.id;
@@ -647,6 +706,8 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
     const pmiDelivered = pmiWanted && Boolean(result.secondOpinion);
     if (pmiDelivered) await charge(purchase.pmi_base_pence, { action: 'pmi_addon', provider: 'pmi', unit: 'pmi_addon', raw_cost_pence: rawCost.pmi, description: 'Second opinion from PMI' });
     await release(purchase.reservation_id);
+    // Batch 29: a saved analysis never counts toward a pack-only member's fresh reports.
+    if (reused) await releaseFreshReport(purchase.id);
     if (txIds.length > 0) void afterDebit(purchase.user_id).catch(() => {});
 
     const [{ error: doneErr }] = await Promise.all([

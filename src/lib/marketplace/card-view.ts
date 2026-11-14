@@ -123,6 +123,12 @@ export interface CardView {
   /** Batch 22: "welcome price" / "first-time price" when the Full analysis is offer-priced. */
   offerNote?: string | null;
   /**
+   * Batch 29: a saved analysis of the deal is young enough to reuse, so its Full
+   * analysis opens instantly ("Report ready, opens instantly"). Says nothing else
+   * about the deal; never set once analysed.
+   */
+  reportReady?: boolean;
+  /**
    * Batch 28: the deal shown as a buy-to-let deal (btl/view.ts): the badge,
    * its three numbers (also in `numbers`), its flags and its cash in. Every
    * short-let figure above is then null; absent for any other deal.
@@ -143,7 +149,11 @@ export function cardView(input: {
   cashBuyer?: boolean;
   /** billing_settings.low_entry cheapMaxPrice and lenderMinPrice (getBillingSettings().lowEntry); the decided defaults without them. */
   lowEntry?: Partial<Pick<LowEntrySettings, 'cheapMaxPrice' | 'lenderMinPrice'>>;
-  label: (basePence: number) => PriceLabel;
+  label: (basePence: number, action?: string | null) => PriceLabel;
+  /** Batch 29: the Full analysis's price walked step by step (the open, then a saved or fresh analysis). */
+  labelDue?: (due: { openBasePence: number; analysisBasePence: number; pmiBasePence: number }, opts?: { saved?: boolean }) => PriceLabel;
+  /** Batch 29: a saved analysis of this deal exists (the badge). */
+  reportReady?: boolean;
   /** Batch 25: Stayful Intelligence saved this deal for the member's account, so its Quick look is free (only this deal; the ladder is untouched). */
   freeOpen?: boolean;
   /** Batch 28: who is looking, so a deal is shown as the type they chose (a buy-to-let-only deal is always Buy to let). */
@@ -185,10 +195,11 @@ export function cardView(input: {
     opened: state.opened,
     analysed,
     reportId: state.reportId,
-    quickLook: state.opened ? null : input.label(input.admin ? 0 : ladderPence),
-    fullAnalysis: analysed ? null : input.label(quote.due.purchaseBasePence),
+    quickLook: state.opened ? null : input.label(input.admin ? 0 : ladderPence, 'deal_open'),
+    fullAnalysis: analysed ? null : input.labelDue ? input.labelDue(quote.due, { saved: Boolean(input.reportReady) }) : input.label(quote.due.purchaseBasePence),
     fullAnalysisBasePence: quote.due.purchaseBasePence,
     offerNote: analysed ? null : input.offerNote ?? null,
+    reportReady: !analysed && Boolean(input.reportReady),
   };
 }
 
@@ -217,7 +228,7 @@ function btlCardView(input: Parameters<typeof cardView>[0]): CardView {
     opened: state.opened,
     analysed: false,
     reportId: null,
-    quickLook: state.opened ? null : input.label(input.admin ? 0 : ladderPence),
+    quickLook: state.opened ? null : input.label(input.admin ? 0 : ladderPence, 'deal_open'),
     fullAnalysis: null,
     fullAnalysisBasePence: 0,
     offerNote: null,

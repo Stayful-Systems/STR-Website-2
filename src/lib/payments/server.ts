@@ -40,6 +40,7 @@ export async function recordPayment(p: PaymentRecord | null): Promise<boolean> {
     }
     const wrote = (data?.length ?? 0) > 0;
     if (wrote) await queueFunnelSync(p.userId, REASON[p.kind]);
+    if (wrote) await packOfferAccepted(p);
     return wrote;
   } catch (err) {
     warn(err instanceof Error ? err.message : String(err));
@@ -56,5 +57,25 @@ export async function recordRefund(r: RefundRecord | null): Promise<void> {
     else await queueFunnelSync(r.userId, 'refund');
   } catch (err) {
     warn(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Batch 29: a further payment (top-up, automatic top-up or a plan's paid
+ * invoice) after the starter pack's £15 offer was shown, on Home or in an
+ * email: record-only pack_offer_accepted, once per member (its dedupe key).
+ * Never throws.
+ */
+async function packOfferAccepted(p: PaymentRecord): Promise<void> {
+  if (p.kind === 'starter_pack' || !(p.amountPence > 0)) return;
+  try {
+    const { data } = await createAdminClient().from('profiles').select('pack_offer_home_at, pack_offer_emailed_at').eq('id', p.userId).maybeSingle();
+    const row = data as { pack_offer_home_at: string | null; pack_offer_emailed_at: string | null } | null;
+    const shown = [row?.pack_offer_home_at, row?.pack_offer_emailed_at].filter((x): x is string => Boolean(x)).sort()[0] ?? null;
+    if (!shown) return;
+    const { recordActivity } = await import('../activity/log');
+    await recordActivity(p.userId, 'pack_offer_accepted', { dedupeKey: 'pack_offer_accepted', extras: { kind: p.kind, amount_pence: p.amountPence, shown_at: shown } });
+  } catch {
+    /* record-only: never in the way of a payment */
   }
 }

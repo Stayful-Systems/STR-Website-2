@@ -29,7 +29,9 @@ CREDIT, PLANS AND PAYING
 - Top-ups: {topup_amounts}, any time, in Account → Billing. Top-up credit never expires but is spent at {topup_rate} the plan rate.
 - Auto top-up adds credit automatically when the balance runs low and needs a saved card; the one-tap offer is {auto_topup_amount} whenever the balance drops below {auto_topup_threshold}.
 - A pay-as-you-go member (no plan) whose credit reaches {low_credit_mark} between {nudge_days_min} and {nudge_days_max} days after their last top-up gets one text ({text_cost}) and email ({email_cost}) with the one-tap auto top-up link, instead of the usual low-credit email; one notice per credit, whichever comes first (the call, the nudge or the email).
-- The starter pack, when offered: {pack_credit} of credit for {pack_cost}, once.
+- The starter pack, when offered: {pack_credit} of credit for {pack_cost}, once. The {pack_cost} paid is ordinary top-up credit (it pays for anything and never expires). The {pack_bonus} bonus pays only for opening deals, saved (already run) reports and daily picks, and expires {pack_bonus_days} days after the pack; anything else (a fresh report, PMI's second opinion, calls, texts, chat, buy-to-let reports, briefings) is paid from the credit the member paid for. A further payment (a top-up, auto top-up or a plan) lifts both: the bonus then never expires and pays for anything. Account → Billing, Usage and the low-credit email say how much of the balance is bonus and when it expires.
+- A member who has only bought the pack can run {pack_fresh_reports} fresh reports (welcome-price ones included; reopening a saved report doesn't count); after that the next fresh report offers a top-up or a plan instead, and nothing is charged. They can't add PMI's second opinion until they top up ("Top up to add the second opinion"); its welcome price is for members who have paid again since the pack.
+- When a pack-only member's balance first falls to {pack_offer_at} or less, Home shows once (that day) and the next daily email carries once an offer to start a plan or top up so the bonus stops expiring. It never goes on the same day as the low-credit notice: the offer goes first, the low-credit notice the next day.
 - Account → Usage shows where credit goes; Account → Billing shows every charge, top-ups and receipts. Reopening a saved report never costs anything.
 
 DEALS
@@ -37,6 +39,7 @@ DEALS
 - The daily email and Today open with a morning briefing: a greeting and a short note on one thing in the member's own figures (counts, their kept deals and pipeline; never a listing's title, description or an address). With AI briefings switched on it is written by Stayful Intelligence and charged at most {briefing_max_cost} of credit, after the day's own charge and only if the balance covers it; a rejected, late or switched-off one is the standard line, free. Members who did not come in from the email see it once on Today, where Play reads it aloud at the speak price; "Useful" and "Not for me" are a tap.
 - Browse is the marketplace of screened deals. Opening a deal (the address, photos and listing) costs between {open_cost_min} and {open_cost_max}, depending on how profitable it is.
 - Free members (who have never paid) see a new deal {free_delay_hours} hours after it goes live; members who have paid see it at once.
+- A member who has only bought the starter pack and hasn't been in the app for {pack_pause_days} days stops getting daily picks (no email about it), so their credit isn't used; the picks start again the next time they sign in, and Home says "I paused your daily picks while you were away so your credit wasn't used. They're back on."
 - Keep saves a deal to My deals (free); Pass hides it and teaches the matching. My deals groups deals by stage (Kept, Contacted, Viewing, Offer, Secured, Passed).
 - The more a member answers and keeps or passes, the better the picks fit.
 - Standout deals: when a deal fits a member's main profile better than anything found for them so far ({standout_min_match} match or better, on a deal type that profile chose, well above their minimum profit, and confirmed still on the market), Stayful Intelligence saves it to their My deals, marked "Saved for you by Stayful Intelligence". Opening it is free. "Not for me" passes it (with a few seconds to undo). Saves it doesn't call about are listed under "Saved for you" in the next daily email.
@@ -55,6 +58,7 @@ REPORTS
 - A Full analysis is {full_analysis_cost}: a report on the deal of up to {report_sections} sections (the ones its deal needs) with {forecast_months} months of short-let income, costs, comparables, risks, due-diligence checks and the local market, as a PDF. It opens the deal too.
 - PMI's second opinion can be added for {pmi_addon_cost}; with it the report is a deep report at {deep_report_cost}.
 - A saved analysis of the same property is reused free for {analysis_reuse_days} days.
+- "Report ready, opens instantly" on a deal card, Today and the deal page means a Full analysis of that deal was run in the last {analysis_reuse_days} days, so the member's opens straight from it. Its price and the deal order are unchanged, and nothing about the deal is shown before Open.
 - Reports are in My deals → Reports and by link from emails.
 
 ALERTS

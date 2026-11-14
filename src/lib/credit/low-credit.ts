@@ -20,6 +20,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { formatGbp } from './pricing.ts';
+import { PACK_COPY } from './pack-rules.ts';
 import { manageNotificationsUrl } from '../url.ts';
 import type { Link, Message, Section, Unsubscribe } from '../notify/message.ts';
 
@@ -39,6 +40,8 @@ export interface LowCreditNotice {
   card: { brand: string; last4: string } | null;
   /** The pack's words (src/lib/starter-pack/rules.ts packCopy), for kind 'pack'. */
   pack: { body: string; cta: string } | null;
+  /** Batch 29: a pack-only member's restricted bonus still in the balance, and when it expires. */
+  bonus?: { pence: number; expiresAt: string | null } | null;
 }
 
 /** Low under the £5 rule: something left to spend (else it is "out"), and £5 or less of it. */
@@ -108,6 +111,8 @@ export function lowCreditCopy(n: LowCreditNotice, siteUrl: string): LowCreditCop
     return { subject, heading, lines: [first, n.pack.body], buttons: [{ label: n.pack.cta, url: `${base}/today?offer=pack`, primary: true }] };
   }
   const lines = [first];
+  // Batch 29: how much of what is left is the starter pack's bonus, and when it expires.
+  if (n.bonus && n.bonus.pence > 0) lines.push(PACK_COPY.bonusLine(n.bonus.pence, n.bonus.expiresAt));
   const buttons: Link[] = [];
   if (n.starter) {
     lines.push(`${n.starter.name}: ${money(n.starter.pricePence)} a month gets you ${money(n.starter.creditPence)} of credit every month, and plan credit goes further than top-ups. Cancel any time.`);

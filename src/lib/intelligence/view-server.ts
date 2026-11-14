@@ -35,6 +35,8 @@ import type { StoredChoice } from '../today/choice';
 import { todayKey } from '../today/day';
 import { analysisOffer, offerLabel } from '../analysis/offers';
 import { quoterFor } from '../credit/quote-server';
+import { packStateForPayer } from '../credit/pack-server';
+import { NOT_PACK, PACK_COPY, capReached, deepNeedsTopUp, packMemberValues } from '../credit/pack-rules';
 import { enhancedEnabled } from '../analysis/run';
 import type { PriceLabel } from '../credit/deal-pricing';
 import { offerFloors, offerMemberFor, offerPricingFor, offerSettings } from '../analysis/offers-server';
@@ -72,7 +74,12 @@ export interface IntelligenceData {
   /** Part F: when the match is low or there is none. */
   whatIfs: WhatIfView | null;
   /** Part H: each card's Full analysis and Deep report, priced with the member's offers. */
-  analyses: Map<string, { full: PriceLabel | null; deep: PriceLabel | null; fullNote: string | null; deepNote: string | null; fullList: number | null; deepList: number | null }>;
+  /**
+   * Batch 29 (src/lib/credit/pack-rules.ts): deepTopUp, a pack-only member's Deep report is "Top up to add the
+   * second opinion" (no price); capLine, they have used their fresh reports (the Full analysis is the offer);
+   * ready, a saved analysis exists ("Report ready, opens instantly").
+   */
+  analyses: Map<string, { full: PriceLabel | null; deep: PriceLabel | null; fullNote: string | null; deepNote: string | null; fullList: number | null; deepList: number | null; deepTopUp?: boolean; capLine?: string | null; ready?: boolean }>;
   /** Part G: the member's own search is still running; the deep search's quote when there is no strong match. */
   searching: boolean;
   deepQuote: DeepQuoteView | null;
@@ -156,7 +163,7 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
   if (input.beforePricing) await input.beforePricing({ cards, profileId: profile?.id ?? null, checked: choice?.checked ?? null, noMatch: tone === 'none', level });
 
   // Part H: the Full analysis and the Deep report for each card, priced as startDealAnalysis will price them.
-  const [offers, quoter, offerMember] = await Promise.all([offerPricingFor(user.id, adminUser, now), quoterFor(payer.payerId, adminUser), offerMemberFor(user.id)]);
+  const [offers, quoter, offerMember, pack] = await Promise.all([offerPricingFor(user.id, adminUser, now), quoterFor(payer.payerId, adminUser), offerMemberFor(user.id), adminUser ? Promise.resolve(NOT_PACK) : packStateForPayer(payer.payerId)]);
   const analyses = new Map<string, IntelligenceData['analyses'] extends Map<string, infer V> ? V : never>();
   for (const c of cards) {
     const v = views.get(c.id);
@@ -167,13 +174,21 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
     const deepBase = Math.max(0, v.fullAnalysisBasePence - full.fullAnalysisPence + deep.fullAnalysisPence + deep.pmiAddonPence);
     const fo = offers.offer(c.id, false);
     const dO = offers.offer(c.id, true);
+    // Batch 29: a pack-only member's Deep report needs credit beyond the pack (no price shown), and once
+    // their fresh reports are used a fresh Full analysis is the offer; a saved one still runs.
+    const ready = Boolean(v.reportReady);
+    const deepTopUp = enhancedEnabled(true) && deepNeedsTopUp(pack);
+    const capLine = !ready && capReached(pack) ? PACK_COPY.capReached(pack.freshCap) : null;
     analyses.set(c.id, {
-      full: quoter.label(v.fullAnalysisBasePence),
-      deep: enhancedEnabled(true) ? quoter.label(deepBase) : null,
-      fullNote: offerLabel(fo?.offer),
-      deepNote: offerLabel(dO?.offer),
-      fullList: fo ? fo.listTotalPence : null,
-      deepList: dO ? dO.listTotalPence : null,
+      full: capLine ? null : (v.fullAnalysis ?? quoter.label(v.fullAnalysisBasePence)),
+      deep: enhancedEnabled(true) && !deepTopUp ? quoter.label(deepBase, 'pmi_addon') : null,
+      fullNote: capLine ? null : offerLabel(fo?.offer),
+      deepNote: deepTopUp ? null : offerLabel(dO?.offer),
+      fullList: fo && !capLine ? fo.listTotalPence : null,
+      deepList: dO && !deepTopUp ? dO.listTotalPence : null,
+      deepTopUp,
+      capLine,
+      ready,
     });
   }
   // The chip answers' facts: every figure from settings or the member's state.
@@ -206,6 +221,7 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
     topupPresetsPence: settings.topupPresetsPence,
     autoTopupOn: Boolean(credit?.autoTopup?.amountPence),
     noMatch: null,
+    packMember: packMemberValues(pack),
   };
 
   const [whatIfs, status, deepQuote] = await Promise.all([

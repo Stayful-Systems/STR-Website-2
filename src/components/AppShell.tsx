@@ -50,7 +50,13 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
   const hourAgoIso = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
   after(async () => {
     try {
-      await supabase.from("profiles").update({ last_seen_at: nowIso }).eq("id", user.id).or(`last_seen_at.is.null,last_seen_at.lt.${hourAgoIso}`);
+      const { data: stamped } = await supabase.from("profiles").update({ last_seen_at: nowIso }).eq("id", user.id).or(`last_seen_at.is.null,last_seen_at.lt.${hourAgoIso}`).select("id");
+      // Batch 29: a pack-only member's picks paused while they were away start again (only a
+      // visit after an hour or more away can end one, so only then is it asked).
+      if ((stamped ?? []).length > 0) {
+        const { resumePackPause } = await import("@/lib/inactivity/came-back");
+        await resumePackPause(user.id, now);
+      }
     } catch (err) {
       console.error("[AppShell] last_seen hook failed:", err);
     }

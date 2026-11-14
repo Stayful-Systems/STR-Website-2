@@ -10,7 +10,7 @@ import { priceText, type PriceLabel } from "@/lib/credit/deal-pricing";
  * (src/lib/credit/quote-server.ts) and is sent back as confirmed: a changed
  * price is refused rather than charged. Out of credit opens the usual modal.
  */
-export function PmiAddonCard({ reportId, label, note = null }: { reportId: string; label: PriceLabel; note?: string | null }) {
+export function PmiAddonCard({ reportId, label, note = null, topUp = false }: { reportId: string; label: PriceLabel; note?: string | null; /** Batch 29: a pack-only member: the second opinion needs credit beyond the pack. */ topUp?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const price = priceText(label);
@@ -44,6 +44,18 @@ export function PmiAddonCard({ reportId, label, note = null }: { reportId: strin
     } finally {
       setBusy(false);
     }
+  }
+
+  if (topUp) {
+    return (
+      <div className="rounded-xl border border-border bg-muted/40 p-4">
+        <p className="text-sm font-semibold text-foreground">A second opinion from PMI</p>
+        <p className="mt-1 text-sm text-muted-foreground">An independent revenue estimate for this property from Property Market Intel, set beside ours. It needs credit beyond the starter pack.</p>
+        <a href="/account/billing/choose?pick=topup" className="mt-3 inline-block rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
+          Top up to add the second opinion
+        </a>
+      </div>
+    );
   }
 
   return (

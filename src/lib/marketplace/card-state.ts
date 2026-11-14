@@ -19,6 +19,7 @@ import type { createSupabaseServerClient } from '../supabase/server';
 import { payerFor } from '../team';
 import { getBillingSettings } from '../credit/unit-costs';
 import { quoterFor } from '../credit/quote-server';
+import { reportReadyDealIds } from '../analysis/saved-server';
 import { openCreditBase } from '../credit/deal-pricing';
 import type { FinanceDefaults } from '../listing/deal';
 import type { DealCard } from './grid';
@@ -82,12 +83,13 @@ export async function cardStatesFor(supabase: ServerClient, userId: string, paye
 export async function cardViewsFor(input: { supabase: ServerClient; userId: string; adminUser: boolean; cards: DealCard[]; finance?: Partial<FinanceDefaults> | null; cashBuyer?: boolean; btl?: BtlLooker | null }): Promise<Map<string, CardView>> {
   const { payerId } = await payerFor(input.userId);
   const ids = input.cards.map((c) => c.id);
-  const [settings, quoter, states, offers, free] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, ids), offerPricingFor(input.userId, input.adminUser), input.adminUser ? Promise.resolve(new Set<string>()) : freeStandoutOpens(payerId, ids)]);
+  const [settings, quoter, states, offers, free, ready] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, ids), offerPricingFor(input.userId, input.adminUser), input.adminUser ? Promise.resolve(new Set<string>()) : freeStandoutOpens(payerId, ids), reportReadyDealIds(ids)]);
   // Batch 22: each card priced with this member's offers (the welcome price on their revealed deals).
+  // Batch 29: a saved analysis shows "Report ready" and is priced as a saved one (the pack's bonus may pay).
   return new Map(
     input.cards.map((c) => [
       c.id,
-      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntry: settings.lowEntry, label: quoter.label, freeOpen: free.has(c.id), btl: input.btl ?? null }),
+      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntry: settings.lowEntry, label: quoter.label, labelDue: quoter.labelDue, reportReady: ready.has(c.id), freeOpen: free.has(c.id), btl: input.btl ?? null }),
     ]),
   );
 }

@@ -53,7 +53,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: 'pack_available',
     question: 'What do I get with the {pack_cost} pack?',
     variants: ['What is the starter pack?', 'Is the starter pack worth it?'],
-    answer: '{pack_credit} of credit for {pack_cost}, once: it covers opening deals, your daily picks and reports.',
+    // Batch 29: the bonus (the credit beyond the price) covers opening deals, saved reports and daily picks, and expires.
+    answer: '{pack_credit} of credit for {pack_cost}, once. The {pack_cost} you pay covers anything and never expires; the {pack_bonus} bonus covers opening deals, saved reports and daily picks for {pack_bonus_days} days.',
   },
   {
     slug: 'save',
@@ -83,7 +84,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: "What's in a full analysis and a deep report?",
     variants: ['What do I get in a full analysis?', 'What is a deep report?', 'What does PMI add?'],
-    answer: "A full analysis is {full_analysis_cost}{#welcome_offer} ({welcome_cost} on your matches until {welcome_until}){/welcome_offer}: it opens the deal with {forecast_months} months of short-let income, costs, comparables and due-diligence checks. A deep report adds PMI's second opinion for {deep_report_cost}{#first_deep_offer} ({first_deep_cost} your first time){/first_deep_offer}.",
+    // Batch 29: a pack-only member tops up for the second opinion.
+    answer: "A full analysis is {full_analysis_cost}{#welcome_offer} ({welcome_cost} on your matches until {welcome_until}){/welcome_offer}: it opens the deal with {forecast_months} months of short-let income, costs, comparables and due-diligence checks. A deep report adds PMI's second opinion for {deep_report_cost}{#first_deep_offer} ({first_deep_cost} your first time){/first_deep_offer}.{#pack_only} With the starter pack, top up to add the second opinion.{/pack_only}",
   },
   {
     slug: 'free_delay',
@@ -600,6 +602,48 @@ export const SEED: readonly SeedEntry[] = [
     question: 'What is the buy-to-let report?',
     variants: ['What do I get for the buy-to-let report?', 'How much is the buy-to-let report?', 'Is there a PDF of the buy-to-let report?', 'Was I charged for a buy-to-let report that failed?'],
     answer: 'For {btl_report_cost}: a rent valuation, a sale valuation, sold prices nearby, the EPC, flood and planning checks, and the buy-to-let figures with all of it in. You see the price first and it’s charged once, only when the report is made; a deal you revealed in your first days can have a welcome price. It’s on the web, saved in My deals.',
+  },
+
+  // ── Batch 29: the starter pack's bonus, its fresh-report limit, the picks pause and Report ready ──
+  {
+    slug: 'pack_bonus',
+    from: 'Batch 29, section A',
+    category: 'credit_billing',
+    channels: ['view', 'chat'],
+    showWhen: 'pack_only',
+    question: 'What can my bonus credit pay for?',
+    variants: ['What does the starter pack bonus cover?', 'Why can’t I use my bonus for a report?', 'When does my bonus expire?', 'Why didn’t my bonus pay for this?'],
+    answer: 'You have {bonus_balance} of bonus credit for opening deals, saved reports and daily picks{#pack_bonus_dated} until {bonus_expires}{/pack_bonus_dated}. Fresh reports and second opinions need credit you’ve paid for; top up or start a plan and your bonus stops expiring and works on everything.',
+  },
+  {
+    slug: 'pack_fresh_reports',
+    from: 'Batch 29, section B',
+    category: 'reports',
+    channels: ['view', 'chat'],
+    showWhen: 'pack_only',
+    question: 'How many fresh reports can I run with the starter pack?',
+    variants: ['Why can’t I run another report?', 'How many reports do I have left?', 'Is there a limit on reports?'],
+    answer: 'With the starter pack you can run {pack_fresh_reports} fresh reports, and you have {fresh_reports_left} left. A report already run on a deal still opens with your bonus credit; top up or start a plan to run more.',
+  },
+  {
+    slug: 'report_ready',
+    from: 'Batch 29, section E',
+    category: 'reports',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What does Report ready mean?',
+    variants: ['What is the Report ready badge?', 'Why does a deal say it opens instantly?', 'Is a ready report cheaper?'],
+    answer: 'Report ready means a full analysis of that deal was run in the last {analysis_reuse_days} days, so yours opens instantly from it. The price is the same and nothing is shown until you open it.',
+  },
+  {
+    slug: 'picks_paused_away',
+    from: 'Batch 29, section D',
+    category: 'deals',
+    channels: ['view', 'chat'],
+    showWhen: 'pack_only',
+    question: 'Why did my daily picks stop?',
+    variants: ['Why have my picks paused?', 'Why am I not getting daily picks?', 'Where are my daily picks?'],
+    answer: 'If you haven’t been in for {pack_pause_days} days, I pause your daily picks so your credit isn’t used. They start again the next time you sign in.',
   },
 ];
 

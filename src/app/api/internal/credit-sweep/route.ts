@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
-import { expireDueGrants } from "@/lib/credit/ledger";
+import { expireDueGrants, previewDueGrants } from "@/lib/credit/ledger";
 import { syncUnitCosts } from "@/lib/credit/unit-costs";
 import { ensureAnnualMonthlyGrant } from "@/lib/stripe/grants";
 
@@ -12,6 +12,11 @@ import { ensureAnnualMonthlyGrant } from "@/lib/stripe/grants";
 // src/lib/crm/monday-funnel.)
 //
 //   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/credit-sweep"
+//
+// Batch 29: it also expires a starter pack's bonus left unspent after
+// pack_bonus_expiry_days, unless the member paid again by then (then the bonus
+// is lifted and never expires). ?dry=1 lists what would expire or be lifted
+// and writes nothing (no annual grants, no unit-cost seeding either).
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -24,6 +29,14 @@ export async function GET(request: Request) {
     admin = createAdminClient();
   } catch {
     return Response.json({ error: "Storage not configured" }, { status: 503 });
+  }
+  if (new URL(request.url).searchParams.get("dry") === "1") {
+    try {
+      const due = await previewDueGrants();
+      return Response.json({ dry: true, wouldExpire: due.expire, wouldLift: due.lift, annual: "not run on a dry run", seed: "not run on a dry run" });
+    } catch (err) {
+      return Response.json({ dry: true, error: (err as Error).message }, { status: 500 });
+    }
   }
   const summary = { expired: 0, annualGranted: 0, seeded: 0, errors: [] as string[] };
 

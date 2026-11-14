@@ -82,3 +82,9 @@ test("alone from a debit only once the day's daily emails have gone, so it never
   assert.equal(lowCreditMayGoAlone(new Date('2026-10-05T23:59:00Z')), true);
   assert.equal(lowCreditMayGoAlone(new Date('2026-10-06T00:10:00Z')), false);
 });
+
+test('Batch 29: a pack-only member’s low-credit email says how much of the balance is bonus and when it expires', () => {
+  const c = lowCreditCopy(notice({ bonus: { pence: 300, expiresAt: '2026-12-02T10:00:00Z' } }), SITE);
+  assert.ok(c.lines.includes('£3 of your balance is bonus credit for opening deals, saved reports and daily picks. It expires on 2 December.'), c.lines.join(' | '));
+  assert.ok(!lowCreditCopy(notice(), SITE).lines.some((l) => l.includes('bonus credit')), 'nobody else is told about a bonus');
+});

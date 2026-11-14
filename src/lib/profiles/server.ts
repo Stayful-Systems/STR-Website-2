@@ -258,7 +258,7 @@ export async function profilePriceLineFor(userId: string, adminUser: boolean): P
   const { payerId } = await payerFor(userId);
   const quoter = await quoterFor(payerId, adminUser);
   const daily = quoter.pricing.todays5DailyPence;
-  return profilePriceLine(dailyDealsLineFor(quoter.label(adminUser ? 0 : daily), daily));
+  return profilePriceLine(dailyDealsLineFor(quoter.label(adminUser ? 0 : daily, "todays_5"), daily));
 }
 
 // ── Changes (each one the member's own, from a server action) ──

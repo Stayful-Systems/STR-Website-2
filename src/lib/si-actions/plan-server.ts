@@ -30,6 +30,9 @@ import { decideSpend, spendLine, type PricedStep } from './spend';
 import { actionsOn, insertInstruction, instructionsSince, liveInstructionFor, readActionConfig, type NewStep } from './store-server';
 import { mayCheckLinks, previewCriteria, quoteAnalysis, quoteDeepSearch, quoteLinkCheck, quotePmiAddon, type ActingMember } from './steps-server';
 import { freshenLive } from './run-server';
+import { packStateForPayer } from '../credit/pack-server';
+import { freshLeft } from '../credit/pack-rules';
+import { reportReadyDealIds } from '../analysis/saved-server';
 
 export interface ProposeInput {
   member: ActingMember;
@@ -62,11 +65,13 @@ async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[
   const load = await loadTrackedDeals(m.userId, { scope: 'own', adminUser: m.admin });
   const tracked = new Map(load.view.filter((d) => d.dealId).map((d) => [d.dealId as string, d]));
   const untracked = ids.filter((id) => !load.cards.has(id));
-  const [live, states, btlReports] = await Promise.all([
+  const [live, states, btlReports, saved] = await Promise.all([
     untracked.length > 0 ? dealCardsByIds(untracked, load.visibility) : Promise.resolve([] as DealCard[]),
     cardStatesFor(supabase as never, m.userId, m.payerId, ids),
     // Batch 28: the deals the member already has a buy-to-let report on (charged once).
     hasServiceRole() ? reportIdsFor(createAdminClient(), m.userId, { dealIds: ids }) : Promise.resolve(null),
+    // Batch 29: the deals with a saved analysis (never a fresh report for the cap).
+    reportReadyDealIds(ids),
   ]);
   const cards = new Map<string, Pick<DealCard, 'bedrooms' | 'raw_type' | 'tenure' | 'outcode' | 'town' | 'btl_pass'>>([...load.cards.entries(), ...live.map((c) => [c.id, c] as const)]);
   for (const id of ids) {
@@ -83,6 +88,7 @@ async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[
       reportId: state?.reportId ?? null,
       btl: card.btl_pass === true,
       btlReported: btlReports?.has(id) ?? false,
+      saved: saved.has(id),
     });
   }
   return out;
@@ -116,10 +122,11 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
 
   const wanted = new Set(input.steps.map((s) => s.action));
   const ids = [...new Set(input.steps.map((s) => (s.dealId ?? '').trim().toLowerCase()).filter((id) => input.seenDeals.has(id)))];
-  const [deals, search, links] = await Promise.all([
+  const [deals, search, links, pack] = await Promise.all([
     planDeals(m, input.supabase, ids),
     wanted.has('deep_search') ? quoteDeepSearch(m.userId) : Promise.resolve(null),
     wanted.has('check_link') ? mayCheckLinks() : Promise.resolve(false),
+    m.admin ? Promise.resolve(null) : packStateForPayer(m.payerId),
   ]);
   const checked = checkPlan(input.steps, {
     deals,
@@ -127,6 +134,8 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
     question: input.question,
     deepSearch: !search ? 'off' : search.running ? 'running' : search.quote ? 'available' : 'off',
     linkChecks: links,
+    // Batch 29: the same limits startDealAnalysis enforces, said before anything is confirmed.
+    ...(pack?.packOnly ? { pack: { packOnly: true, freshLeft: freshLeft(pack) } } : {}),
   });
 
   // ── Price every charged step exactly as its own code will; preview every profile change ──

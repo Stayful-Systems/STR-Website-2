@@ -68,6 +68,8 @@ export interface MemberValues {
   firstDeepPence: number | null;
   /** Part F's line, when nothing (or little) matches. */
   noMatch: string | null;
+  /** Batch 29: a pack-only member's bonus and fresh reports (src/lib/credit/pack-rules.ts packMemberValues); null or absent for everyone else. */
+  pack?: { packOnly: boolean; bonusPence: number; bonusExpires: string | null; freshLeft: number | null } | null;
 }
 
 export type Scope = 'global' | 'member';
@@ -247,6 +249,25 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   pack_cost: g_("The starter pack's price", 'billing_settings.starter_pack_price_pence', (g) => money(pence(g, 'starter_pack_price_pence'))),
   pack_credit: g_('The credit the starter pack gives', 'billing_settings.starter_pack_credit_pence', (g) => money(pence(g, 'starter_pack_credit_pence'))),
   profile_credit: g_('The one-off credit for a complete profile', 'billing_settings.profile_complete_pence', (g) => money(pence(g, 'profile_complete_pence'))),
+  // Batch 29: the starter pack's bonus (the credit beyond what was paid), its rules and limits.
+  pack_bonus: g_('The starter pack’s bonus credit (its credit less its price)', 'billing_settings.starter_pack_credit_pence − starter_pack_price_pence', (g) => {
+    const credit = pence(g, 'starter_pack_credit_pence');
+    const price = pence(g, 'starter_pack_price_pence');
+    return credit === null || price === null || credit <= price ? null : formatPence(credit - price);
+  }),
+  pack_bonus_days: g_('Days the starter pack’s bonus lasts', 'billing_settings.pack_bonus_expiry_days', (g) => {
+    const d = whole(g, 'pack_bonus_expiry_days', 1);
+    return d === null ? null : String(d);
+  }),
+  pack_fresh_reports: g_('Fresh reports a pack-only member may run, in words', 'billing_settings.pack_fresh_report_cap', (g) => {
+    const n = whole(g, 'pack_fresh_report_cap', 1);
+    return n === null ? null : countWords(n);
+  }),
+  pack_offer_at: g_('The balance at which a pack-only member is offered a plan or top-up to keep their bonus', 'billing_settings.pack_early_offer_pence', (g) => money(pence(g, 'pack_early_offer_pence'))),
+  pack_pause_days: g_('Days away before a pack-only member’s daily picks pause', 'billing_settings.pack_picks_pause_days', (g) => {
+    const d = whole(g, 'pack_picks_pause_days', 1);
+    return d === null ? null : String(d);
+  }),
   // Deals and reports
   open_cost_min: g_('The cheapest price to open a deal', 'billing_settings.deal_open_ladder', (g) => money(ladderBounds(g)?.min ?? null)),
   open_cost_max: g_('The dearest price to open a deal', 'billing_settings.deal_open_ladder', (g) => money(ladderBounds(g)?.max ?? null)),
@@ -423,6 +444,10 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   welcome_until: m_('The day their welcome price ends', 'the member’s offer', (m) => m.welcome?.until ?? null),
   first_deep_cost: m_('Their first deep report’s price', 'the member’s offer', (m) => money(m.firstDeepPence)),
   no_match_line: m_('What would find them a match (Part F)', 'the member’s profile', (m) => m.noMatch),
+  // Batch 29: a pack-only member's own.
+  bonus_balance: m_('Their starter pack bonus left', 'the member’s pack bonus', (m) => (m.pack ? money(m.pack.bonusPence) : null)),
+  bonus_expires: m_('The day their bonus expires, e.g. 2 December', 'the member’s pack bonus', (m) => m.pack?.bonusExpires ?? null),
+  fresh_reports_left: m_('Fresh reports they have left with the pack, in words', 'the member’s pack', (m) => (m.pack && m.pack.freshLeft !== null ? countWords(m.pack.freshLeft) : null)),
 };
 
 export const CONDITIONS: Readonly<Record<string, ConditionDef>> = {
@@ -440,6 +465,8 @@ export const CONDITIONS: Readonly<Record<string, ConditionDef>> = {
   alerts_by_text: { label: 'Their alerts also come by text', scope: 'member', resolve: (_g, m) => (m ? m.alertsByText : null) },
   tailored: { label: 'Their picks use their answers (tailoring)', scope: 'member', resolve: (_g, m) => (m ? m.tailored : null) },
   pack_available: { label: 'The starter pack is on and not bought', scope: 'member', resolve: (_g, m) => (m ? m.packAvailable : null) },
+  pack_only: { label: 'They bought the starter pack and have paid for nothing since (Batch 29)', scope: 'member', resolve: (_g, m) => (m ? Boolean(m.pack?.packOnly) : null) },
+  pack_bonus_dated: { label: 'Their starter pack bonus has an expiry date', scope: 'member', resolve: (_g, m) => (m ? Boolean(m.pack?.bonusExpires) : null) },
   free_delay_applies: {
     label: 'They are a free member and new deals wait for free members',
     scope: 'member',

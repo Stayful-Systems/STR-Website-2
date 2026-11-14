@@ -76,6 +76,9 @@ import { StarterPackOffer } from "@/components/starter-pack/StarterPackOffer";
 import { StageReminder } from "@/components/pipeline/StageReminder";
 import { ShareDealButton } from "../_components/ShareDealButton";
 import { AnalysisPanel } from "../_components/AnalysisPanel";
+import { packStateFor } from "@/lib/credit/pack-server";
+import { NOT_PACK, PACK_COPY, capReached, deepNeedsTopUp } from "@/lib/credit/pack-rules";
+import { reportReadyDealIds } from "@/lib/analysis/saved-server";
 import { AnalysisPreview } from "../_components/AnalysisPreview";
 import { BasicVsDetailed } from "../_components/BasicVsDetailed";
 
@@ -205,10 +208,15 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   }
   // Batch 22: the member's offers (welcome / first-time price), exactly as startDealAnalysis will work them out.
   const offers = await offerPricingFor(user.id, adminUser);
-  const quoteFor = (withPmi: boolean) => analysisQuote({ admin: adminUser, pricing: offers.pricing(deal.id, withPmi), opened, openPaidBasePence: openPaid, openPricePence: ladderPence, withPmi }).due.purchaseBasePence;
-  const analysisPrice = { without: quoter.label(quoteFor(false)), withPmi: quoter.label(quoteFor(true)) };
-  const pmiLabel = enhancedEnabled(true) ? quoter.label(adminUser ? 0 : pricing.pmiAddonPence) : null;
-  const quickLook = quoter.label(adminUser ? 0 : ladderPence);
+  const dueFor = (withPmi: boolean) => analysisQuote({ admin: adminUser, pricing: offers.pricing(deal.id, withPmi), opened, openPaidBasePence: openPaid, openPricePence: ladderPence, withPmi }).due;
+  // Batch 29: a saved analysis of the deal ("Report ready") is walked as one (the starter pack's bonus may
+  // pay for it); a pack-only member's second opinion and fresh-report cap are said on the panel.
+  const [packState, readyIds] = await Promise.all([adminUser ? Promise.resolve(NOT_PACK) : packStateFor(user.id), report ? Promise.resolve(new Set<string>()) : reportReadyDealIds([deal.id])]);
+  const reportReady = !report && readyIds.has(deal.id);
+  const packPanel = { deepTopUp: deepNeedsTopUp(packState), capLine: !reportReady && capReached(packState) ? PACK_COPY.capReached(packState.freshCap) : null };
+  const analysisPrice = { without: quoter.labelDue(dueFor(false), { saved: reportReady }), withPmi: quoter.labelDue(dueFor(true)) };
+  const pmiLabel = enhancedEnabled(true) ? quoter.label(adminUser ? 0 : pricing.pmiAddonPence, "pmi_addon") : null;
+  const quickLook = quoter.label(adminUser ? 0 : ladderPence, "deal_open");
   const canBuy = !report && (opened || deal.status === "live");
   const stagePastKept = tracking.tracked && tracking.stage !== KEPT_STATUS && tracking.stage !== "passed";
 
@@ -407,10 +415,12 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 <p className="mt-2 text-sm font-medium text-foreground">{priv ? (priv.address ?? where) : where}</p>
                 <p className="text-xs text-muted-foreground">{describeType(card)}{priv?.postcode ? ` · ${priv.postcode}` : ""}</p>
                 <p className={"mt-1 text-[11px] " + (badges.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{badges.freshness}{deal.listed_date ? ` · listed ${new Date(deal.listed_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>
-                {(opened || report) && (
+                {(opened || report || reportReady) && (
                   <p className="mt-2 flex flex-wrap gap-1">
                     {opened && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Opened</span>}
                     {report && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Analysed</span>}
+                    {/* Batch 29: a saved analysis exists; nothing about the deal is revealed by it. */}
+                    {reportReady && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">{PACK_COPY.reportReady}</span>}
                   </p>
                 )}
 
@@ -431,7 +441,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 {analysisFirst && (
                   <div className="mt-4">
                     <p className="mb-1.5 text-xs text-muted-foreground">{ANALYSIS_LEAD_LINE}</p>
-                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} pack={packPanel} />
                   </div>
                 )}
 
@@ -460,10 +470,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 )}
                 {canBuy && !analysisFirst && !btlOnly && (
                   <div className="mt-3">
-                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} pack={packPanel} />
                   </div>
                 )}
-                {report && pmiLabel && <p className="mt-2 text-[11px] text-muted-foreground">No second opinion on it yet? Add one from PMI on the report · {priceText(pmiLabel) || "free"}.</p>}
+                {report && pmiLabel && (packPanel.deepTopUp ? <p className="mt-2 text-[11px] text-muted-foreground"><Link href="/account/billing/choose?pick=topup" className="font-medium text-primary hover:underline">{PACK_COPY.deepTopUp}</Link> · {PACK_COPY.deepTopUpWhy}</p> : <p className="mt-2 text-[11px] text-muted-foreground">No second opinion on it yet? Add one from PMI on the report · {priceText(pmiLabel) || "free"}.</p>)}
               </div>
             </div>
 
@@ -500,7 +510,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 flags={btlView.flags}
                 sheet={btlSheetData}
                 pending={btlView.pending}
-                report={btlQuote && (btlReportId || deal.status === "live") ? <BtlReportButton dealId={deal.id} label={quoter.label(btlQuote.basePence)} note={offerLabel(btlQuote.offer)} reportId={btlReportId} /> : null}
+                report={btlQuote && (btlReportId || deal.status === "live") ? <BtlReportButton dealId={deal.id} label={quoter.label(btlQuote.basePence, "btl_report")} note={offerLabel(btlQuote.offer)} reportId={btlReportId} /> : null}
               />
             )}
 

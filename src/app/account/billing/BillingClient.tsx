@@ -28,6 +28,8 @@ interface Props {
   pack?: PackCopy | null;
   /** Batch 20: the welcome-kind credit is the starter pack's bonus. */
   packBought?: boolean;
+  /** Batch 29: "£X of your balance is bonus credit for … It expires on …" (pack-only members with bonus left). */
+  bonusLine?: string | null;
 }
 
 const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null);
@@ -141,6 +143,7 @@ export function BillingClient(props: Props) {
               </>
             )}
           </dl>
+          {props.bonusLine && <p className="mt-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">{props.bonusLine}</p>}
           {cycle && (
             <div className="mt-3">
               <div className="flex justify-between text-xs text-muted-foreground"><span>{cycle.planName ? `${cycle.planName} credit used this month` : "Welcome credit used"}</span><span>{pct}%</span></div>

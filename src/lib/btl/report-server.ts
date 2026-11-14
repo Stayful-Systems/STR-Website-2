@@ -25,7 +25,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { payerFor } from '../team';
 import { ask, pdLongLetRent, pdSaleValuation, pdSoldPrices } from '../broker';
 import { COST_PENCE } from '../broker/config';
-import { debit, getBalance, release, reserve, InsufficientCreditError } from '../credit/ledger';
+import { debit, release, reserve, spendableFor, InsufficientCreditError } from '../credit/ledger';
 import { isEnforcing } from '../credit/http';
 import { afterDebit } from '../credit/after-debit';
 import { startAction } from '../credit/action';
@@ -161,11 +161,11 @@ export async function runBtlReport(input: { userId: string; adminUser: boolean; 
   if (!quoteMatches(input.quotedBasePence, { purchaseBasePence: price })) return fail('price_changed', { pricePence: price });
   if (price > 0) {
     if (mustAfford) {
-      const bal = await getBalance(payer.payerId).catch(() => null);
-      const available = bal?.spendableBasePence ?? 0;
+      // Batch 29: what the report may spend (never the starter pack's restricted bonus).
+      const available = await spendableFor(payer.payerId, 'btl_report').catch(() => 0);
       if (available < price) return fail('insufficient_credit', { requiredPence: price, availablePence: Math.max(0, Math.round(available)) });
     }
-    const walk = (await quoterFor(payer.payerId, false)).quote(price);
+    const walk = (await quoterFor(payer.payerId, false)).quote(price, 'btl_report');
     if (walk.shortfallBasePence <= 0 && !faceMatches(input.quotedFacePence, walk.facePence)) return fail('price_changed', { pricePence: price });
   }
 

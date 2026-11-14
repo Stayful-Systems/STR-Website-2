@@ -111,6 +111,8 @@ export type AnalysisErrorCode =
   | 'rate_limited'
   | 'expired'
   | 'incomplete'
+  | 'pack_cap'
+  | 'pack_topup_needed'
   | 'failed';
 
 const MESSAGES: Record<AnalysisErrorCode, string> = {
@@ -133,6 +135,9 @@ const MESSAGES: Record<AnalysisErrorCode, string> = {
   expired: 'This Full analysis wasn’t started in time. Nothing was charged for it; start it again from the deal.',
   incomplete: 'We couldn’t get short-let figures for this property just now, so the Full analysis wasn’t charged. Please try again later.',
   failed: 'Something went wrong running the Full analysis. You haven’t been charged for it; please try again.',
+  // Batch 29 (src/lib/credit/pack-rules.ts PACK_COPY says the cap line with its number).
+  pack_cap: 'You’ve used your fresh reports. Top up or start Starter to keep going. Reports already run on a deal still open with your bonus credit. Nothing was charged.',
+  pack_topup_needed: 'Top up to add the second opinion: it needs credit beyond the starter pack. Nothing was charged.',
 };
 
 /**
@@ -153,6 +158,8 @@ export function analysisHttpStatus(code: AnalysisErrorCode): number {
       return 401;
     case 'seat_paused':
     case 'insufficient_credit':
+    case 'pack_cap':
+    case 'pack_topup_needed':
       return 402;
     case 'missing':
       return 404;

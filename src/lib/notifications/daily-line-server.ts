@@ -12,7 +12,7 @@ import { dailyDealsLineFor, dailyDealsMode } from '../listing/daily-deals';
 export async function dailyPriceLineFor(userId: string, adminUser: boolean): Promise<string> {
   const quoter = await quoterFor((await payerFor(userId)).payerId, adminUser);
   const dailyPence = quoter.pricing.todays5DailyPence;
-  const dailyLine = dailyDealsLineFor(quoter.label(quoter.admin ? 0 : dailyPence), dailyPence);
+  const dailyLine = dailyDealsLineFor(quoter.label(quoter.admin ? 0 : dailyPence, "todays_5"), dailyPence);
   const from = quoter.pricing.newPricingFrom ? new Date(quoter.pricing.newPricingFrom) : null;
   return quoter.admin
     ? 'Admin account: never charged.'

@@ -5,6 +5,7 @@ import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { profileSummaryFor } from "@/lib/profile/server";
 import { eyeLevelFor } from "@/lib/home/eye-server";
 import { loadHomeFigures } from "@/lib/home/server";
+import { packHomeCardsFor } from "@/lib/credit/pack-home-server";
 import { londonParts } from "@/lib/sms/uk-time";
 import { HomeView } from "./_components/HomeView";
 
@@ -35,14 +36,16 @@ export default async function HomePage() {
   if (!user) redirect("/login?redirect=/home");
 
   const now = new Date();
-  const [summary, figures, nameRow] = await Promise.all([
+  const [summary, figures, nameRow, pack] = await Promise.all([
     profileSummaryFor(user.id),
     loadHomeFigures({ userId: user.id, joinedAt: user.created_at ?? now.toISOString() }, now),
     hasServiceRole() ? createAdminClient().from("profiles").select("full_name").eq("id", user.id).maybeSingle() : Promise.resolve({ data: null }),
+    // Batch 29: the starter pack's offer card and the "picks are back" note.
+    packHomeCardsFor(user.id, now),
   ]);
   const level = await eyeLevelFor(summary);
   const fullName = (nameRow.data as { full_name?: string | null } | null)?.full_name?.trim() ?? "";
   const firstName = fullName ? fullName.split(/\s+/)[0] : null;
 
-  return <HomeView greeting={greeting(now, firstName)} level={level} figures={figures} />;
+  return <HomeView greeting={greeting(now, firstName)} level={level} figures={figures} pack={pack} />;
 }

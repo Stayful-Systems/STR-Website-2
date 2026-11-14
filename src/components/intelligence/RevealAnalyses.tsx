@@ -17,6 +17,12 @@ export interface RevealAnalysisItem {
   deepNote: string | null;
   fullList: number | null;
   deepList: number | null;
+  /** Batch 29: a pack-only member's Deep report needs credit beyond the pack: a top-up link, no price. */
+  deepTopUp?: boolean;
+  /** Batch 29: they have used their fresh reports: the offer instead of a Full analysis button. */
+  capLine?: string | null;
+  /** Batch 29: a saved analysis exists, so it opens instantly. */
+  ready?: boolean;
 }
 
 type Run = { state: "idle" } | { state: "running"; progress: number; message: string } | { state: "done"; reportId: string } | { state: "error"; message: string };
@@ -209,7 +215,10 @@ export function RevealAnalyses({ items, resumeId = null, returnPath }: { items: 
           const r = runs[i.dealId] ?? { state: "idle" };
           return (
             <li key={i.dealId} className="space-y-1.5">
-              <p className="font-medium">{i.title}</p>
+              <p className="font-medium">
+                {i.title}
+                {i.ready && r.state !== "done" && <span className="ml-2 rounded-full bg-[#B9D5C6]/20 px-2 py-0.5 text-[11px] font-semibold text-[#B9D5C6]">Report ready, opens instantly</span>}
+              </p>
               {r.state === "done" ? (
                 <Link href={`/reports/${encodeURIComponent(r.reportId)}`} className="inline-block rounded-md bg-[#B9D5C6] px-3 py-1.5 text-xs font-semibold text-[#1a2118]">
                   Open report
@@ -230,6 +239,11 @@ export function RevealAnalyses({ items, resumeId = null, returnPath }: { items: 
                       Deep report · {price(i.deep, i.deepNote, i.deepList)}
                     </button>
                   )}
+                  {i.deepTopUp && (
+                    <Link href="/account/billing/choose?pick=topup" className="rounded-md border border-white/30 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/10">
+                      Top up to add the second opinion
+                    </Link>
+                  )}
                   <select
                     aria-label={`Add ${i.title} to "Analyse all"`}
                     value={ticked[i.dealId] ?? ""}
@@ -241,6 +255,14 @@ export function RevealAnalyses({ items, resumeId = null, returnPath }: { items: 
                     {i.deep && <option value="deep">Deep report</option>}
                   </select>
                 </div>
+              )}
+              {i.capLine && r.state === "idle" && (
+                <p className="text-xs text-[#B9D5C6]">
+                  {i.capLine}{" "}
+                  <Link href="/account/billing/choose?pick=starter" className="font-semibold underline underline-offset-4">
+                    Top up or start Starter
+                  </Link>
+                </p>
               )}
               {r.state === "error" && (
                 <p role="alert" className="text-xs text-[#f3c1bd]">

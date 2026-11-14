@@ -8,8 +8,9 @@ import 'server-only';
  *                     active figures (activity_weekly_facts through
  *                     computeWeeklyActive, its drill-down stretched over the
  *                     range) for weeks 2–4
- *   loadMetaStatus    which settings are present (yes/no, never a value) and
- *                     the last 20 conversions, with no member named
+ *   loadMetaStatus    which settings are present (yes/no, never a value),
+ *                     the last 20 conversions, with no member named, and
+ *                     (Batch 29) the live site's last 30 days per event
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { adminEmails } from '../admin';
@@ -17,6 +18,7 @@ import { emailKey } from '../supabase/email-key';
 import { COUNTED_KINDS, QUALIFYING_KINDS } from '../activity/kinds';
 import { computeWeeklyActive, exclusionFor, type WeeklyFacts } from '../activity/metrics';
 import { metaStatus } from '../meta/env';
+import { META_EVENTS, type MetaEventName } from '../meta/events';
 import { buildSignupReport, weeksToCover, type ActiveWeeks, type SignupFact, type SignupReport } from './report';
 
 export type LoadStatus = 'ok' | 'no_service_role' | 'schema_missing' | 'failed';
@@ -92,26 +94,51 @@ export interface ConversionLine {
   browser: boolean;
 }
 
+/** Batch 29: the live site's conversions in the last 30 days, per event (every event listed, RepeatPurchase included). */
+export interface EventCount {
+  event: MetaEventName;
+  recorded: number;
+  sent: number;
+}
+
 export interface MetaStatusLoad {
   settings: ReturnType<typeof metaStatus>;
   status: LoadStatus;
   recent: ConversionLine[];
+  counts: EventCount[] | null;
+}
+
+const COUNT_DAYS = 30;
+
+async function eventCounts(now: Date): Promise<EventCount[] | null> {
+  const since = new Date(now.getTime() - COUNT_DAYS * 86_400_000).toISOString();
+  const { data, error } = await createAdminClient().from('meta_conversions').select('event_name, server_status').eq('env', 'production').gte('created_at', since).limit(10000);
+  if (error) return null;
+  const counts = new Map<string, { recorded: number; sent: number }>();
+  for (const r of (data ?? []) as { event_name: string; server_status: string }[]) {
+    const c = counts.get(r.event_name) ?? { recorded: 0, sent: 0 };
+    c.recorded += 1;
+    if (r.server_status === 'sent') c.sent += 1;
+    counts.set(r.event_name, c);
+  }
+  return META_EVENTS.map((event) => ({ event, recorded: counts.get(event)?.recorded ?? 0, sent: counts.get(event)?.sent ?? 0 }));
 }
 
 export async function loadMetaStatus(): Promise<MetaStatusLoad> {
   const settings = metaStatus();
-  if (!hasServiceRole()) return { settings, status: 'no_service_role', recent: [] };
+  if (!hasServiceRole()) return { settings, status: 'no_service_role', recent: [], counts: null };
   try {
     const { data, error } = await createAdminClient()
       .from('meta_conversions')
       .select('created_at, event_name, value_pence, env, consented, server_status, server_http, server_note, test_event, browser_claimed_at')
       .order('created_at', { ascending: false })
       .limit(20);
-    if (error) return { settings, status: schemaMissing(error) ? 'schema_missing' : 'failed', recent: [] };
+    if (error) return { settings, status: schemaMissing(error) ? 'schema_missing' : 'failed', recent: [], counts: null };
     type Row = { created_at: string; event_name: string; value_pence: number | null; env: string; consented: boolean; server_status: string; server_http: number | null; server_note: string | null; test_event: boolean; browser_claimed_at: string | null };
     return {
       settings,
       status: 'ok',
+      counts: await eventCounts(new Date()),
       recent: ((data ?? []) as Row[]).map((r) => ({
         at: r.created_at,
         event: r.event_name,
@@ -126,6 +153,6 @@ export async function loadMetaStatus(): Promise<MetaStatusLoad> {
       })),
     };
   } catch {
-    return { settings, status: 'failed', recent: [] };
+    return { settings, status: 'failed', recent: [], counts: null };
   }
 }

@@ -56,7 +56,10 @@ test('conversions in code already running after the response are awaited; reques
   assert.doesNotMatch(analyse + run, /logConversion/);
   assert.match(read('src/lib/stripe/deps.ts'), /recordConversion: \(c\) => recordConversion\(c\)/);
   assert.match(read('src/lib/profile/server.ts'), /await logConversion\(\{ name: 'ProfileComplete', userId \}\)/);
-  assert.match(read('src/app/api/billing/topup/route.ts'), /await logConversion\(\{ name: 'Purchase'/);
+  // Batch 29: a chosen top-up is a RepeatPurchase candidate, never a Purchase; the pack is the Purchase.
+  assert.match(read('src/app/api/billing/topup/route.ts'), /await logConversion\(\{ name: 'RepeatPurchase'/);
+  assert.doesNotMatch(read('src/app/api/billing/topup/route.ts'), /name: 'Purchase'/);
+  assert.match(read('src/app/api/billing/starter-pack/route.ts'), /await logConversion\(\{ name: 'Purchase', userId: member\.id, eventId: pi\.id, pack: /);
 });
 
 test('sign-up and sign-in bring the cookie choice across first, then attribution, then CompleteRegistration', () => {

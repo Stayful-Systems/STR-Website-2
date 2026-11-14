@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { DealCard } from '../marketplace/grid.ts';
 import { buildDaily, changeItem, changesPhrase, profileNudgeLine, teaserItem, visibleTeasers, type ChangeInput, type Section } from './message.ts';
 import { renderEmail } from './render-email.ts';
+import { packOfferSection } from '../credit/pack-offer.ts';
 
 const SITE = 'https://intelligence.stayful.co.uk';
 const NOW = new Date('2026-09-28T07:05:00Z');
@@ -321,6 +322,20 @@ test('no briefing: the email is byte for byte what it was (the £0 and switched-
   assert.deepEqual(renderEmail(buildDaily({ ...input, briefing: null })!.message), without);
   // The old order: the low-credit decision first, the unfunded notice before the changes.
   assert.deepEqual(buildDaily(input)!.message.sections.map((s) => s.key), ['notice', 'pick', 'teasers', 'notice', 'changes']);
+});
+
+test('Batch 29: the starter pack offer takes the low-credit decision’s place, never beside it, and never makes an email alone', () => {
+  const packOffer = packOfferSection({ totalPence: 1400, bonusPence: 900 }, SITE);
+  const input = { siteUrl: SITE, now: NOW, pick, teasers: [card()], changes: [change()], freeCutoffIso: null, unsubscribe: null, lowCredit, packOffer, profiles: [{ heading: null, pick, teasers: [card()] }] };
+  const built = buildDaily(input)!;
+  assert.equal(built.message.sections[0], packOffer, 'first, where the £5 decision sits');
+  assert.ok(!built.message.sections.includes(lowCredit), 'never both in one email');
+  const withBriefing = buildDaily({ ...input, briefing })!;
+  assert.equal(withBriefing.message.sections.at(-1), packOffer, 'last with a briefing, as the credit line');
+  const mail = renderEmail(built.message);
+  assert.match(mail.text, /Keep your bonus/);
+  assert.match(mail.text, /account\/billing\/choose\?pick=starter/);
+  assert.equal(buildDaily({ ...input, pick: null, teasers: [], changes: [], profiles: [{ heading: null, pick: null, teasers: [] }] }), null, 'nothing else to say: no email');
 });
 
 test('the changes-only email never carries a briefing', () => {

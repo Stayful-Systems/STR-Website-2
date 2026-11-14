@@ -53,3 +53,18 @@ test('bad input is refused with a reason', () => {
   const lowZero = parseLifecycleForm(get({ low_credit_pence: '0' }), now);
   assert.equal(lowZero.ok, true);
 });
+
+test('Batch 29: the starter pack guardrails save when sent, are checked, and an older form leaves them alone', () => {
+  const r = parseLifecycleForm(get({ pack_bonus_expiry_days: '30', pack_fresh_report_cap: '3', pack_early_offer_pence: '1500', pack_paying_headline_floor_pct: '10', pack_paying_headline_target_pct: '22', pack_cost_target_pence: '190', pack_cost_ceiling_pence: '250' }), now);
+  assert.ok(r.ok);
+  assert.equal(r.values.pack_bonus_expiry_days, 30);
+  assert.equal(r.values.pack_fresh_report_cap, 3);
+  assert.equal(r.values.pack_cost_ceiling_pence, 250);
+  const old = parseLifecycleForm(get({}), now);
+  assert.ok(old.ok);
+  assert.equal('pack_bonus_expiry_days' in old.values, false);
+  assert.equal(parseLifecycleForm(get({ pack_bonus_expiry_days: '0' }), now).ok, false);
+  assert.equal(parseLifecycleForm(get({ pack_paying_headline_floor_pct: '30', pack_paying_headline_target_pct: '22' }), now).ok, false, 'amber above green');
+  assert.equal(parseLifecycleForm(get({ pack_paying_rundown_paid_target_pct: '101' }), now).ok, false);
+  assert.equal(parseLifecycleForm(get({ pack_cost_target_pence: '300', pack_cost_ceiling_pence: '250' }), now).ok, false);
+});

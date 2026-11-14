@@ -17,6 +17,8 @@ import { usageByProfile } from "@/lib/profiles/usage";
 import { listFunnels } from "@/lib/funnels";
 import { getFunnelTierSettings, ownerPricing } from "@/lib/funnels/tiers-server";
 import { usageLine } from "@/lib/funnels/tiers";
+import { packStateForPayer } from "@/lib/credit/pack-server";
+import { NOT_PACK, PACK_COPY } from "@/lib/credit/pack-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +56,9 @@ export default async function UsagePage() {
   if (!user) redirect("/login?redirect=/account/usage");
   const admin = isAdminEmail(user.email);
   const { payerId } = await payerFor(user.id);
-  const [credit, quoter] = await Promise.all([teamCreditSnapshot({ id: user.id, admin }), quoterFor(payerId, admin)]);
+  const [credit, quoter, packState] = await Promise.all([teamCreditSnapshot({ id: user.id, admin }), quoterFor(payerId, admin), admin ? Promise.resolve(NOT_PACK) : packStateForPayer(payerId)]);
+  // Batch 29: how much of the balance is the starter pack's bonus, and when it expires.
+  const bonusLine = packState.packOnly && packState.bonusPence > 0 ? PACK_COPY.bonusLine(packState.bonusPence, packState.bonusExpiresAt) : null;
   const onPlan = Boolean(credit.cycle?.planCode);
   const period = await usagePeriodFor(payerId, onPlan);
   const { lines, truncated, failed } = await usageLinesSince(payerId, period.start);
@@ -62,7 +66,7 @@ export default async function UsagePage() {
   // Batch 13: the split by saved profile, for someone with two or more of their own.
   const saved = credit.member ? null : await profilesFor(user.id);
   const byProfile = saved?.readable && labelsShown(saved.all) && !failed ? usageByProfile(lines, saved.all) : [];
-  const daily = dailyDealsLineFor(quoter.label(admin ? 0 : quoter.pricing.todays5DailyPence), quoter.pricing.todays5DailyPence);
+  const daily = dailyDealsLineFor(quoter.label(admin ? 0 : quoter.pricing.todays5DailyPence, "todays_5"), quoter.pricing.todays5DailyPence);
   const member = credit.member;
   const allowance = credit.cycle?.allowancePence ?? 0;
   const usedPct = onPlan && allowance > 0 ? Math.min(100, Math.round(((credit.cycle?.usedPence ?? 0) / allowance) * 100)) : null;
@@ -96,6 +100,7 @@ export default async function UsagePage() {
               {usedPct !== null ? ` · ${usedPct}% of ${formatPence(allowance)} plan credit used` : ""}
             </p>
           </div>
+          {bonusLine && <p className="mt-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">{bonusLine}</p>}
           {admin ? (
             <p className="mt-3 text-sm text-muted-foreground">Admin account: usage is logged, never charged.</p>
           ) : failed ? (

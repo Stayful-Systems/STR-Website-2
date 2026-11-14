@@ -32,7 +32,17 @@ export interface AnalysisPanelProps {
   variant?: "primary" | "inline";
   /** The reminder the member came from (?from=), recorded when they start the analysis. */
   from?: "stage" | "kept_step" | null;
+  /**
+   * Batch 29 (src/lib/credit/pack-rules.ts): a pack-only member's limits. deepTopUp: the second opinion needs
+   * credit beyond the pack (the box becomes a top-up link). capLine: they have used their fresh reports, so
+   * the button becomes the Starter / top-up offer and nothing is charged.
+   */
+  pack?: { deepTopUp: boolean; capLine: string | null };
 }
+
+const CHOOSE_STARTER = "/account/billing/choose?pick=starter";
+const CHOOSE_TOPUP = "/account/billing/choose?pick=topup";
+const DEEP_TOP_UP = "Top up to add the second opinion";
 
 const WHAT_YOU_GET = [
   "Nearby short-let listings like it, with their nightly rates and occupancy",
@@ -45,9 +55,11 @@ const WHAT_YOU_GET = [
   "A PDF to keep or share",
 ];
 
-type Phase = { kind: "idle" } | { kind: "starting" } | { kind: "running"; progress: number; message: string } | { kind: "error"; message: string };
+type Phase = { kind: "idle" } | { kind: "starting" } | { kind: "running"; progress: number; message: string } | { kind: "error"; message: string; offer?: "starter" | "topup" };
 
-export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensDeal, recommendPmi = false, sampleHref, variant = "primary", from = null }: AnalysisPanelProps) {
+export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensDeal, recommendPmi = false, sampleHref, variant = "primary", from = null, pack }: AnalysisPanelProps) {
+  const capLine = pack?.capLine ?? null;
+  const deepTopUp = Boolean(pack?.deepTopUp);
   const [open, setOpen] = useState(initialOpen);
   const [withPmi, setWithPmi] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -56,7 +68,7 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
   const busy = phase.kind === "starting" || phase.kind === "running";
 
   async function confirm() {
-    if (busy || blocked) return;
+    if (busy || blocked || capLine) return;
     // Batch 21 (B5): "Top up to run it" opens the top-up dialog. It never starts
     // the run, which in shadow mode went ahead and debited into overdraft.
     if (label.state === "short") {
@@ -79,7 +91,7 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
           window.location.assign(`/reports/${encodeURIComponent(answer.reportId)}?back=${encodeURIComponent(`/deals/${dealId}`)}`);
           return;
         }
-        setPhase({ kind: "error", message: answer.error ?? "Something went wrong. Nothing was charged; please try again." });
+        setPhase({ kind: "error", message: answer.error ?? "Something went wrong. Nothing was charged; please try again.", ...(answer.code === "pack_cap" ? { offer: "starter" as const } : answer.code === "pack_topup_needed" ? { offer: "topup" as const } : {}) });
         // A new price (or a deal opened on the way) needs the page's own prices. Not for
         // insufficient credit (Batch 20): the reload closed the out-of-credit dialog it opened.
         if (answer.code === "price_changed") setTimeout(() => window.location.reload(), 3000);
@@ -188,7 +200,12 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
             <p className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">{blocked}</p>
           ) : (
             <>
-              {pmi && (
+              {pmi && deepTopUp && (
+                <p className="mt-3 rounded-md border border-border p-2 text-xs text-foreground">
+                  <Link href={CHOOSE_TOPUP} className="font-semibold text-primary hover:underline">{DEEP_TOP_UP}</Link> from PMI: it needs credit beyond the starter pack.
+                </p>
+              )}
+              {pmi && !deepTopUp && (
                 <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-md border border-border p-2 text-xs text-foreground">
                   <input type="checkbox" className="mt-0.5" checked={withPmi} disabled={busy} onChange={(e) => setWithPmi(e.target.checked)} />
                   <span>
@@ -204,6 +221,11 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{phase.message}</p>
                 </div>
+              ) : capLine ? (
+                <div className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-2 text-xs text-foreground">
+                  <p>{capLine}</p>
+                  <Link href={CHOOSE_STARTER} className="mt-2 inline-block rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Top up or start Starter</Link>
+                </div>
               ) : (
                 <button type="button" onClick={confirm} disabled={busy} className="mt-3 w-full rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60 sm:w-auto">
                   {phase.kind === "starting" ? "Starting…" : label.state === "short" ? `Top up to run it · ${label.main}` : `Run the Full analysis${text ? ` · ${text}` : ""}`}
@@ -214,7 +236,17 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
               </p>
             </>
           )}
-          {phase.kind === "error" && <p className="mt-2 text-xs text-destructive">{phase.message}</p>}
+          {phase.kind === "error" && (
+            <p className="mt-2 text-xs text-destructive">
+              {phase.message}
+              {phase.offer && (
+                <>
+                  {" "}
+                  <Link href={phase.offer === "starter" ? CHOOSE_STARTER : CHOOSE_TOPUP} className="font-semibold text-primary hover:underline">{phase.offer === "starter" ? "Top up or start Starter" : DEEP_TOP_UP}</Link>
+                </>
+              )}
+            </p>
+          )}
         </section>
       )}
     </div>

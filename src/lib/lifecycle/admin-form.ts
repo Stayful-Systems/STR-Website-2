@@ -58,6 +58,42 @@ function whole(raw: string | null, min: number, label: string): number | string 
 }
 
 /**
+ * Batch 29's starter pack guardrails and the "Pack → paying" lines: each saved
+ * when the form sends it (an older form without them changes none of them).
+ */
+export const PACK_FIELDS = [
+  { name: 'pack_bonus_expiry_days', key: LIFECYCLE_KEYS.packBonusExpiryDays, label: 'Bonus expiry days', min: 1, max: null },
+  { name: 'pack_fresh_report_cap', key: LIFECYCLE_KEYS.packFreshReportCap, label: 'Fresh reports for a pack-only member', min: 0, max: null },
+  { name: 'pack_early_offer_pence', key: LIFECYCLE_KEYS.packEarlyOfferPence, label: 'The early offer balance', min: 0, max: null },
+  { name: 'pack_picks_pause_days', key: LIFECYCLE_KEYS.packPicksPauseDays, label: 'Picks pause days', min: 1, max: null },
+  { name: 'places_cache_days', key: LIFECYCLE_KEYS.placesCacheDays, label: 'Places cache days', min: 0, max: null },
+  { name: 'pack_paying_headline_floor_pct', key: LIFECYCLE_KEYS.packPayingHeadlineFloorPct, label: 'Headline amber line (%)', min: 0, max: 100 },
+  { name: 'pack_paying_headline_target_pct', key: LIFECYCLE_KEYS.packPayingHeadlineTargetPct, label: 'Headline green line (%)', min: 0, max: 100 },
+  { name: 'pack_paying_rundown_paid_floor_pct', key: LIFECYCLE_KEYS.packPayingRundownPaidFloorPct, label: 'Step 5 amber line (%)', min: 0, max: 100 },
+  { name: 'pack_paying_rundown_paid_target_pct', key: LIFECYCLE_KEYS.packPayingRundownPaidTargetPct, label: 'Step 5 green line (%)', min: 0, max: 100 },
+  { name: 'pack_cost_target_pence', key: LIFECYCLE_KEYS.packCostTargetPence, label: 'Data cost green line (pence)', min: 0, max: null },
+  { name: 'pack_cost_ceiling_pence', key: LIFECYCLE_KEYS.packCostCeilingPence, label: 'Data cost amber line (pence)', min: 0, max: null },
+] as const;
+
+function packValues(get: (name: string) => string | null): Record<string, number> | string {
+  const out: Record<string, number> = {};
+  for (const f of PACK_FIELDS) {
+    if (get(f.name) === null) continue;
+    const v = whole(get(f.name), f.min, f.label);
+    if (typeof v === 'string') return v;
+    if (f.max !== null && v > f.max) return `${f.label} must be ${f.max} or less.`;
+    out[f.key] = v;
+  }
+  const pair = (lo: string, hi: string, msg: string) => (out[lo] !== undefined && out[hi] !== undefined && out[lo] > out[hi] ? msg : null);
+  return (
+    pair(LIFECYCLE_KEYS.packPayingHeadlineFloorPct, LIFECYCLE_KEYS.packPayingHeadlineTargetPct, 'The headline amber line must be at or below its green line.') ??
+    pair(LIFECYCLE_KEYS.packPayingRundownPaidFloorPct, LIFECYCLE_KEYS.packPayingRundownPaidTargetPct, 'The step 5 amber line must be at or below its green line.') ??
+    pair(LIFECYCLE_KEYS.packCostTargetPence, LIFECYCLE_KEYS.packCostCeilingPence, 'The data cost green line must be at or below its amber line.') ??
+    out
+  );
+}
+
+/**
  * The form's fields: the two dates (with "now" boxes that set the current
  * time), the pack's price and credit in pence, the snooze days, the
  * low-credit pence and the two inactivity day counts.
@@ -89,6 +125,8 @@ export function parseLifecycleForm(get: (name: string) => string | null, now: Da
   const pause = whole(get('picks_pause_inactive_days'), 1, 'Pause days');
   for (const v of [price, credit, snooze, low, reengage, pause]) if (typeof v === 'string') return { ok: false, message: v };
   if ((credit as number) < (price as number)) return { ok: false, message: 'The pack must give at least as much credit as it costs.' };
+  const pack = packValues(get);
+  if (typeof pack === 'string') return { ok: false, message: pack };
   const values: Record<string, unknown> = {
     [LIFECYCLE_KEYS.starterPackFrom]: dates.starter_pack_from,
     [LIFECYCLE_KEYS.starterPackPricePence]: price,
@@ -98,6 +136,7 @@ export function parseLifecycleForm(get: (name: string) => string | null, now: Da
     [LIFECYCLE_KEYS.inactiveReengageDays]: reengage,
     [LIFECYCLE_KEYS.picksPauseInactiveDays]: pause,
     [LIFECYCLE_KEYS.inactivityFrom]: dates.inactivity_from,
+    ...pack,
   };
   const summary = [
     dates.starter_pack_from ? `Starter pack for accounts created from ${dates.starter_pack_from}` : 'Starter pack off (new members get the welcome credit)',

@@ -134,6 +134,7 @@ export const SAMPLE_MEMBER: MemberValues = {
   welcome: { fullPence: 217, until: 'Friday 9 October' },
   firstDeepPence: 500,
   noMatch: 'Add Leeds and Bradford and I could show you 4 more deals.',
+  pack: { packOnly: true, bonusPence: 1350, bonusExpires: '2 December', freshLeft: 2 },
 };
 
 export interface ContentCheck {

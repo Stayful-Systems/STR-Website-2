@@ -346,6 +346,12 @@ export interface DailyInput {
    */
   lowCredit?: Section | null;
   /**
+   * Batch 29: the starter pack's one-off offer (src/lib/credit/pack-offer-server.ts
+   * packOfferSection). It sits where the low-credit decision sits and, on the
+   * day it goes, takes that place: the two are never in one email.
+   */
+  packOffer?: Section | null;
+  /**
    * Batch 23b: the morning briefing (src/lib/briefing): the greeting and
    * opener first, the nudges after the changes, and the credit line last.
    * Only in Today's 5 (never the changes-only email); absent, the email is
@@ -503,7 +509,9 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   const briefing = dealCount > 0 && input.briefing ? input.briefing : null;
   if (briefing) sections.push(briefingSection(briefing));
   // Batch 20: the low-credit decision leads, when it is due (it never makes an email on its own here).
-  if (input.lowCredit && !briefing) sections.push(input.lowCredit);
+  // Batch 29: the starter pack's offer takes its place on the day it goes (never both).
+  const creditNote = input.packOffer ?? input.lowCredit ?? null;
+  if (creditNote && !briefing) sections.push(creditNote);
   // Batch 25: what Stayful Intelligence saved for them, above Today's 5.
   if (saved.length > 0) sections.push(savedForYouSection(saved));
   const anyPick = picks.length > 0;
@@ -543,7 +551,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
     if (input.btlLaunch) sections.push(input.btlLaunch);
     sections.push(...credit);
-    if (input.lowCredit) sections.push(input.lowCredit);
+    if (creditNote) sections.push(creditNote);
   } else {
     sections.push(...credit);
     if (changes) sections.push(changes);

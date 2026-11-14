@@ -15,7 +15,7 @@ export interface BrowserConversion {
   name: MetaEventName;
   /** What Meta de-duplicates the browser and server copies on. */
   eventId: string;
-  /** Subscribe and Purchase only, excluding VAT. */
+  /** The payments only (Subscribe, Purchase, RepeatPurchase), excluding VAT. */
   valuePence: number | null;
 }
 

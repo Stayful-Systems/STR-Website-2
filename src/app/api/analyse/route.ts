@@ -5,7 +5,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { recordActivity } from '@/lib/activity/log';
 import { isAdminEmail } from '@/lib/admin';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
-import { insufficientCreditResponse } from '@/lib/credit/http';
+import { PackLimitError } from '@/lib/credit/pack-server';
+import { insufficientCreditPayload, insufficientCreditResponse } from '@/lib/credit/http';
 import { postcodeAreaOf } from '@/lib/listing/normalise';
 import { parseMarketGoals, type FinanceGoals } from '@/lib/market/goals';
 import { parseAnalysisInput } from '@/lib/analysis/input';
@@ -179,6 +180,10 @@ export async function POST(request: Request) {
     // The action name must match what was priced, so an enhanced report
     // reports itself as such in the out-of-credit payload.
     await release();
+    // Batch 29: a pack-only member's fresh-report cap or second opinion: the same 402 (the top-up / plan offer), with its own line.
+    if (err instanceof PackLimitError) {
+      return Response.json({ ...insufficientCreditPayload(err, reportAction(enhancedEnabled(input.enhancedRequested))), error: err.message, reason: err.reason }, { status: 402 });
+    }
     if (err instanceof InsufficientCreditError) {
       return insufficientCreditResponse(err, reportAction(enhancedEnabled(input.enhancedRequested)));
     }

@@ -220,7 +220,7 @@ async function firePending(mine: number, list: BrowserConversion[]): Promise<voi
     }
     if (!got) continue;
     if (!sendConversion(got)) unsent.set(got.key, got);
-    else if ((got.name === 'Purchase' || got.name === 'Subscribe') && stripeTimer) {
+    else if ((got.name === 'Purchase' || got.name === 'RepeatPurchase' || got.name === 'Subscribe') && stripeTimer) {
       clearInterval(stripeTimer);
       stripeTimer = null;
     }

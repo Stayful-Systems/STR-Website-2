@@ -3,7 +3,7 @@ import 'server-only';
 import type Stripe from 'stripe';
 import { createAdminClient } from '../supabase/admin';
 import { getStripe } from '../stripe/client';
-import { grant, getBalance } from '../credit/ledger';
+import { grant, grantPackBonus, getBalance } from '../credit/ledger';
 import { normaliseMobile } from '../credit/abuse';
 import { grantTopup } from '../stripe/grants';
 import { starterPackReceiptEmail } from '../email/billing';
@@ -223,7 +223,9 @@ export async function grantStarterPack(input: { paymentIntent: Stripe.PaymentInt
   // redelivery completes a run that died half-way and never doubles it.
   const bonus = Math.max(0, credit - price);
   if (price > 0) await grant(userId, 'topup', price, { sourceRef: `pi:${pi.id}`, description: 'Starter pack' });
-  if (bonus > 0) await grant(userId, 'welcome', bonus, { sourceRef: `pack_bonus:${pi.id}`, description: 'Starter pack bonus credit' });
+  // Batch 29: the bonus is restricted credit (deal opens, saved reports, daily
+  // picks) that expires; credit_grant_pack_bonus marks it in the same transaction.
+  if (bonus > 0) await grantPackBonus(userId, bonus, { sourceRef: `pack_bonus:${pi.id}`, description: 'Starter pack bonus credit' });
 
   // Then the move to "granted": the one call that makes it (the route or the
   // webhook, whichever is first) sends the receipt and queues Monday.

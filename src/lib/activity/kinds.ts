@@ -169,6 +169,9 @@ export const ACTIVITY_KINDS = {
   starter_pack: inApp('Bought the starter pack'),
   starter_pack_not_now: recordOnly('Said "not now" to the starter pack'),
   starter_pack_shown: recordOnly('Was shown the starter pack'),
+  // Batch 29: the one-off "start Starter or top up and your bonus stops expiring" offer at £15 (record only).
+  pack_offer_shown: recordOnly('Was shown the starter pack offer to keep their bonus'),
+  pack_offer_accepted: recordOnly('Paid again after the starter pack offer to keep their bonus'),
   low_credit_starter: inApp('Chose Starter when credit was low'),
   low_credit_topup: inApp('Chose a top-up when credit was low'),
 

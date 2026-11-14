@@ -35,7 +35,7 @@ export async function setDealStageAction(key: unknown, stage: unknown, from?: un
     // What THIS member pays for the open, from their own credit (Batch 10).
     const admin = isAdminEmail(user.email);
     const quoter = await quoterFor((await payerFor(user.id)).payerId, admin);
-    return { ok: false, error: 'needs_open', openPence: res.openPence, openLabel: priceText(quoter.label(admin ? 0 : res.openPence)) };
+    return { ok: false, error: 'needs_open', openPence: res.openPence, openLabel: priceText(quoter.label(admin ? 0 : res.openPence, 'deal_open')) };
   }
   return { ok: false, error: res.code };
 }

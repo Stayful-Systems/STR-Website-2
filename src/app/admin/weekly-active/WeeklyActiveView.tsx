@@ -24,6 +24,8 @@ import { WeeklyActiveTrend } from "./TrendChart";
 import { BackfillPanel, RetentionCheck } from "./BackfillPanel";
 import { setExclusionAction } from "./actions";
 import { AnalysisTakeUp } from "./AnalysisTakeUp";
+import { PackToPaying } from "./PackToPaying";
+import type { PackFilter } from "@/lib/admin/pack-paying";
 
 const MESSAGES: Record<string, { text: string; ok: boolean }> = {
   excluded: { text: "Switched off: that account is left out of every figure from now on, past weeks included.", ok: true },
@@ -84,7 +86,7 @@ function GroupCard({ group, thisWeek, lastWeek }: { group: Group; thisWeek: Week
  * them after checking the admin session). No reads here, so the same view
  * can be checked against made-up figures.
  */
-export function WeeklyActiveView({ status, message, report, msg, showAll }: { status: WeeklyActiveStatus; message: string | null; report: WeeklyActiveReport; msg: string | null; showAll: boolean }) {
+export function WeeklyActiveView({ status, message, report, msg, showAll, packFilter }: { status: WeeklyActiveStatus; message: string | null; report: WeeklyActiveReport; msg: string | null; showAll: boolean; packFilter?: PackFilter }) {
   const weeks = report.weeks;
   const newestFirst = [...weeks].reverse();
   const thisWeek = weeks.at(-1) ?? null;
@@ -204,6 +206,12 @@ export function WeeklyActiveView({ status, message, report, msg, showAll }: { st
 
       <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Full analyses and reminders</h2>
       <AnalysisTakeUp ready={status === "ok"} excluded={report.excluded.map((x) => x.id)} />
+
+      {/* Batch 29, section F */}
+      <h2 id="pack" className="mt-10 mb-3 text-lg font-semibold text-foreground">
+        Pack → paying
+      </h2>
+      <PackToPaying filter={packFilter ?? {}} />
 
       <h2 id="members" className="mt-10 mb-1 text-lg font-semibold text-foreground">
         Members

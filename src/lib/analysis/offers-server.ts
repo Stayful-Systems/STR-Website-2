@@ -13,6 +13,7 @@ import { getBillingSettings, getUnitCostTable } from '../credit/unit-costs';
 import { fullAnalysisRawCeiling } from '../credit/estimate';
 import { priceFor } from '../credit/pricing';
 import { analysisOffer, pmiAddonOffer, type Floors, type OfferMember, type OfferSettings, type OfferedPrices } from './offers';
+import { packStateForPayer } from '../credit/pack-server';
 
 const priceLabs = () => process.env.PRICELABS_AS_PRIMARY === 'true';
 
@@ -53,10 +54,11 @@ export async function offerMemberFor(userId: string): Promise<OfferMember | null
   try {
     const admin = createAdminClient();
     const payer = await payerFor(userId);
-    const [reveal, used, had] = await Promise.all([
+    const [reveal, used, had, pack] = await Promise.all([
       admin.from('signup_reveals').select('offer_deal_ids, viewed_at').eq('user_id', userId).maybeSingle(),
       admin.from('analysis_purchases').select('deal_id').eq('buyer_id', payer.payerId).in('offer', ['welcome', 'welcome_deep']).neq('status', 'failed'),
       hadDeepReport(payer.payerId),
+      packStateForPayer(payer.payerId),
     ]);
     const r = (reveal.error ? null : reveal.data) as { offer_deal_ids?: unknown; viewed_at?: string | null } | null;
     const offerDealIds = Array.isArray(r?.offer_deal_ids) ? (r!.offer_deal_ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
@@ -66,6 +68,8 @@ export async function offerMemberFor(userId: string): Promise<OfferMember | null
       paysForSelf: payer.payerId === userId,
       hadDeepReport: had,
       usedWelcomeOn: used.error ? offerDealIds : ((used.data ?? []) as { deal_id: string | null }[]).map((x) => x.deal_id).filter((x): x is string => Boolean(x)),
+      // Batch 29 (section G): a pack buyer's Deep welcome price waits for a further payment.
+      ...(pack.bought ? { packBuyer: true, packOnly: pack.packOnly, paidAgainAt: pack.paidAgainAt } : {}),
     };
   } catch (err) {
     console.error('[offers] member state unreadable:', (err as Error)?.message ?? err);
@@ -83,7 +87,8 @@ export async function offeredPricesFor(userId: string, dealId: string, withPmi: 
 export async function offeredPmiAddonFor(userId: string): Promise<ReturnType<typeof pmiAddonOffer>> {
   const [settings, floors, s] = await Promise.all([getBillingSettings(), offerFloors(), offerSettings()]);
   const payer = await payerFor(userId);
-  return pmiAddonOffer({ listPmiPence: settings.dealPricing.pmiAddonPence, hadDeepReport: await hadDeepReport(payer.payerId), settings: s, floors });
+  const [had, pack] = await Promise.all([hadDeepReport(payer.payerId), packStateForPayer(payer.payerId)]);
+  return pmiAddonOffer({ listPmiPence: settings.dealPricing.pmiAddonPence, hadDeepReport: had, settings: s, floors, packOnly: pack.packOnly });
 }
 
 /**

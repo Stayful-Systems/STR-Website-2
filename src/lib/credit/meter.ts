@@ -3,7 +3,7 @@ import { currentMeter, type MeterContext } from './context.ts';
 import { currentBrokerQuestion } from '../broker/tag.ts';
 import { priceFor, round4 } from './pricing.ts';
 import { getUnitCostTable } from './unit-costs.ts';
-import { actionAlreadyCharged, debit, getBalance, InsufficientCreditError } from './ledger.ts';
+import { actionAlreadyCharged, debit, spendableFor, InsufficientCreditError } from './ledger.ts';
 import { isEnforcing } from './http.ts';
 
 /**
@@ -124,8 +124,9 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
   if (billable && known !== null && !ctx?.reservationId && !charge.skipPreflight && (isEnforcing() || ctx?.requireCredit)) {
     const { basePence } = priceFor(table, charge.provider, charge.unit, known, ctx?.markupOverride);
     if (basePence > 0) {
-      const bal = await getBalance(userId!);
-      if (bal.spendableBasePence < basePence) throw new InsufficientCreditError(basePence, bal.spendableBasePence);
+      // Batch 29: what THIS action may spend (never the starter pack's restricted bonus unless it pays for it).
+      const spendable = await spendableFor(userId!, ctx?.action ?? '');
+      if (spendable < basePence) throw new InsufficientCreditError(basePence, spendable);
     }
   }
 
