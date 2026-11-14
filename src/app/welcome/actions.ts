@@ -30,7 +30,7 @@ export async function answerQuestionAction(input: { questionId: string; value: u
  * back on the daily average, so the member's rate follows it again. Recorded as a
  * profile_edited on the finance question.
  */
-export async function useTodaysRateAction(): Promise<AnswerOutcome> {
+export async function todaysRateAction(): Promise<AnswerOutcome> {
   const { supabase, user } = await currentUser();
   if (!user) return { ok: false, error: 'Please sign in again.' };
   return answerQuestion({ userId: user.id, email: user.email ?? null, supabase, questionId: 'finance', value: { useAverage: true }, notSure: false, editing: true });

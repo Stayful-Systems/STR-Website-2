@@ -17,7 +17,7 @@ import { applyStageAfterOpen } from '@/lib/listing/stage-server';
 import { activeProfileFor } from '@/lib/profiles/server';
 import { logActivity } from '@/lib/activity/log';
 import { noteRevealKeep } from '@/lib/intelligence/reveal-server';
-import { useTodaysRateAction } from '@/app/welcome/actions';
+import { todaysRateAction } from '@/app/welcome/actions';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -159,5 +159,5 @@ export async function shareDealAction(dealId: unknown): Promise<ShareActionResul
  */
 export async function resetRateAction(): Promise<void> {
   await member();
-  await useTodaysRateAction();
+  await todaysRateAction();
 }

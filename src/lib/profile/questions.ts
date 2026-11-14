@@ -51,7 +51,7 @@ import { DEFAULT_FINANCE } from '../listing/deal.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import { ABOUT_OPTIONS, DEFAULT_ABOUT, RISK_TO_APPETITE, ROLE_OPTIONS, STAGE_TO_ABOUT, TIME_TO_MANAGEMENT, aboutOption, pathFor, roleList, stageOf, type AboutYou, type Role } from './about.ts';
 import { btlBandFromCash, budgetFromCash, priceLine } from './buying-power.ts';
-import { AVAILABLE_DEAL_TYPES, availableTypes, COMING_SOON_DEAL_TYPES, DEAL_TYPE_LABELS, DEAL_TYPE_LONG_LABELS, DEAL_TYPES, dealTypesFor, isAvailableDealType, kindsFor } from './deal-types.ts';
+import { AVAILABLE_DEAL_TYPES, availableTypes, COMING_SOON_DEAL_TYPES, DEAL_TYPE_LABELS, DEAL_TYPES, dealTypesFor, kindsFor } from './deal-types.ts';
 import type { ImageKey } from './images.ts';
 
 export type SectionId = 'about' | 'buy' | 'r2r' | 'source' | 'manage';
