@@ -4,6 +4,8 @@ import { planAllRegionKeyStats, warmAllRegionKeyStats } from "@/lib/market/key-s
 import { getUnitCostTable } from "@/lib/credit/unit-costs";
 import { unitKey } from "@/lib/credit/costs";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
+import { syncLiveMortgageRate } from "@/lib/listing/live-rate-sync-server";
+import { rateToSync, syncSummary } from "@/lib/listing/live-rate-sync";
 
 // ─── Market snapshot warm-up ────────────────────────────────────────
 // Vercel cron (vercel.json), 04:45 UTC: buys the shared PropertyData answers
@@ -15,6 +17,10 @@ import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-aut
 // go stale after their month; members' reports never buy them).
 //
 //   ?dry=1   say what it would buy and roughly what that costs; buys nothing
+//
+// Batch 30: once the rates are in, today's average is written into every
+// profile that has not set its own rate (live-rate-sync.ts); nothing is
+// written when there is no rate, and the dry run only says what it would do.
 //
 //   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/market-warm?dry=1"
 
@@ -40,6 +46,7 @@ async function dryRun(enabled: boolean): Promise<Response> {
     enabled,
     mortgageRates: buyRates ? "would buy (1 credit)" : "cached, fresh",
     keyStats: { wouldBuy: keyStats.wouldBuy, fresh: keyStats.fresh.length, deferred: keyStats.deferred },
+    rateSync: syncSummary(rateToSync(rates.value, new Date()), undefined, true),
     estimatedCostPence: Math.round(costPence * 10) / 10,
     snapshot: "built from the hourly cache; a cold build looks up long-let rents for areas whose cached rent has expired (at most area_rent_daily_attempts a day)",
   };
@@ -56,6 +63,8 @@ export async function GET(request: Request) {
   // The national mortgage averages are house spend: bought here once a day
   // (one PropertyData credit) so a member's report only ever reads them.
   const rates = await ask(pdMortgageRates, {}, { mode: "cron" });
+  // Batch 30: today's average into every profile on it (skipped with no rate; never throws).
+  const rateSync = await syncLiveMortgageRate(rates.value, new Date());
   // Region key stats: 30 credits a region, at most four regions a run, so a
   // full refresh spreads over three days each month. Batch 21 (D23): skipped
   // when the rates took too long, so the snapshot below always gets its time.
@@ -73,6 +82,7 @@ export async function GET(request: Request) {
   const body = {
     cards: cards === null ? "building" : cards.length,
     mortgageRates: rates.value ? (rates.cached ? "cached" : "bought") : "unavailable",
+    rateSync: rateSync.line,
     keyStats: keyStats === "skipped" ? "skipped (out of time)" : keyStats ? { warmed: keyStats.warmed, fresh: keyStats.fresh.length, deferred: keyStats.deferred, failed: keyStats.failed } : "failed",
     ms: Date.now() - started,
   };

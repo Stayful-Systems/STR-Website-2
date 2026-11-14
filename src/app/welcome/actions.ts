@@ -25,6 +25,17 @@ export async function answerQuestionAction(input: { questionId: string; value: u
   return answerQuestion({ userId: user.id, email: user.email ?? null, supabase, questionId: String(input.questionId), value: input.value, notSure: input.notSure === true, editing: input.editing === true });
 }
 
+/**
+ * Batch 30: "Use today's average" (the rate's "change" screen and the profile page):
+ * back on the daily average, so the member's rate follows it again. Recorded as a
+ * profile_edited on the finance question.
+ */
+export async function useTodaysRateAction(): Promise<AnswerOutcome> {
+  const { supabase, user } = await currentUser();
+  if (!user) return { ok: false, error: 'Please sign in again.' };
+  return answerQuestion({ userId: user.id, email: user.email ?? null, supabase, questionId: 'finance', value: { useAverage: true }, notSure: false, editing: true });
+}
+
 export async function previewMatchCountAction(where: WhereAnswer): Promise<number | null> {
   const { user } = await currentUser();
   if (!user) return null;

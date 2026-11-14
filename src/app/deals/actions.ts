@@ -17,6 +17,7 @@ import { applyStageAfterOpen } from '@/lib/listing/stage-server';
 import { activeProfileFor } from '@/lib/profiles/server';
 import { logActivity } from '@/lib/activity/log';
 import { noteRevealKeep } from '@/lib/intelligence/reveal-server';
+import { useTodaysRateAction } from '@/app/welcome/actions';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -150,4 +151,13 @@ export async function shareDealAction(dealId: unknown): Promise<ShareActionResul
     console.warn('[deal-share] referral code failed:', (err as Error)?.message ?? err);
   }
   return { ok: true, url: siteUrl(`/d/${share.token}`) };
+}
+
+/**
+ * Batch 30: "Use today's average" under a deal's profit range: back on the daily
+ * average. Every figure on the card and the page behind it then reads the same rate.
+ */
+export async function resetRateAction(): Promise<void> {
+  await member();
+  await useTodaysRateAction();
 }

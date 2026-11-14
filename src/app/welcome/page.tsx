@@ -5,7 +5,7 @@ import { ensureWelcomeGrant } from "@/lib/credit/welcome";
 import { quizPathFor, welcomeReturnPath } from "@/lib/auth/landing";
 import { GOALS_EDITOR_HREF, NAV_TARGETS } from "@/lib/nav";
 import { rankedAreasForQuiz } from "@/lib/onboarding/server";
-import { isQuestionId, questionsFor } from "@/lib/profile/questions";
+import { isQuestionId, questionById, questionsFor } from "@/lib/profile/questions";
 import { isRevealMember } from "@/lib/intelligence/reveal-server";
 import { ThinkingBackgroundMount } from "./_components/ThinkingBackgroundMount";
 import { accuracySettings, creditViewFor, markQuizOpened, matchCountFor, profileSummaryFor, progressView } from "@/lib/profile/server";
@@ -59,7 +59,8 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
   // The profile cannot be read (schema not run): never trap anyone here.
   if (!summary) redirect(returnTo);
 
-  const editing = q && isQuestionId(q) && questionsFor(summary.answers).some((x) => x.id === q) ? q : null;
+  // A retired question that is still editable (max rent, the rate, what's holding you back) opens from the profile page too (Batch 30).
+  const editing = q && isQuestionId(q) && (questionsFor(summary.answers).some((x) => x.id === q) || questionById(q)?.retired === "editable") ? q : null;
   if (!editing && summary.progress.complete) redirect(GOALS_EDITOR_HREF);
 
   const now = new Date();

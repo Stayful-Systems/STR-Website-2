@@ -34,6 +34,9 @@ export interface SettingsFormValues {
   picksPauseInactiveDays: number;
   /** Batch 29: the starter pack guardrails and the "Pack → paying" lines, by form field name. */
   pack: Record<string, number>;
+  /** Batch 30: the shorter quiz's start (UK time) and the Home card's day. */
+  quizShorterFromLocal: string;
+  homeBlockerCardDay: number;
 }
 
 function Field({ label, name, defaultValue, hint, type = 'number' }: { label: string; name: string; defaultValue: string | number; hint?: string; type?: string }) {
@@ -92,6 +95,11 @@ export function SettingsForm({ values }: { values: SettingsFormValues }) {
         <Field label="Paid within 14 days of running down: green at (%)" name="pack_paying_rundown_paid_target_pct" defaultValue={values.pack.pack_paying_rundown_paid_target_pct} />
         <Field label="Data cost per pack-only member: green to (pence)" name="pack_cost_target_pence" defaultValue={values.pack.pack_cost_target_pence} />
         <Field label="Data cost per pack-only member: amber to (pence)" name="pack_cost_ceiling_pence" defaultValue={values.pack.pack_cost_ceiling_pence} />
+      </div>
+      <h3 className="mt-6 text-sm font-semibold text-foreground">Shorter signup questions (Batch 30)</h3>
+      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+        <DateField label="Shorter quiz live from (UK time)" name="quiz_shorter_from" defaultValue={values.quizShorterFromLocal} hint="/admin/profile compares members who started before and after this moment. Set when the schema section first ran." />
+        <Field label="Home “What’s holding you back?” card from day" name="home_blocker_card_day" defaultValue={values.homeBlockerCardDay} hint="Days since sign-up. 0 shows it from the first visit (use that to test, then put it back to 3)." />
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button type="submit" disabled={pending} className={button}>

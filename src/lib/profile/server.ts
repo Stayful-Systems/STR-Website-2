@@ -26,6 +26,8 @@ import { redirect } from 'next/navigation';
 import { after } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
+import { ask, pdMortgageRates } from '../broker';
+import { rateToSync } from '../listing/live-rate-sync';
 import { teamOf } from '../team';
 import { isAdminEmail } from '../admin';
 import { DEFAULT_GOALS, parseMarketGoals, type MarketGoals } from '../market/goals';
@@ -280,7 +282,15 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   let next: Answers;
   if (input.notSure) next = clearAnswer(q.id, s.answers);
   else {
-    const r = applyAnswer(q.id, input.value, s.answers);
+    let value = input.value;
+    // Batch 30: "Use today's average" on the rate screen: their deposit stays, the rate is the cached live average
+    // (or what they have, if the cache has none), and they are back on the daily average (rateSet false).
+    if (q.id === 'finance' && value && typeof value === 'object' && (value as { useAverage?: unknown }).useAverage === true) {
+      const finance = s.answers.goals.finance;
+      const today = rateToSync((await ask(pdMortgageRates, {}, { mode: 'cron', cacheOnly: true }).catch(() => null))?.value ?? null, new Date());
+      value = { depositPct: finance.depositPct, mortgageRatePct: today?.ratePct ?? finance.mortgageRatePct, useAverage: true, rateAsOf: today?.asOf ?? null };
+    }
+    const r = applyAnswer(q.id, value, s.answers);
     if (!r.ok) return fail(r.error);
     next = r.answers;
   }

@@ -81,6 +81,8 @@ import { NOT_PACK, PACK_COPY, capReached, deepNeedsTopUp } from "@/lib/credit/pa
 import { reportReadyDealIds } from "@/lib/analysis/saved-server";
 import { AnalysisPreview } from "../_components/AnalysisPreview";
 import { BasicVsDetailed } from "../_components/BasicVsDetailed";
+import { RateNote } from "../_components/RateNote";
+import { cardDisplayFor } from "@/lib/marketplace/card-display";
 
 export const metadata: Metadata = { title: "Deal — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -145,6 +147,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // Batch 28: which type this member sees the deal as. A deal in the pool only as a buy-to-let deal
   // (btlOnly) never shows a short-let figure; one that is both shows both, the chosen one first.
   const btlLooker = btlLookerFor(goals, savedAreas, tailoring?.about ?? null);
+  // Batch 30: the rate and range-end lines beside the profit range.
+  const display = cardDisplayFor(tailoring, cashBuyerOf(goals));
   const typed = { kind: deal.kind, band: deal.band, project: projectCard, btl_pass: btlCard !== null };
   const btlOnly = dealTypeOf(typed) === "btl";
   const asBtl = dealTypeFor(typed, btlLooker.types ?? []) === "btl";
@@ -409,6 +413,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   )}
                   {lenderText && !asBtl && <p className="mt-0.5 text-xs text-muted-foreground">{lenderText}</p>}
                 </div>
+                {/* Batch 30: how the range was worked out: the mortgage rate in it (with "change"), and which end of it their minimum is judged on. */}
+                {!asBtl && display.rateLine && deal.kind === "sale" && <RateNote line={display.rateLine} rateSet={display.rateSet} next={`/deals/${deal.id}`} className="mt-1 text-xs" />}
+                {!asBtl && (deal.kind === "sale" ? display.endSale : display.endRent) && <p className="text-xs text-muted-foreground">{deal.kind === "sale" ? display.endSale : display.endRent}</p>}
                 {/* Batch 17: a Project deal's works and value added; "value added", never "uplift", which is the short-let gain over a long let. */}
                 {pn && <p className="mt-1 text-sm font-medium text-foreground">{projectSummary(pn)}</p>}
                 {uplift && !pn && !asBtl && <p className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{uplift}</p>}

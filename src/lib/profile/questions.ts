@@ -1133,7 +1133,10 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
       const rate = num(f.mortgageRatePct);
       if (deposit === null || deposit < 0 || deposit > 100) return fail('Enter a deposit between 0% and 100%.');
       if (rate === null || rate < 0 || rate > 25) return fail('Enter a mortgage rate between 0% and 25%.');
-      return { ok: true, answers: { ...a, goals: { ...goals, finance: parseFinanceGoals({ ...goals.finance, depositPct: deposit, mortgageRatePct: rate, rateSet: true }) } } };
+      // Batch 30: "Use today's average" keeps the member on the daily average (rateSet false); typing a rate makes it theirs.
+      const average = f.useAverage === true;
+      const rateAsOf = average && typeof f.rateAsOf === 'string' ? f.rateAsOf : goals.finance.rateAsOf;
+      return { ok: true, answers: { ...a, goals: { ...goals, finance: parseFinanceGoals({ ...goals.finance, depositPct: deposit, mortgageRatePct: rate, rateSet: !average, rateAsOf }) } } };
     }
     case 'min_profit':
     case 'r2r_min_profit': {
