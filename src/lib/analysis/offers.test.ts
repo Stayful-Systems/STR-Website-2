@@ -62,3 +62,36 @@ test('labels and the admin limit', () => {
   assert.equal(offerLabel(null), null);
   assert.equal(maxSafeDiscountPct(list, floors), 56);
 });
+
+// ── Batch 29, section G: the Deep report's welcome price and starter pack buyers ──
+const deep = (m: Partial<OfferMember>, at = now) => analysisOffer({ dealId: 'd1', withPmi: true, list, member: { ...member, ...m }, settings, floors, now: at });
+
+test('a pack-only member is never shown or charged a Deep welcome or first-time price', () => {
+  const p = deep({ packBuyer: true, packOnly: true, paidAgainAt: null });
+  assert.equal(p.offer, null);
+  assert.equal(p.firstDeep, false);
+  assert.equal(pmiAddonOffer({ listPmiPence: 200, hadDeepReport: false, settings, floors, packOnly: true }).offer, null);
+  // The full analysis's welcome price is unchanged for them.
+  assert.equal(offer({ member: { ...member, packBuyer: true, packOnly: true, paidAgainAt: null } }).offer, 'welcome');
+});
+
+test('the Deep welcome price unlocks once a pack buyer has paid again', () => {
+  assert.equal(deep({ packBuyer: true, packOnly: false, paidAgainAt: '2026-10-03T10:00:00Z' }).offer, 'welcome_deep');
+  // Not pack-only (a trial) but never paid again: no welcome price yet.
+  assert.notEqual(deep({ packBuyer: true, packOnly: false, paidAgainAt: null }).offer, 'welcome_deep');
+});
+
+test('paid again after the 7-day window closed: the window starts again from that payment, own reveal deals only', () => {
+  const paid = '2026-10-20T10:00:00Z';
+  const m = { packBuyer: true, packOnly: false, paidAgainAt: paid };
+  assert.equal(deep(m, new Date('2026-10-21T10:00:00Z')).offer, 'welcome_deep');
+  assert.notEqual(deep(m, new Date('2026-10-27T10:00:01Z')).offer, 'welcome_deep', 'seven days after the payment it closes');
+  assert.notEqual(analysisOffer({ dealId: 'other', withPmi: true, list, member: { ...member, ...m }, settings, floors, now: new Date('2026-10-21T10:00:00Z') }).offer, 'welcome_deep');
+  // The full analysis's own window is not reopened.
+  assert.equal(analysisOffer({ dealId: 'd1', withPmi: false, list, member: { ...member, ...m }, settings, floors, now: new Date('2026-10-21T10:00:00Z') }).offer, null);
+});
+
+test('members who joined before the pack keep Batch 22 exactly', () => {
+  assert.equal(deep({}).offer, 'welcome_deep');
+  assert.equal(deep({}, new Date('2026-10-09T09:00:00Z')).offer, 'first_deep');
+});

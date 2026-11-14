@@ -24,7 +24,7 @@ import 'server-only';
  * went), so a failed debit there is a charge the house absorbs, logged.
  */
 import { createAdminClient } from '../supabase/admin';
-import { debitFace, debitFor, getBalance, InsufficientCreditError } from '../credit/ledger';
+import { balanceFor, debitFace, debitFor, InsufficientCreditError } from '../credit/ledger';
 import { getBillingSettings, getUnitCostTable } from '../credit/unit-costs';
 import { priceFor } from '../credit/pricing';
 import { isAdminEmail } from '../admin';
@@ -102,8 +102,9 @@ async function settle(admin: Admin, guardId: string, spec: ChargeSpec, retriable
   let charged = 0;
   let txId: number | null = null;
   for (let attempt = 0; !free && attempt < 2 && txId === null; attempt++) {
-    const balance = await getBalance(o.userId).catch(() => null);
-    // R2-13: never the credit an open reservation holds (the ledger refuses it too).
+    // R2-13: never the credit an open reservation holds; Batch 29: nor the starter pack's
+    // restricted bonus (calls, texts and emails are paid from other credit). The ledger refuses both too.
+    const balance = await balanceFor(o.userId, o.kind === 'text' ? TEXT_ACTION : o.kind === 'email' ? EMAIL_ACTION : CALL_ACTION).catch(() => null);
     charged = capToBalance(o.pricePence, balance ? callablePence(balance, maxSpendRate(balance.rates)) : 0);
     if (charged <= 0) break;
     try {

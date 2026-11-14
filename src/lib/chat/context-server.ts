@@ -27,6 +27,8 @@ import { intelligenceMember } from '../intelligence/view-server';
 import type { MemberValues } from '../knowledge/placeholders';
 import type { SavedProfile } from '../profiles/rules';
 import type { MemberContext } from '../today/selection';
+import { packStateFor } from '../credit/pack-server';
+import { packMemberValues } from '../credit/pack-rules';
 
 export interface ChatContext {
   profile: SavedProfile | null;
@@ -72,6 +74,8 @@ export async function chatContext(user: Pick<User, 'id' | 'email'>, admin: boole
     firstDeepPence: deep.offer === 'first_deep' ? Math.round(deep.fullPence + deep.pmiPence) : null,
     // Part F's line comes from the full view's what-if look-up, not here.
     noMatch: null,
+    // Batch 29: a pack-only member's bonus and fresh reports (admins are never pack-only).
+    pack: admin ? null : packMemberValues(await packStateFor(user.id)),
   };
   return { profile, paused, member, credit, values, settings };
 }

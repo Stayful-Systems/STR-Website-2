@@ -373,7 +373,7 @@ type HomePageProps = {
    * On a Project deal's report (Batch 17), the reader's own locked figures,
    * read with the page and never stored on the report.
    */
-  savedAnalysis?: { dealId: string; analysedAt: string | null; pmi: PriceLabel | null; pmiNote?: string | null; projectMine?: ReportProjectMine | null };
+  savedAnalysis?: { dealId: string; analysedAt: string | null; pmi: PriceLabel | null; pmiNote?: string | null; pmiTopUp?: boolean; projectMine?: ReportProjectMine | null };
 };
 
 /**
@@ -1993,7 +1993,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                   </div>
                 )}
                 {/* A Full analysis without PMI's opinion can add it later, at the add-on price only. */}
-                {!r.secondOpinion && savedAnalysis?.pmi && r.reportId && <PmiAddonCard reportId={r.reportId} label={savedAnalysis.pmi} note={savedAnalysis.pmiNote ?? null} />}
+                {!r.secondOpinion && savedAnalysis?.pmi && r.reportId && <PmiAddonCard reportId={r.reportId} label={savedAnalysis.pmi} note={savedAnalysis.pmiNote ?? null} topUp={Boolean(savedAnalysis.pmiTopUp)} />}
               </div>
             </section>
           )}

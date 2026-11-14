@@ -129,6 +129,8 @@ export interface GrantLite {
   spendRate: number;
   expiresAt: string | null;
   createdAt: string;
+  /** Batch 29: the starter pack's bonus while restricted (src/lib/credit/pack-rules.ts). */
+  restricted?: boolean;
 }
 
 export interface QuotePart {
@@ -159,26 +161,59 @@ const time = (iso: string | null): number => {
  * rates `credit_debit` (supabase/schema.sql) takes them: priority, then
  * expiry (none last), then age; expired and empty grants skipped; each grant
  * at its own frozen rate. The negative overdraft grant is never walked.
+ *
+ * Batch 29: a restricted grant (the starter pack's bonus) is walked only when
+ * `bonusOk` (the action is one it pays for: credit_bonus_pays_for), and then
+ * first; otherwise it is skipped. Without `bonusOk` (an unknown action) it is
+ * skipped, as the database does.
  */
-export function allocate(grants: readonly GrantLite[], basePence: number, now: Date = new Date()): Quote {
-  const want = round4(Math.max(0, basePence));
-  const live = grants
-    .filter((g) => g.remainingPence > 0 && g.spendRate > 0 && (g.expiresAt === null || time(g.expiresAt) > now.getTime()))
-    .slice()
-    .sort((a, b) => a.priority - b.priority || time(a.expiresAt) - time(b.expiresAt) || time(a.createdAt) - time(b.createdAt));
-  let remaining = want;
+export function allocate(grants: readonly GrantLite[], basePence: number, now: Date = new Date(), opts: { bonusOk?: boolean } = {}): Quote {
+  return allocateSteps(grants, [{ basePence, bonusOk: Boolean(opts.bonusOk) }], now);
+}
+
+/**
+ * Several debits in a row against the same grants (a Full analysis that opens
+ * the deal: the open, then the analysis, then PMI), each with its own
+ * bonusOk, as the ledger would take them one after another. One Quote for the
+ * total.
+ */
+export function allocateSteps(grants: readonly GrantLite[], steps: readonly { basePence: number; bonusOk: boolean }[], now: Date = new Date()): Quote {
+  const left = new Map<string, number>();
+  for (const g of grants) left.set(g.id, g.remainingPence);
+  const usable = grants.filter((g) => g.remainingPence > 0 && g.spendRate > 0 && (g.expiresAt === null || time(g.expiresAt) > now.getTime()));
+  let want = 0;
   let face = 0;
+  let shortfall = 0;
   const parts: QuotePart[] = [];
-  for (const g of live) {
-    if (remaining <= 0) break;
-    const takeBase = Math.min(remaining, round4(g.remainingPence / g.spendRate));
-    if (takeBase <= 0) continue;
-    const takeFace = Math.min(g.remainingPence, round4(takeBase * g.spendRate));
-    parts.push({ grantId: g.id, kind: g.kind, basePence: round4(takeBase), facePence: round4(takeFace), rate: g.spendRate });
-    face += takeFace;
-    remaining = round4(remaining - takeBase);
+  for (const step of steps) {
+    const base = round4(Math.max(0, step.basePence));
+    want = round4(want + base);
+    const live = usable
+      .filter((g) => step.bonusOk || !g.restricted)
+      .slice()
+      .sort((a, b) => Number(Boolean(step.bonusOk && b.restricted)) - Number(Boolean(step.bonusOk && a.restricted)) || a.priority - b.priority || time(a.expiresAt) - time(b.expiresAt) || time(a.createdAt) - time(b.createdAt));
+    let remaining = base;
+    for (const g of live) {
+      if (remaining <= 0) break;
+      const has = left.get(g.id) ?? 0;
+      if (has <= 0) continue;
+      const takeBase = Math.min(remaining, round4(has / g.spendRate));
+      if (takeBase <= 0) continue;
+      const takeFace = Math.min(has, round4(takeBase * g.spendRate));
+      const prev = parts.find((p) => p.grantId === g.id);
+      if (prev) {
+        prev.basePence = round4(prev.basePence + takeBase);
+        prev.facePence = round4(prev.facePence + takeFace);
+      } else {
+        parts.push({ grantId: g.id, kind: g.kind, basePence: round4(takeBase), facePence: round4(takeFace), rate: g.spendRate });
+      }
+      left.set(g.id, round4(has - takeFace));
+      face += takeFace;
+      remaining = round4(remaining - takeBase);
+    }
+    if (remaining > 0.0001) shortfall = round4(shortfall + remaining);
   }
-  return { basePence: want, facePence: round4(face), parts, shortfallBasePence: remaining > 0.0001 ? round4(remaining) : 0 };
+  return { basePence: want, facePence: round4(face), parts, shortfallBasePence: shortfall };
 }
 
 /** "£4", "£5.20", "78p", "43p": whole pence, pounds shown only from £1. */

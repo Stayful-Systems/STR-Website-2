@@ -55,6 +55,7 @@ import { profileNudgesFor } from "../profile/server";
 import { mandatoryIncompleteFor } from "../profile/mandatory-server";
 import { lowCreditNoticesFor, markLowCreditTold } from "../credit/low-credit-server";
 import { lowCreditSection } from "../credit/low-credit";
+import { markPackOfferEmailed, packOfferSection, packOfferStates } from "../credit/pack-offer-server";
 import { inactivePausedIds } from "../inactivity/server";
 import { allProfilesFor, latestRestartsFor } from "../profiles/server";
 import { afterRestart } from "../profiles/reset";
@@ -556,7 +557,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // their daily slot is already spent. The pick itself is chosen at send
     // time, after page reads a dry run does not make.
     const ids = memberIds;
-    const [slots, plans, alertsOn, pending, lowNotices, savedForYou, briefings] = await Promise.all([
+    const [slots, plans, alertsOn, pending, lowNotices, savedForYou, briefings, packOffers] = await Promise.all([
       slotsInUse(admin, ids, "daily"),
       todayPlans(admin, members.map(memberContextOf), new Date(), { create: false }),
       trackedAlertsOn(admin, ids),
@@ -566,6 +567,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // R3-140: what else the email would carry: the "Saved for you" lines and the morning briefing (read-only).
       savedForYouFor(admin, [...new Set(ids)], siteUrl()),
       emailBriefingsFor(siteUrl(), [...new Set(ids)]),
+      // Batch 29: who would get the starter pack's £15 offer in place of it (read-only).
+      packOfferStates(admin, [...new Set(ids)].filter((id) => payerIn(payers, id).payerId === id)),
     ]);
     return done({
       status: 200,
@@ -596,6 +599,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               changes: changes.map((c) => ({ id: c.id, type: c.alertType })),
               changesSwitch: alertsOn.has(m.id),
               lowCredit: lowNotices.get(m.id)?.kind ?? null,
+              packOffer: packOffers.get(m.id)?.due ?? false,
               savedForYou: (savedForYou.get(m.id) ?? []).length,
               briefing: briefings.has(m.id),
               // Batch 28: the buy-to-let launch line would ride this email (once).
@@ -1264,6 +1268,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // anyone due it who pays for themselves (a team's owner decides for it).
   // Never on the admin's test send, which marks nothing.
   const lowNotices = opts.ignoreToday ? new Map<string, never>() : await lowCreditNoticesFor(admin, dailyIds.filter((id) => payerIn(payers, id).payerId === id));
+  // Batch 29: the starter pack's £15 offer, once, where the £5 decision sits (never both on one
+  // day: lowCreditNoticesFor already left out anyone it is due for). Never on the admin's test send.
+  const packOffers = opts.ignoreToday ? new Map<string, never>() : await packOfferStates(admin, dailyIds.filter((id) => payerIn(payers, id).payerId === id));
   // Batch 25: deals Stayful Intelligence saved for them and did not ring them about ("Saved for you").
   const savedForYou = opts.ignoreToday ? new Map<string, never>() : await savedForYouFor(admin, dailyIds, siteUrl());
 
@@ -1625,6 +1632,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // Batch 12: "Your profile is 60% done" while it is not complete (never for a team member).
       profileNudge: nudges.has(userId) ? { percent: nudges.get(userId)!, url: `${base.replace(/\/$/, "")}/profile`, pence: settings.profileCompletePence } : null,
       lowCredit: lowNotices.has(userId) ? lowCreditSection(lowNotices.get(userId)!, base) : null,
+      packOffer: packOffers.get(userId)?.due ? packOfferSection(packOffers.get(userId)!, base) : null,
       answerToken,
       // Part E: About you is the member's own, so any seat's answer is theirs.
       actFast: seats.some((m) => wantsActFast(tailoringBySeat.get(m.key) ?? null)),
@@ -1684,6 +1692,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     summary.emails += 1;
     // Batch 20: the low-credit decision went with it: once a cycle.
     if (lowNotices.has(userId)) await markLowCreditTold(admin, userId);
+    // Batch 29: the £15 offer went with it: never again.
+    if (packOffers.get(userId)?.due) await markPackOfferEmailed(admin, userId);
     // Batch 25: the "Saved for you" deals in it are told.
     if (built.savedIds.length > 0) await markSavedEmailed(admin, userId, built.savedIds);
     // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.

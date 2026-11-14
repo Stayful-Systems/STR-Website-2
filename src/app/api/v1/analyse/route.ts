@@ -2,6 +2,7 @@ import { requireScope, isResponse, apiJson, apiError } from '@/lib/api/auth';
 import { parseAnalysisInput } from '@/lib/analysis/input';
 import { reserveAnalysis, runAnalysis, GeocodeError } from '@/lib/analysis/run';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
+import { PackLimitError } from '@/lib/credit/pack-server';
 import { saveApiReport } from '@/lib/api/reports-write';
 
 export const maxDuration = 60;
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
   try {
     prepared = await reserveAnalysis(parsed.input, opts);
   } catch (err) {
+    if (err instanceof PackLimitError) return apiError('insufficient_credit', err.message);
     if (err instanceof InsufficientCreditError) {
       return apiError('insufficient_credit', 'Not enough credit to run this analysis. Top up and try again.');
     }

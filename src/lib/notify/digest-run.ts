@@ -63,6 +63,7 @@ import { profileNudgesFor } from '../profile/server';
 import { mandatoryIncompleteFor } from '../profile/mandatory-server';
 import { lowCreditNoticesFor, markLowCreditTold, sendLowCreditAlone } from '../credit/low-credit-server';
 import { lowCreditSection } from '../credit/low-credit';
+import { markPackOfferEmailed, packOfferSection, packOfferStates } from '../credit/pack-offer-server';
 import { inactivePausedIds } from '../inactivity/server';
 import { allProfilesFor } from '../profiles/server';
 import { labelFor, profileLinks, seatsFor, type Seat } from '../profiles/rules';
@@ -292,6 +293,9 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   // for themselves: at the top of their email, or alone when there is nothing else.
   // Batch 21 (D22): a dry run reads no card from Stripe for them.
   const lowNotices = await lowCreditNoticesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now, { preview: opts.dry });
+  // Batch 29: the starter pack's £15 offer, once, where the £5 decision sits. Only ever riding an email that
+  // was going anyway (never alone); lowCreditNoticesFor already left out anyone it is due for, so never both.
+  const packOffers = await packOfferStates(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now);
   // Batch 23b: the morning briefings the 06:40 pass stored, in one read (none: the emails go as they were).
   const briefings = await emailBriefingsFor(base, open.filter(wantsTeasers).map((p) => p.id), now);
   // Batch 25: deals Stayful Intelligence saved for them and did not ring them about ("Saved for you").
@@ -359,6 +363,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       unsubscribe: { label: 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
       profileNudge: nudges.has(p.id) ? { percent: nudges.get(p.id)!, url: profileUrl, pence: settings.profileCompletePence } : null,
       lowCredit: lowNotices.has(p.id) ? lowCreditSection(lowNotices.get(p.id)!, base) : null,
+      packOffer: packOffers.get(p.id)?.due ? packOfferSection(packOffers.get(p.id)!, base) : null,
       // Batch 14: "Yes, more like this" / "Not for me" under each teaser, on this send's own token (Part F),
       // and "Act fast · new today" for a member whose next deal is this month (Part E; About you is the member's, so any seat's).
       answerToken: token,
@@ -410,6 +415,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         free: freeTeasers.has(p.id) ? 'no_credit' : incomplete.has(p.id) ? 'profile_incomplete' : null,
         payer: payers.get(p.id)?.payerId ?? p.id,
         lowCredit: lowNotices.get(p.id)?.kind ?? null,
+        packOffer: packOffers.get(p.id)?.due ?? false,
         savedForYou: built.savedIds.length,
         // Batch 28: the buy-to-let launch line rides this email (once; marked when it really goes).
         btlLaunch: built.btlLaunch,
@@ -446,6 +452,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     summary.emails += 1;
     // Batch 20: the low-credit decision went with it: once a cycle.
     if (lowNotices.has(p.id)) await markLowCreditTold(admin, p.id, now);
+    // Batch 29: the £15 offer went with it: never again.
+    if (packOffers.get(p.id)?.due) await markPackOfferEmailed(admin, p.id, now);
     // Batch 25: the "Saved for you" deals in it are told.
     if (built.savedIds.length > 0) await markSavedEmailed(admin, p.id, built.savedIds, now);
     // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.

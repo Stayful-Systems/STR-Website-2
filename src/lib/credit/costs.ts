@@ -69,6 +69,7 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'google', unit: 'geocode', label: 'Google Geocoding', unitCostPence: 0.005 * USD, notes: '$5 per 1,000' },
   { provider: 'google', unit: 'reverse_geocode', label: 'Google reverse geocoding', unitCostPence: 0.005 * USD, notes: '$5 per 1,000' },
   { provider: 'google', unit: 'places_nearby', label: 'Google Places nearby search (Enterprise SKU)', unitCostPence: 0.035 * USD, notes: '$35 per 1,000 — rating field puts it on the Enterprise SKU; 6 per report' },
+  { provider: 'google', unit: 'places_nearby_cached', label: 'Google Places nearby (cached result)', unitCostPence: 0, notes: 'Free: Batch 29 reuses a nearby search for places_cache_days (about 100m grid)' },
   { provider: 'google', unit: 'autocomplete_session', label: 'Google Places autocomplete (per session)', unitCostPence: 0.017 * USD, notes: '$17 per 1,000 sessions; one charge per completed address' },
   // ── Ticketmaster (free tier today; priced nominally so it scales) ──
   { provider: 'ticketmaster', unit: 'event_search', label: 'Ticketmaster Discovery event search', unitCostPence: 0.5, notes: 'free tier today; nominal' },

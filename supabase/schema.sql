@@ -563,6 +563,20 @@ create index if not exists credit_grants_user_idx on public.credit_grants (user_
 alter table public.credit_grants enable row level security;
 drop policy if exists "Users can read own credit grants" on public.credit_grants;
 create policy "Users can read own credit grants" on public.credit_grants for select using (auth.uid() = user_id);
+-- Batch 29 (starter pack guardrails): a grant's scope. 'pack_bonus' marks the
+-- starter pack's bonus credit (never the ordinary welcome credit). While
+-- scope_lifted_at is null the grant is RESTRICTED: it pays only for the actions
+-- credit_bonus_pays_for allows, and it carries an expiry. A further payment
+-- (top-up, auto top-up or plan invoice) lifts both: scope_lifted_at is stamped
+-- and expires_at cleared. The rule is written up in src/lib/credit/pack-rules.ts.
+alter table public.credit_grants add column if not exists scope text;
+alter table public.credit_grants add column if not exists scope_lifted_at timestamptz;
+do $$
+begin
+  alter table public.credit_grants drop constraint if exists credit_grants_scope_check;
+  alter table public.credit_grants add constraint credit_grants_scope_check check (scope is null or scope in ('pack_bonus'));
+end $$;
+create index if not exists credit_grants_scope_idx on public.credit_grants (user_id) where scope is not null;
 
 -- ── Append-only ledger (the usage page) ──
 create table if not exists public.credit_transactions (
@@ -738,6 +752,59 @@ language sql security definer set search_path = public stable as $$
   from g;
 $$;
 
+-- Batch 29: the actions a RESTRICTED grant (the starter pack's bonus, scope
+-- 'pack_bonus' and not lifted) may pay for: the ones that cost us almost
+-- nothing. Opening a deal, a daily pick (and the per-day Today's 5 charge), and
+-- a saved analysis (the reservation action 'full_analysis_saved', or a
+-- 'full_analysis' debit whose meta says reused). Everything else, and every
+-- action added later, is paid from the member's other credit. Mirrored, and
+-- checked against this list by a test, in src/lib/credit/pack-rules.ts.
+create or replace function public.credit_bonus_pays_for(p_action text, p_meta jsonb default '{}'::jsonb)
+returns boolean language sql immutable set search_path = public as $$
+  select coalesce(p_action, '') in ('deal_open', 'cron:sourcing', 'todays_5', 'full_analysis_saved')
+      or (coalesce(p_action, '') = 'full_analysis' and coalesce(p_meta ->> 'reused', '') = 'true');
+$$;
+
+-- Batch 29: spendable base pence for ONE action. U is the unrestricted grants'
+-- base value, B the restricted bonus's; open reservations are split by whether
+-- their action may use the bonus (R_ok) or not (R_other). An action the bonus
+-- pays for sees U + B − R_ok − R_other (exactly credit_available's figure);
+-- any other action sees U − R_other − max(0, R_ok − B): the bonus-paid holds
+-- are taken from the bonus first, as the debit's walk takes them.
+create or replace function public.credit_spendable_for(p_user uuid, p_action text, p_meta jsonb default '{}'::jsonb)
+returns numeric language sql security definer set search_path = public stable as $$
+  with g as (
+    select
+      coalesce(sum(remaining_pence / spend_rate) filter (where not (scope is not distinct from 'pack_bonus' and scope_lifted_at is null)), 0) as u,
+      coalesce(sum(remaining_pence / spend_rate) filter (where scope is not distinct from 'pack_bonus' and scope_lifted_at is null), 0) as b
+    from credit_grants
+    where user_id = p_user and (expires_at is null or expires_at > now())
+  ), r as (
+    select
+      coalesce(sum(max_base_pence - settled_base_pence) filter (where credit_bonus_pays_for(action)), 0) as r_ok,
+      coalesce(sum(max_base_pence - settled_base_pence) filter (where not credit_bonus_pays_for(action)), 0) as r_other
+    from credit_reservations
+    where user_id = p_user and status = 'open' and expires_at > now()
+  )
+  select case when credit_bonus_pays_for(p_action, p_meta)
+    then g.u + g.b - r.r_ok - r.r_other
+    else g.u - r.r_other - greatest(0, r.r_ok - g.b)
+  end
+  from g, r;
+$$;
+
+-- Batch 29: the displayed (face) pence a face debit for this action may use:
+-- every unexpired grant with credit, less a restricted bonus the action may
+-- not spend. Open reservations are the caller's to allow for (see
+-- credit_debit_face's R2-13 check and src/lib/voice/charge.ts).
+create or replace function public.credit_face_available_for(p_user uuid, p_action text)
+returns numeric language sql security definer set search_path = public stable as $$
+  select coalesce(sum(remaining_pence), 0)
+  from credit_grants
+  where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now())
+    and (credit_bonus_pays_for(p_action) or not (scope is not distinct from 'pack_bonus' and scope_lifted_at is null));
+$$;
+
 create or replace function public.credit_reserve(p_user uuid, p_action text, p_action_id uuid, p_max_base numeric, p_ttl interval default interval '10 minutes')
 returns uuid language plpgsql security definer set search_path = public as $$
 declare
@@ -745,7 +812,8 @@ declare
   v_id uuid;
 begin
   perform 1 from profiles where id = p_user for update;
-  select spendable_base_pence into v_spendable from credit_available(p_user);
+  -- Batch 29: what THIS action may spend (a restricted bonus only counts for the actions it pays for).
+  v_spendable := credit_spendable_for(p_user, p_action);
   if coalesce(v_spendable, 0) < p_max_base then
     raise exception 'insufficient_credit' using errcode = 'P0402',
       detail = json_build_object('required_base', p_max_base, 'spendable_base', coalesce(v_spendable, 0))::text;
@@ -767,6 +835,9 @@ $$;
 -- spendable balance is checked first. p_allow_negative lets a call the provider
 -- has already been paid for overdraw into a per-member 'overdraft' adjustment
 -- grant (rate 1, base pence) which later grants repay.
+-- Batch 29: a restricted grant (the starter pack's bonus) is walked only for
+-- an action credit_bonus_pays_for allows, and then first; for every other
+-- action it is skipped. The action is the meta's, else the reservation's.
 create or replace function public.credit_debit(p_user uuid, p_base_pence numeric, p_reservation uuid default null, p_allow_negative boolean default false, p_meta jsonb default '{}'::jsonb)
 returns bigint language plpgsql security definer set search_path = public as $$
 declare
@@ -777,6 +848,9 @@ declare
   v_take_base numeric;
   v_take_grant numeric;
   v_overdraft uuid;
+  v_res_action text;
+  v_action text;
+  v_bonus_ok boolean;
   g record;
 begin
   if v_remaining <= 0 then return null; end if;
@@ -784,9 +858,13 @@ begin
 
   if p_reservation is not null then
     update credit_reservations set settled_base_pence = settled_base_pence + v_remaining
-    where id = p_reservation and user_id = p_user;
-  else
-    select spendable_base_pence into v_spendable from credit_available(p_user);
+    where id = p_reservation and user_id = p_user
+    returning action into v_res_action;
+  end if;
+  v_action := coalesce(nullif(p_meta ->> 'action', ''), v_res_action);
+  v_bonus_ok := credit_bonus_pays_for(v_action, p_meta);
+  if p_reservation is null then
+    v_spendable := credit_spendable_for(p_user, v_action, p_meta);
     if coalesce(v_spendable, 0) < v_remaining and not p_allow_negative then
       raise exception 'insufficient_credit' using errcode = 'P0402',
         detail = json_build_object('required_base', v_remaining, 'spendable_base', coalesce(v_spendable, 0))::text;
@@ -805,7 +883,8 @@ begin
   for g in
     select id, remaining_pence, spend_rate from credit_grants
     where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now())
-    order by priority, expires_at nulls last, created_at
+      and (v_bonus_ok or not (scope is not distinct from 'pack_bonus' and scope_lifted_at is null))
+    order by (v_bonus_ok and scope is not distinct from 'pack_bonus' and scope_lifted_at is null) desc, priority, expires_at nulls last, created_at
     for update
   loop
     exit when v_remaining <= 0;
@@ -842,6 +921,9 @@ $$;
 
 -- Reverses a debit (fully, or p_base_pence of it) back into the grants it
 -- consumed; expired grants receive their share as a new adjustment grant.
+-- Batch 29: except an expired starter pack bonus, whose share goes back to the
+-- same (expired) grant: a new adjustment grant would turn bonus credit into
+-- credit that buys anything and never expires. The sweep then zeroes it.
 create or replace function public.credit_refund(p_transaction_id bigint, p_base_pence numeric default null, p_reason text default null)
 returns bigint language plpgsql security definer set search_path = public as $$
 declare
@@ -864,10 +946,10 @@ begin
   insert into credit_transactions (user_id, kind, amount_pence, base_pence, action_id, action, provider, unit, description, metadata)
   values (t.user_id, 'refund', 0, v_base_back, t.action_id, t.action, t.provider, t.unit, coalesce(p_reason, 'Refund'), jsonb_build_object('refund_of', t.id))
   returning id into v_tx;
-  for a in select al.*, g.expires_at, g.kind, g.priority from credit_allocations al join credit_grants g on g.id = al.grant_id where al.transaction_id = t.id loop
+  for a in select al.*, g.expires_at, g.kind, g.priority, g.scope from credit_allocations al join credit_grants g on g.id = al.grant_id where al.transaction_id = t.id loop
     v_grant_back := round(a.grant_pence * v_ratio, 4);
     if v_grant_back <= 0 then continue; end if;
-    v_expired := a.expires_at is not null and a.expires_at <= now();
+    v_expired := a.expires_at is not null and a.expires_at <= now() and a.scope is distinct from 'pack_bonus';
     if v_expired then
       insert into credit_grants (user_id, kind, priority, amount_pence, remaining_pence, spend_rate, description)
       values (t.user_id, 'adjustment', 3, v_grant_back, v_grant_back, a.spend_rate, 'Refund of an expired-cycle debit')
@@ -945,15 +1027,25 @@ end;
 $$;
 
 -- Sweep: write 'expire' rows for every grant past its expiry that still has credit (keeps the ledger honest).
+-- Batch 29: a starter pack bonus whose member paid again before it expired is
+-- lifted (restriction and expiry gone) instead of expired: the payment trigger
+-- does this at once, this catches a payment recorded late. Paid (top-up)
+-- grants never carry an expiry, so they never reach this sweep.
 create or replace function public.credit_expire_due()
 returns int language plpgsql security definer set search_path = public as $$
 declare
   g record;
   n int := 0;
 begin
-  for g in select id, user_id, remaining_pence from credit_grants where expires_at is not null and expires_at <= now() and remaining_pence > 0 for update skip locked loop
+  update credit_grants cg set scope_lifted_at = now(), expires_at = null
+   where cg.scope = 'pack_bonus' and cg.scope_lifted_at is null
+     and cg.expires_at is not null and cg.expires_at <= now() and cg.remaining_pence > 0
+     and member_paid_again_at(cg.user_id) <= cg.expires_at;
+  for g in select id, user_id, remaining_pence, scope from credit_grants where expires_at is not null and expires_at <= now() and remaining_pence > 0 for update skip locked loop
     insert into credit_transactions (user_id, kind, amount_pence, grant_id, description, metadata)
-    values (g.user_id, 'expire', -g.remaining_pence, g.id, 'Plan credit expired', jsonb_build_object('reason', 'expired'));
+    values (g.user_id, 'expire', -g.remaining_pence, g.id,
+      case when g.scope = 'pack_bonus' then 'Starter pack bonus expired' else 'Plan credit expired' end,
+      jsonb_build_object('reason', 'expired'));
     update credit_grants set remaining_pence = 0 where id = g.id;
     n := n + 1;
   end loop;
@@ -1004,6 +1096,9 @@ $$;
 revoke execute on function public.credit_setting_num(text, numeric) from public, anon, authenticated;
 revoke execute on function public.credit_spend_rate(text) from public, anon, authenticated;
 revoke execute on function public.credit_available(uuid) from public, anon, authenticated;
+revoke execute on function public.credit_bonus_pays_for(text, jsonb) from public, anon, authenticated;
+revoke execute on function public.credit_spendable_for(uuid, text, jsonb) from public, anon, authenticated;
+revoke execute on function public.credit_face_available_for(uuid, text) from public, anon, authenticated;
 revoke execute on function public.credit_reserve(uuid, text, uuid, numeric, interval) from public, anon, authenticated;
 revoke execute on function public.credit_release(uuid) from public, anon, authenticated;
 revoke execute on function public.credit_debit(uuid, numeric, uuid, boolean, jsonb) from public, anon, authenticated;
@@ -4993,6 +5088,9 @@ revoke all on public.member_attribution from anon, authenticated;
 -- within the release window (src/lib/tracking/config.ts).
 --   dedupe_key          CompleteRegistration:<user>, ProfileComplete:<user>,
 --                       FirstReport:<user>, Subscribe:<user>, Purchase:<payment intent>
+--                       (Batch 29: Purchase:<user>, the starter pack only, once
+--                       per member), RepeatPurchase:<user> (Batch 29: a pack
+--                       buyer's first payment after the pack, once per member)
 --   event_id            what Meta de-duplicates the browser and server copies on
 --                       (a random id, the Stripe invoice or the PaymentIntent)
 --   env                 production | preview | development: only production
@@ -5026,7 +5124,9 @@ create index if not exists meta_conversions_event_idx on public.meta_conversions
 do $$
 begin
   alter table public.meta_conversions drop constraint if exists meta_conversions_event_check;
-  alter table public.meta_conversions add constraint meta_conversions_event_check check (event_name in ('CompleteRegistration', 'ProfileComplete', 'FirstReport', 'Subscribe', 'Purchase'));
+  -- Batch 29 added RepeatPurchase. Batch 22f's mc_signup / mc_pack_paid / funnel_live are
+  -- deliberately NOT here yet (left as they were; see docs/batch-29.md, question 15).
+  alter table public.meta_conversions add constraint meta_conversions_event_check check (event_name in ('CompleteRegistration', 'ProfileComplete', 'FirstReport', 'Subscribe', 'Purchase', 'RepeatPurchase'));
   alter table public.meta_conversions drop constraint if exists meta_conversions_status_check;
   alter table public.meta_conversions add constraint meta_conversions_status_check check (server_status in ('held', 'pending', 'sending', 'sent', 'failed', 'skipped'));
   alter table public.meta_conversions drop constraint if exists meta_conversions_note_check;
@@ -7507,6 +7607,10 @@ create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log 
 -- the base pence the walk takes may not exceed credit_available's spendable
 -- base (the grants' base value less open reservations). This is the one
 -- definition: the Teams section's earlier copy was removed (Review R3, R3-153).
+-- Batch 29: a restricted starter pack bonus is walked only for an action
+-- credit_bonus_pays_for allows (none of today's face debits: calls, texts,
+-- emails, nudges and seats are all paid from other credit), and the R2-13
+-- check uses that action's spendable base (credit_spendable_for).
 create or replace function public.credit_debit_face(p_user uuid, p_face_pence numeric, p_meta jsonb default '{}'::jsonb)
 returns bigint language plpgsql security definer set search_path = public as $$
 declare
@@ -7517,19 +7621,20 @@ declare
   v_total_base numeric := 0;
   v_take_grant numeric;
   v_take_base numeric;
+  v_action text := nullif(p_meta ->> 'action', '');
+  v_bonus_ok boolean;
   g record;
 begin
   if v_remaining <= 0 then return null; end if;
   perform 1 from profiles where id = p_user for update;
+  v_bonus_ok := credit_bonus_pays_for(v_action, p_meta);
 
-  select coalesce(sum(remaining_pence), 0) into v_available
-  from credit_grants
-  where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now());
+  v_available := credit_face_available_for(p_user, v_action);
   if v_available < v_remaining then
     raise exception 'insufficient_credit' using errcode = 'P0402',
       detail = json_build_object('required_face', v_remaining, 'available_face', v_available)::text;
   end if;
-  select coalesce(spendable_base_pence, 0) into v_spendable_base from credit_available(p_user);
+  v_spendable_base := coalesce(credit_spendable_for(p_user, v_action, p_meta), 0);
 
   insert into credit_transactions (user_id, kind, amount_pence, base_pence, action_id, action, description, metadata)
   values (
@@ -7541,7 +7646,8 @@ begin
   for g in
     select id, remaining_pence, spend_rate from credit_grants
     where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now())
-    order by priority, expires_at nulls last, created_at
+      and (v_bonus_ok or not (scope is not distinct from 'pack_bonus' and scope_lifted_at is null))
+    order by (v_bonus_ok and scope is not distinct from 'pack_bonus' and scope_lifted_at is null) desc, priority, expires_at nulls last, created_at
     for update
   loop
     exit when v_remaining <= 0;
@@ -8047,5 +8153,368 @@ update public.billing_settings
  where key = 'today_mix'
    and jsonb_typeof(value->'all') = 'object'
    and not (value->'all' ? 'btl');
+
+notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 29: starter pack guardrails and the pay-again measure
+-- =========================
+-- What a £10 starter pack buyer who never pays again can cost us in data.
+-- The rule, the cap and the pack-only definition are written up once, for
+-- Batches 25 and 27 and anyone after, in src/lib/credit/pack-rules.ts.
+--   * The pack's £20 bonus (credit_grants.scope 'pack_bonus', marked by
+--     credit_grant_pack_bonus) pays only for deal opens, saved analyses and
+--     daily picks (credit_bonus_pays_for, in the credit section, where
+--     credit_reserve / credit_debit / credit_debit_face / credit_refund /
+--     credit_expire_due were edited in place) and expires pack_bonus_expiry_days
+--     after it is granted. The £10 the member paid never expires and buys anything.
+--   * A further payment (member_payments: topup, auto_topup, subscription)
+--     lifts both, at once (the trigger below) or at the expiry sweep.
+--   * A pack-only member may run pack_fresh_report_cap fresh analyses
+--     (pack_fresh_reports, claimed under the profile lock).
+-- Settings (edited on /admin/lifecycle; src/lib/lifecycle/settings.ts):
+--   pack_bonus_expiry_days       the bonus expires this many days after it is granted
+--   pack_fresh_report_cap        fresh full analyses a pack-only member may run
+--   pack_early_offer_pence       the one-off "start Starter or top up" offer at this total balance
+--   pack_picks_pause_days        a pack-only member's picks pause after this many days without a visit
+--   places_cache_days            Google Places nearby results are reused this long (about 100m grid)
+--   pack_paying_headline_floor_pct / _target_pct         paid again within 60 days (/admin/weekly-active)
+--   pack_paying_rundown_paid_floor_pct / _target_pct     paid again within 14 days of running down
+--   pack_cost_target_pence / pack_cost_ceiling_pence     data cost per pack-only member
+insert into public.billing_settings (key, value) values
+  ('pack_bonus_expiry_days', '30'),
+  ('pack_fresh_report_cap', '3'),
+  ('pack_early_offer_pence', '1500'),
+  ('pack_picks_pause_days', '7'),
+  ('places_cache_days', '90'),
+  ('pack_paying_headline_floor_pct', '10'),
+  ('pack_paying_headline_target_pct', '22'),
+  ('pack_paying_rundown_paid_floor_pct', '35'),
+  ('pack_paying_rundown_paid_target_pct', '50'),
+  ('pack_cost_target_pence', '190'),
+  ('pack_cost_ceiling_pence', '250')
+on conflict (key) do nothing;
+
+-- member_paid_again_at(user): when the member first paid for anything other
+-- than the starter pack, ever (null: never). A top-up, an automatic top-up or a
+-- subscription invoice (member_payments rows exist only for amounts above 0,
+-- so a free trial is never a payment), or, should that row never have been
+-- written, a top-up grant whose PaymentIntent is not a starter pack's. A
+-- repeat pack charged anyway is the pack's kind, so it is not one.
+create or replace function public.member_paid_again_at(p_user uuid)
+returns timestamptz language sql stable security definer set search_path = public as $$
+  select least(
+    (select min(m.paid_at) from member_payments m
+      where m.user_id = p_user and m.kind in ('topup', 'auto_topup', 'subscription')),
+    (select min(g.created_at) from credit_grants g
+      where g.user_id = p_user and g.kind = 'topup' and left(g.source_ref, 3) = 'pi:'
+        and not exists (select 1 from starter_pack_purchases s where 'pi:' || s.payment_intent_id = g.source_ref))
+  );
+$$;
+revoke all on function public.member_paid_again_at(uuid) from public, anon, authenticated;
+grant execute on function public.member_paid_again_at(uuid) to service_role;
+
+-- credit_grant_pack_bonus(p): {user, amount, source_ref, description}. The
+-- pack's bonus as a welcome-kind grant marked scope 'pack_bonus', expiring
+-- pack_bonus_expiry_days from now, in one transaction under the member's row
+-- lock. Idempotent on source_ref: a replay returns the grant and changes
+-- nothing. A member who has already paid for something else gets it lifted
+-- (no restriction, no expiry) from the start: they are not pack-only.
+create or replace function public.credit_grant_pack_bonus(p jsonb)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_amount numeric := coalesce(safe_numeric(p->>'amount'), 0);
+  v_ref text := nullif(p->>'source_ref', '');
+  v_days int := greatest(1, round(credit_setting_num('pack_bonus_expiry_days', 30))::int);
+  v_paid timestamptz;
+  v_id uuid;
+begin
+  if v_user is null or v_ref is null or v_amount <= 0 then
+    raise exception 'credit_grant_pack_bonus needs user, source_ref and a positive amount';
+  end if;
+  perform 1 from profiles where id = v_user for update;
+  select id into v_id from credit_grants where source_ref = v_ref;
+  if v_id is not null then return v_id; end if;
+  v_paid := member_paid_again_at(v_user);
+  v_id := credit_grant(v_user, 'welcome', v_amount,
+    case when v_paid is null then now() + make_interval(days => v_days) end,
+    v_ref, nullif(p->>'description', ''));
+  update credit_grants set scope = 'pack_bonus', scope_lifted_at = case when v_paid is not null then now() end
+   where id = v_id and scope is null;
+  return v_id;
+end $$;
+revoke all on function public.credit_grant_pack_bonus(jsonb) from public, anon, authenticated;
+grant execute on function public.credit_grant_pack_bonus(jsonb) to service_role;
+
+-- pack_bonus_unlock(user): a further payment lifts the restriction and the
+-- expiry of every unexpired pack bonus the member holds. Returns how many.
+create or replace function public.pack_bonus_unlock(p_user uuid)
+returns integer language plpgsql security definer set search_path = public as $$
+declare
+  n integer;
+begin
+  perform 1 from profiles where id = p_user for update;
+  update credit_grants set scope_lifted_at = now(), expires_at = null
+   where user_id = p_user and scope = 'pack_bonus' and scope_lifted_at is null
+     and (expires_at is null or expires_at > now());
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.pack_bonus_unlock(uuid) from public, anon, authenticated;
+grant execute on function public.pack_bonus_unlock(uuid) to service_role;
+
+-- Every writer of member_payments (the one-click routes, the webhook, a
+-- redelivery) goes through this: a top-up, automatic top-up or plan payment
+-- lifts the bonus in the same transaction as the payment's row.
+create or replace function private.member_payments_pack_unlock()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.kind in ('topup', 'auto_topup', 'subscription') and new.amount_pence > 0 then
+    perform public.pack_bonus_unlock(new.user_id);
+  end if;
+  return new;
+end $$;
+revoke execute on function private.member_payments_pack_unlock() from public;
+drop trigger if exists member_payments_pack_unlock on public.member_payments;
+create trigger member_payments_pack_unlock
+  after insert on public.member_payments
+  for each row execute function private.member_payments_pack_unlock();
+
+-- ── pack_fresh_reports: the fresh full analyses a pack-only member has run ──
+-- One row per fresh analysis (the purchase id of a deal's Full analysis, or
+-- the action id of an analyser / API report), claimed before anything is
+-- charged and released when it ends with nothing charged or turns out to be
+-- a saved analysis. pack_fresh_report_claim counts and inserts under the
+-- member's row lock, so two tabs can never both take the last one.
+create table if not exists public.pack_fresh_reports (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  action_id uuid not null,
+  kind text not null,
+  created_at timestamptz not null default now(),
+  released_at timestamptz
+);
+create unique index if not exists pack_fresh_reports_action_uidx on public.pack_fresh_reports (action_id);
+create index if not exists pack_fresh_reports_user_idx on public.pack_fresh_reports (user_id, created_at) where released_at is null;
+do $$
+begin
+  alter table public.pack_fresh_reports drop constraint if exists pack_fresh_reports_kind_check;
+  alter table public.pack_fresh_reports add constraint pack_fresh_reports_kind_check check (kind in ('full_analysis', 'report'));
+end $$;
+alter table public.pack_fresh_reports enable row level security;  -- no policies: service role only
+revoke all on public.pack_fresh_reports from anon, authenticated;
+
+-- pack_fresh_report_claim(p): {user, action_id, kind, cap, since}. Returns
+-- {ok, used, cap}: ok is false when the member has used the cap (counted since
+-- `since`, the pack). The same action_id again is the same claim.
+create or replace function public.pack_fresh_report_claim(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_action uuid := nullif(p->>'action_id', '')::uuid;
+  v_kind text := coalesce(nullif(p->>'kind', ''), 'full_analysis');
+  v_cap integer := greatest(0, coalesce(public.safe_numeric(p->>'cap'), 3)::integer);
+  v_since timestamptz := nullif(p->>'since', '')::timestamptz;
+  v_row public.pack_fresh_reports%rowtype;
+  v_used integer;
+begin
+  if v_user is null or v_action is null then raise exception 'pack_fresh_report_claim needs user and action_id'; end if;
+  perform 1 from public.profiles where id = v_user for update;
+  select count(*) into v_used from public.pack_fresh_reports r
+   where r.user_id = v_user and r.released_at is null and (v_since is null or r.created_at >= v_since);
+  select * into v_row from public.pack_fresh_reports where action_id = v_action;
+  if found and v_row.released_at is null then
+    return jsonb_build_object('ok', true, 'used', v_used, 'cap', v_cap);
+  end if;
+  if v_used >= v_cap then
+    return jsonb_build_object('ok', false, 'used', v_used, 'cap', v_cap);
+  end if;
+  if found then
+    update public.pack_fresh_reports set released_at = null, created_at = now() where id = v_row.id;
+  else
+    insert into public.pack_fresh_reports (user_id, action_id, kind) values (v_user, v_action, v_kind);
+  end if;
+  return jsonb_build_object('ok', true, 'used', v_used + 1, 'cap', v_cap);
+end $$;
+revoke all on function public.pack_fresh_report_claim(jsonb) from public, anon, authenticated;
+grant execute on function public.pack_fresh_report_claim(jsonb) to service_role;
+
+create or replace function public.pack_fresh_report_release(p_action uuid)
+returns boolean language sql security definer set search_path = '' as $$
+  with u as (
+    update public.pack_fresh_reports set released_at = now() where action_id = p_action and released_at is null returning 1
+  )
+  select exists (select 1 from u);
+$$;
+revoke all on function public.pack_fresh_report_release(uuid) from public, anon, authenticated;
+grant execute on function public.pack_fresh_report_release(uuid) to service_role;
+
+-- pack_member_state(p): {user}. What src/lib/credit/pack-server.ts needs in one
+-- read: when the pack was granted, when the member first paid for anything
+-- else, the restricted bonus left and when it expires, and fresh analyses used.
+create or replace function public.pack_member_state(p jsonb)
+returns jsonb language sql stable security definer set search_path = public as $$
+  with u as (
+    select nullif(p->>'user', '')::uuid as id
+  ), pk as (
+    select coalesce(
+      (select min(coalesce(s.granted_at, s.created_at)) from starter_pack_purchases s, u where s.user_id = u.id and s.status = 'granted'),
+      (select pr.starter_pack_bought_at from profiles pr, u where pr.id = u.id)
+    ) as at
+  ), b as (
+    select coalesce(sum(g.remaining_pence), 0) as pence, min(g.expires_at) as expires_at
+      from credit_grants g, u
+     where g.user_id = u.id and g.scope = 'pack_bonus' and g.scope_lifted_at is null
+       and g.remaining_pence > 0 and (g.expires_at is null or g.expires_at > now())
+  ), f as (
+    select count(*) as n from pack_fresh_reports r, u, pk
+     where r.user_id = u.id and r.released_at is null and (pk.at is null or r.created_at >= pk.at)
+  )
+  select jsonb_build_object(
+    'pack_at', pk.at,
+    'paid_again_at', member_paid_again_at(u.id),
+    'bonus_pence', round(b.pence, 4),
+    'bonus_expires_at', b.expires_at,
+    'fresh_used', f.n
+  )
+  from u, pk, b, f;
+$$;
+revoke all on function public.pack_member_state(jsonb) from public, anon, authenticated;
+grant execute on function public.pack_member_state(jsonb) to service_role;
+
+-- ── profiles: the early offer and the picks pause ──
+--   pack_offer_home_at      the £15 offer card was first shown on Home (it shows that UK day only)
+--   pack_offer_emailed_at   the offer's section went in a daily email (once)
+--   pack_offer_dismissed_at the member closed the card
+--   picks_paused_reason     why picks_paused_inactive_at is set: 'inactive' (Batch 20's rule) or
+--                           'pack' (a pack-only member with no visit for pack_picks_pause_days)
+--   pack_picks_back_at      a 'pack' pause ended because they came back (Home says so once)
+--   pack_picks_note_at      Home showed that note
+alter table public.profiles add column if not exists pack_offer_home_at timestamptz;
+alter table public.profiles add column if not exists pack_offer_emailed_at timestamptz;
+alter table public.profiles add column if not exists pack_offer_dismissed_at timestamptz;
+alter table public.profiles add column if not exists picks_paused_reason text;
+alter table public.profiles add column if not exists pack_picks_back_at timestamptz;
+alter table public.profiles add column if not exists pack_picks_note_at timestamptz;
+do $$
+begin
+  alter table public.profiles drop constraint if exists profiles_picks_paused_reason_check;
+  alter table public.profiles add constraint profiles_picks_paused_reason_check check (picks_paused_reason is null or picks_paused_reason in ('inactive', 'pack'));
+end $$;
+
+-- pack_bonus_backfill(): once. The pack bonuses granted before this batch are
+-- marked scope 'pack_bonus' (found by their source_ref, the only mark they
+-- had). A member who has paid for something else since has theirs lifted; for
+-- everyone else the expiry runs pack_bonus_expiry_days from RELEASE (this run),
+-- not from purchase. Never touches an ordinary welcome grant (welcome:<user>).
+-- Stamped in billing_settings, so a later run of this file changes nothing.
+create or replace function public.pack_bonus_backfill()
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_days integer := greatest(1, round(public.credit_setting_num('pack_bonus_expiry_days', 30))::integer);
+  v_marked integer := 0;
+  v_lifted integer := 0;
+  v_dated integer := 0;
+begin
+  if exists (select 1 from public.billing_settings s where s.key = 'batch29_pack_bonus_marked_at') then
+    return jsonb_build_object('done', false, 'reason', 'already');
+  end if;
+  update public.credit_grants set scope = 'pack_bonus'
+   where left(source_ref, 11) = 'pack_bonus:' and kind = 'welcome' and scope is null;
+  get diagnostics v_marked = row_count;
+  update public.credit_grants set scope_lifted_at = now(), expires_at = null
+   where scope = 'pack_bonus' and scope_lifted_at is null and public.member_paid_again_at(user_id) is not null;
+  get diagnostics v_lifted = row_count;
+  update public.credit_grants set expires_at = now() + make_interval(days => v_days)
+   where scope = 'pack_bonus' and scope_lifted_at is null and expires_at is null and remaining_pence > 0;
+  get diagnostics v_dated = row_count;
+  insert into public.billing_settings (key, value)
+    values ('batch29_pack_bonus_marked_at', jsonb_build_object('at', now(), 'marked', v_marked, 'lifted', v_lifted, 'dated', v_dated))
+    on conflict (key) do nothing;
+  return jsonb_build_object('done', true, 'marked', v_marked, 'lifted', v_lifted, 'dated', v_dated);
+end $$;
+revoke all on function public.pack_bonus_backfill() from public, anon, authenticated;
+grant execute on function public.pack_bonus_backfill() to service_role;
+do $$ begin perform public.pack_bonus_backfill(); end $$;
+
+-- pack_paying_facts(p): {low_credit_pence}. One row per member whose starter
+-- pack was granted, for /admin/weekly-active's "Pack → paying" (the maths is
+-- src/lib/admin/pack-paying.ts; admin e-mails are left out there, excluded
+-- accounts are flagged here). Read-only.
+--   ran_down_at   the first moment, within 45 days of the pack, that the running
+--                 ledger total (every grant, debit, refund, expiry and adjustment)
+--                 was at or below low_credit_pence
+--   paid          further payments after the pack (top-up, automatic top-up, plan)
+--   raw_cost      what their own debits cost us (raw_cost_pence; a face debit's is in its metadata)
+create or replace function public.pack_paying_facts(p jsonb)
+returns jsonb language sql stable security definer set search_path = public as $$
+  with buyers as (
+    select s.user_id, min(s.granted_at) as pack_at
+      from starter_pack_purchases s
+     where s.status = 'granted' and s.user_id is not null and s.granted_at is not null
+     group by s.user_id
+  ), b as (
+    select bu.user_id, bu.pack_at, pr.created_at as signed_up_at, pr.email,
+           a.utm_campaign, a.utm_content,
+           exists (select 1 from activity_excluded_accounts x where x.user_id = bu.user_id) as excluded,
+           date_trunc('week', (pr.created_at at time zone 'Europe/London'))::date as week_start,
+           (pr.created_at at time zone 'Europe/London')::date as signup_day
+      from buyers bu
+      join profiles pr on pr.id = bu.user_id
+      left join member_attribution a on a.user_id = bu.user_id
+  ), running as (
+    select ct.user_id, ct.at,
+           sum(ct.amount_pence) over (partition by ct.user_id order by ct.at, ct.id) as total
+      from credit_transactions ct
+     where ct.user_id in (select user_id from b)
+  ), ran as (
+    select r.user_id, min(r.at) as ran_down_at
+      from running r join b on b.user_id = r.user_id
+     where r.at >= b.pack_at and r.at <= b.pack_at + interval '45 days'
+       and r.total <= coalesce(safe_numeric(p->>'low_credit_pence'), 500)
+     group by r.user_id
+  ), staged as (
+    select e.user_id, min(e.occurred_at) as contacted_at
+      from activity_events e join b on b.user_id = e.user_id
+     where e.kind = 'stage_move' and not (e.extras ? 'env')
+       and e.extras->>'to' in ('contacted', 'viewing', 'offer', 'secured')
+       and e.occurred_at >= b.pack_at and e.occurred_at <= b.pack_at + interval '30 days'
+     group by e.user_id
+  ), pay as (
+    select m.user_id, array_agg(m.paid_at order by m.paid_at) as paid
+      from member_payments m join b on b.user_id = m.user_id
+     where m.kind in ('topup', 'auto_topup', 'subscription') and m.paid_at > b.pack_at
+     group by m.user_id
+  ), cost as (
+    select ct.user_id, sum(coalesce(ct.raw_cost_pence, safe_numeric(ct.metadata->>'raw_cost_pence'), 0)) as raw_cost
+      from credit_transactions ct
+     where ct.kind = 'debit' and ct.user_id in (select user_id from b)
+     group by ct.user_id
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'u', b.user_id,
+    'email', b.email,
+    'excluded', b.excluded,
+    'signed_up_at', b.signed_up_at,
+    'week_start', b.week_start,
+    'pack_at', b.pack_at,
+    'campaign', b.utm_campaign,
+    'content', b.utm_content,
+    -- Their first 7 UK days from sign-up (a Sunday sign-up still gets a whole week).
+    'first_week_active', exists (select 1 from member_active_days d where d.user_id = b.user_id and d.day between b.signup_day and b.signup_day + 6),
+    'contacted_at', staged.contacted_at,
+    'ran_down_at', ran.ran_down_at,
+    'paid', coalesce(to_jsonb(pay.paid), '[]'::jsonb),
+    'raw_cost', round(coalesce(cost.raw_cost, 0), 4)
+  ) order by b.pack_at), '[]'::jsonb)
+  from b
+  left join ran on ran.user_id = b.user_id
+  left join staged on staged.user_id = b.user_id
+  left join pay on pay.user_id = b.user_id
+  left join cost on cost.user_id = b.user_id;
+$$;
+revoke all on function public.pack_paying_facts(jsonb) from public, anon, authenticated;
+grant execute on function public.pack_paying_facts(jsonb) to service_role;
 
 notify pgrst, 'reload schema';

@@ -12,10 +12,11 @@ export const dynamic = "force-dynamic";
  * Batch 9's admin page: weekly active by billing group against its targets,
  * how members use the app, the per-member drill-down with the "Exclude from
  * metrics" switch, the backfill and the retention count
- * (src/lib/activity; the figures are worked out in metrics.ts).
+ * (src/lib/activity; the figures are worked out in metrics.ts), and Batch
+ * 29's "Pack → paying" (src/lib/admin/pack-paying.ts).
  */
-export default async function WeeklyActivePage({ searchParams }: { searchParams: Promise<{ msg?: string; all?: string }> }) {
-  const { msg, all } = await searchParams;
+export default async function WeeklyActivePage({ searchParams }: { searchParams: Promise<{ msg?: string; all?: string; packCampaign?: string; packContent?: string }> }) {
+  const { msg, all, packCampaign, packContent } = await searchParams;
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -24,5 +25,5 @@ export default async function WeeklyActivePage({ searchParams }: { searchParams:
   if (!isAdminEmail(user.email)) notFound();
 
   const { status, message, report } = await loadWeeklyActive({ weeks: 12 });
-  return <WeeklyActiveView status={status} message={message} report={report} msg={msg ?? null} showAll={all === "1"} />;
+  return <WeeklyActiveView status={status} message={message} report={report} msg={msg ?? null} showAll={all === "1"} packFilter={{ campaign: packCampaign || null, content: packContent || null }} />;
 }

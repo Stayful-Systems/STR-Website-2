@@ -185,6 +185,8 @@ export const EVENT_SOURCE_PATHS = {
   FirstReport: '/estimate',
   Subscribe: '/account/billing',
   Purchase: '/account/billing',
+  // Batch 29: a pack buyer's first payment after the pack.
+  RepeatPurchase: '/account/billing',
   // Batch 22f: management companies.
   mc_signup: '/for-management-companies',
   mc_pack_paid: '/leads/setup',

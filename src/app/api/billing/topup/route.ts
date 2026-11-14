@@ -92,8 +92,9 @@ export async function POST(request: Request) {
             // Batch 20: what was charged, for Total paid (the webhook writes the same row, once).
             await recordPayment(paymentFromIntent(pi, member.id));
             logActivity(member.id, 'topup', { dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amount } });
-            // Batch 19: Meta's Purchase, with the member's own browser (the webhook's copy is the same key: one is sent).
-            await logConversion({ name: 'Purchase', userId: member.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: amount, currency: pi.currency }, details: clientDetails(request.headers) });
+            // Batch 29: never a Purchase now. A pack buyer's first payment after the pack is their RepeatPurchase,
+            // with the member's own browser (the webhook's copy is the same key and id: one is sent).
+            await logConversion({ name: 'RepeatPurchase', userId: member.id, eventId: pi.id, repeat: { paymentId: `pi:${pi.id}`, topup: { kind: 'topup', auto: null, amountPence: amount, currency: pi.currency } }, details: clientDetails(request.headers) });
             const bal = await getBalance(member.id);
             return Response.json({ ok: true, balancePence: bal.totalPence, via: 'saved_card' });
           } catch (err) {

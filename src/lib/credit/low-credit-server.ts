@@ -18,6 +18,7 @@ import { isEnforcing } from './http';
 import { newSendToken, sendKey } from '../notify/cap';
 import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { lowCreditDue, lowCreditMessage, type LowCreditNotice } from './low-credit';
+import { packStateForPayer } from './pack-server';
 
 /**
  * The £5 low-credit decision's reads and its one standalone send (Batch 20,
@@ -79,8 +80,10 @@ export async function noticeFor(input: { userId: string; createdAt: string | nul
     if (state.offer.eligible) return { balancePence: input.balancePence, kind: 'pack', starter: null, topupPence: offer.topupPence, card: null, pack: { body: state.copy.body, cta: state.copy.cardCta }, enforcing };
   }
   // Batch 21 (D22): a dry run (preview) reads no card from Stripe.
-  const card = input.preview ? null : await cardSummary(input.paymentMethodId);
-  return { balancePence: input.balancePence, kind: 'decision', ...offer, card: card ? { brand: card.brand, last4: card.last4 } : null, pack: null, enforcing };
+  const [card, packState] = await Promise.all([input.preview ? Promise.resolve(null) : cardSummary(input.paymentMethodId), packStateForPayer(input.userId)]);
+  // Batch 29: the bonus line, for a pack-only member with bonus left.
+  const bonus = packState.packOnly && packState.bonusPence > 0 ? { pence: packState.bonusPence, expiresAt: packState.bonusExpiresAt } : null;
+  return { balancePence: input.balancePence, kind: 'decision', ...offer, card: card ? { brand: card.brand, last4: card.last4 } : null, pack: null, enforcing, bonus };
 }
 
 /**
@@ -116,10 +119,15 @@ export async function lowCreditNoticesFor(admin: Admin, userIds: readonly string
     }
     for (const r of (data ?? []) as { u: string; total: number | string; spendable: number | string }[]) balances.set(r.u, { total: Number(r.total) || 0, spendable: Number(r.spendable) || 0 });
   }
-  const owed = candidates.filter((p) => {
+  const owing = candidates.filter((p) => {
     const b = balances.get(p.id);
     return Boolean(b) && lowCreditDue({ noPlan: true, balancePence: b!.total, spendableBasePence: b!.spendable, lowCreditPence, lastToldAt: p.last_low_balance_email_at, alertsOn: true, hasEmail: true, admin: false, now });
   });
+  // Batch 29: the starter pack's £15 offer goes first. A member it is due to, or who had it
+  // today, gets neither the £5 decision nor the nudge until the day after (never both on one day).
+  const { packOfferHolds } = await import('./pack-offer-server');
+  const held = owing.length > 0 ? await packOfferHolds(admin, owing.map((p) => p.id), now) : new Set<string>();
+  const owed = owing.filter((p) => !held.has(p.id));
   // Batch 25, Part C: a slower spender gets Stayful Intelligence's auto top-up nudge instead
   // (claimed here when the run is real; a preview only reads), so no £5 notice for them.
   const due: ProfileRow[] = [];

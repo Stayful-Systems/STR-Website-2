@@ -138,6 +138,12 @@ export async function afterDebit(userId: string): Promise<void> {
       // text and email — is the notice, so the £5 email below is not sent
       // (marked told, so the morning email doesn't carry it either). When a
       // safety rule blocked the call, the email runs as it always has.
+      // Batch 29: the starter pack's £15 offer goes first (in the next morning email). While it is
+      // due, or on the day it went, no £5 notice of any kind (call, nudge or email) goes.
+      if (summary.noPlan) {
+        const { packOfferHolds } = await import('./pack-offer-server');
+        if ((await packOfferHolds(admin, [userId], now)).has(userId)) return;
+      }
       if (await lowCreditCalled(userId)) {
         await toldByCall(admin, userId, summary, p, now);
         return;

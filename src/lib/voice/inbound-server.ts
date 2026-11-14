@@ -27,13 +27,13 @@ import { createHmac } from 'node:crypto';
 import { createAdminClient } from '../supabase/admin';
 import { ukMobile } from '../sms/phone';
 import { getBillingSettings } from '../credit/unit-costs';
-import { getBalance } from '../credit/ledger';
+import { balanceFor } from '../credit/ledger';
 import { payerFor } from '../team';
 import { PERSONA_VERSION } from '../persona/stayful-intelligence';
 import { startConversation } from '../conversations/log-server';
 import { affordableSeconds, callablePence, maxSpendRate } from './charge';
 import { callPencePerMinute } from './charge-server';
-import { callsDryRun, initiateSecret, toolSecret } from './config';
+import { CALL_ACTION, callsDryRun, initiateSecret, toolSecret } from './config';
 import { inboundIdentity } from './inbound';
 import { toolHeaderViaSecret } from './agent/tool-header-server';
 import { memberByNumber, memberFacts } from './member-server';
@@ -107,7 +107,8 @@ export async function answerInitiation(req: InitiationRequest, now: Date = new D
   const payer = await payerFor(memberId);
   const [perMin, balance, cardSent, last] = await Promise.all([
     callPencePerMinute(),
-    getBalance(payer.payerId).catch(() => null),
+    // Batch 29: the credit a call may use (never the starter pack's restricted bonus).
+    balanceFor(payer.payerId, CALL_ACTION).catch(() => null),
     contactCardSent(admin, memberId),
     lastOutbound(admin, memberId, MISSED_WITHIN_MS, now),
   ]);

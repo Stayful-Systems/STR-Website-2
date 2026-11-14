@@ -114,6 +114,9 @@ export const DROP_REASONS = {
   busy: 'I’m still working on your last instruction: stop it or let it finish first.',
   not_a_deal_kind: 'There is no next step for that kind of deal.',
   not_btl: 'That deal isn’t a buy-to-let deal, so it has no buy-to-let report.',
+  // Batch 29 (src/lib/credit/pack-rules.ts): a starter pack member's limits.
+  pack_cap: 'You’ve used the fresh reports that come with the starter pack: top up or start Starter and I’ll run more. Reports already run on a deal still open with your bonus credit.',
+  pack_topup_needed: 'The second opinion needs credit beyond the starter pack: top up and I’ll add it.',
 } as const;
 export type DropReason = keyof typeof DROP_REASONS;
 

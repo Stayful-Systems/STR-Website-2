@@ -1,7 +1,7 @@
 import 'server-only';
 
 /**
- * Conversions on the server (Batch 19): recording each of the five once,
+ * Conversions on the server (Batch 19): recording each one once,
  * sending it to Meta's Conversions API, and the browser's share (the pixel
  * fires the same event with the same id, so Meta keeps one).
  *
@@ -27,6 +27,12 @@ import 'server-only';
  * redelivery, the webhook and the one-click route, both top-up events, a
  * double tap or a retry never send twice.
  *
+ * Batch 29: Purchase is the starter pack only (once per member), and
+ * RepeatPurchase a pack buyer's first payment after it (once per member; the
+ * payment's own id is the event id, so the webhook, the one-click route and
+ * the browser are one event). Whether a payment is that first one is read
+ * here (repeatFacts) and decided in ./events.ts (repeatPurchaseDue).
+ *
  * Nothing here throws: a failure is a warning, never a failed request,
  * sign-up or webhook.
  */
@@ -45,21 +51,21 @@ import { parseBrowserConversion, type BrowserConversion } from '../tracking/me';
 import { clientDetails } from '../tracking/request';
 import { buildCapiEvent, sendCapi, type ClientDetails } from './capi';
 import { deployment, metaDryRun, serverSendMode } from './env';
-import { dedupeKeyFor, eventSourceUrl, isMetaEvent, isPostLaunch, purchaseFromTopup, subscribeFromInvoice, type InvoiceFacts, type MetaEventName, type TopupFacts } from './events';
+import { dedupeKeyFor, eventSourceUrl, isMetaEvent, isPostLaunch, purchaseFromPack, repeatPurchaseDue, repeatValue, subscribeFromInvoice, type InvoiceFacts, type MetaEventName, type PackFacts, type RepeatFacts } from './events';
 import { buildFbc } from './fbc';
 import { hashEmail, hashExternalId } from './hash';
 
 export interface ConversionInput {
   name: MetaEventName;
   userId: string;
-  /** Subscribe: the Stripe invoice id; Purchase: the PaymentIntent id. The others get a fresh id. */
+  /** Subscribe: the Stripe invoice id; Purchase: the pack's PaymentIntent id; RepeatPurchase: the payment's id. The others get a fresh id. */
   eventId?: string | null;
-  /** Purchase: its once-only key. */
-  paymentIntentId?: string | null;
   /** Subscribe: the paid invoice (only the first paid one of a subscription started after tracking began counts). */
   invoice?: InvoiceFacts;
-  /** Purchase: the top-up (never an automatic one). */
-  topup?: TopupFacts;
+  /** Purchase (Batch 29): the captured starter pack. */
+  pack?: PackFacts;
+  /** RepeatPurchase (Batch 29): the payment (a top-up, chosen or automatic, or a plan invoice). */
+  repeat?: RepeatFacts;
   /** The member's own browser, when it happens in their request (never Stripe's). */
   details?: ClientDetails | null;
 }
@@ -242,7 +248,7 @@ async function sendServer(key: string, details: ClientDetails | null): Promise<v
 export async function recordConversion(input: ConversionInput): Promise<void> {
   try {
     if (!hasServiceRole() || !isMetaEvent(input.name) || !input.userId) return;
-    const key = dedupeKeyFor(input.name, { userId: input.userId, paymentIntentId: input.paymentIntentId ?? null });
+    const key = dedupeKeyFor(input.name, { userId: input.userId });
     if (!key) return;
     const since = await trackingSince();
     if (!since) return; // the Batch 19 schema section has not been run
@@ -260,8 +266,14 @@ export async function recordConversion(input: ConversionInput): Promise<void> {
       if (!v) return;
       valuePence = v.valuePence;
     } else if (input.name === 'Purchase') {
-      const v = input.topup ? purchaseFromTopup(input.topup) : null;
+      const v = input.pack ? purchaseFromPack(input.pack) : null;
       if (!v) return;
+      valuePence = v.valuePence;
+    } else if (input.name === 'RepeatPurchase') {
+      const v = input.repeat ? repeatValue(input.repeat) : null;
+      if (!v || !input.repeat) return;
+      const facts = await repeatFacts(input.userId, input.repeat.paymentId);
+      if (!repeatPurchaseDue({ packAt: facts.packAt, trackingSince: since, earlierFurtherPayment: facts.earlier })) return;
       valuePence = v.valuePence;
     } else if (!isPostLaunch(profile.created_at, since)) {
       return; // sign-up journey events only count for accounts made after tracking began
@@ -294,6 +306,34 @@ export async function recordConversion(input: ConversionInput): Promise<void> {
   } catch (err) {
     warn(`${input.name} not recorded: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * Batch 29: what decides a RepeatPurchase. `packAt`: when the member's starter
+ * pack was granted (null: never bought one). `earlier`: a further payment
+ * other than this one since the pack: a top-up or plan payment row, or a
+ * top-up grant (pi:…) that is not a pack's (the fallback member_paid_again_at
+ * also uses, for a payment row that failed to write). Unreadable: throws, and
+ * nothing is recorded.
+ */
+async function repeatFacts(userId: string, paymentId: string): Promise<{ packAt: string | null; earlier: boolean }> {
+  const admin = createAdminClient();
+  const { data: packs, error: packErr } = await admin.from('starter_pack_purchases').select('payment_intent_id, status, granted_at').eq('user_id', userId);
+  if (packErr) throw new Error(packErr.message);
+  const rows = (packs ?? []) as { payment_intent_id: string; status: string; granted_at: string | null }[];
+  const packAt = rows.filter((r) => r.status === 'granted' && r.granted_at).map((r) => r.granted_at!).sort()[0] ?? null;
+  if (!packAt) return { packAt: null, earlier: false };
+  const [{ data: pays, error: payErr }, { data: grants, error: grantErr }] = await Promise.all([
+    admin.from('member_payments').select('id').eq('user_id', userId).in('kind', ['topup', 'auto_topup', 'subscription']).gt('amount_pence', 0).gt('paid_at', packAt).neq('id', paymentId).limit(1),
+    admin.from('credit_grants').select('source_ref').eq('user_id', userId).eq('kind', 'topup').gt('amount_pence', 0).gt('created_at', packAt).like('source_ref', 'pi:%').limit(50),
+  ]);
+  if (payErr) throw new Error(payErr.message);
+  if (grantErr) throw new Error(grantErr.message);
+  if ((pays ?? []).length > 0) return { packAt, earlier: true };
+  // Any pack's PaymentIntent (a blocked repeat charged anyway included) is not a further payment.
+  const packRefs = new Set(rows.map((r) => `pi:${r.payment_intent_id}`));
+  const earlier = ((grants ?? []) as { source_ref: string | null }[]).some((g) => g.source_ref && g.source_ref !== paymentId && !packRefs.has(g.source_ref));
+  return { packAt, earlier };
 }
 
 /**

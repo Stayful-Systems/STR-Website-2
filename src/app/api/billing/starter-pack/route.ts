@@ -139,8 +139,8 @@ export async function POST(request: Request) {
             if (outcome === 'granted' || outcome === 'already') {
               await recordPayment(paymentFromIntent(captured, member.id));
               logActivity(member.id, 'starter_pack', { dedupeKey: `starter_pack:pi:${pi.id}`, extras: { amount_pence: lc.starterPackPricePence } });
-              // Meta's Purchase with the member's own browser (the webhook's copy has the same key: one is sent).
-              await logConversion({ name: 'Purchase', userId: member.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: lc.starterPackPricePence, currency: 'gbp' }, details: clientDetails(request.headers) });
+              // Meta's Purchase (Batch 29: the pack only, once per member) with the member's own browser (the webhook's copy has the same key: one is sent).
+              await logConversion({ name: 'Purchase', userId: member.id, eventId: pi.id, pack: { pricePence: lc.starterPackPricePence, currency: 'gbp', outcome }, details: clientDetails(request.headers) });
               const bal = await getBalance(member.id);
               return Response.json({ ok: true, balancePence: bal.totalPence, via: 'saved_card' });
             }

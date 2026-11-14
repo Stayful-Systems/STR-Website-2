@@ -18,7 +18,9 @@ import type { createSupabaseServerClient } from '../supabase/server';
 import { payerFor } from '../team';
 import { offeredPmiAddonFor } from './offers-server';
 import { getBillingSettings } from '../credit/unit-costs';
-import { debit, getBalance, release, reserve, InsufficientCreditError } from '../credit/ledger';
+import { debit, release, reserve, spendableFor, InsufficientCreditError } from '../credit/ledger';
+import { packStateForPayer } from '../credit/pack-server';
+import { deepNeedsTopUp } from '../credit/pack-rules';
 import { isEnforcing } from '../credit/http';
 import { afterDebit } from '../credit/after-debit';
 import { startAction } from '../credit/action';
@@ -34,7 +36,7 @@ import type { SharedAnalysis } from './reuse';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
-export type PmiAddonCode = 'missing' | 'not_available' | 'already_done' | 'running' | 'seat_paused' | 'price_changed' | 'insufficient_credit' | 'unavailable' | 'no_opinion' | 'failed';
+export type PmiAddonCode = 'missing' | 'not_available' | 'already_done' | 'running' | 'seat_paused' | 'price_changed' | 'insufficient_credit' | 'pack_topup_needed' | 'unavailable' | 'no_opinion' | 'failed';
 
 export type PmiAddonResult =
   | { ok: true; chargedBasePence: number }
@@ -48,6 +50,8 @@ const MESSAGES: Record<PmiAddonCode, string> = {
   seat_paused: 'Your seat on this team is paused, so you can’t spend the team’s credit.',
   price_changed: 'The price has changed since this page loaded. Nothing was charged; check the new price and try again.',
   insufficient_credit: 'Not enough credit for the second opinion. Nothing was charged.',
+  // Batch 29 (section G): a pack-only member's second opinion needs credit beyond the pack.
+  pack_topup_needed: 'Top up to add the second opinion: it needs credit beyond the starter pack. Nothing was charged.',
   unavailable: 'The PMI second opinion is switched off just now. Nothing was charged.',
   no_opinion: 'PMI couldn’t give a second opinion for this property just now, so nothing was charged. Please try again tomorrow.',
   failed: 'Something went wrong adding the second opinion. Nothing was charged; please try again.',
@@ -59,7 +63,7 @@ function fail(code: PmiAddonCode, extra: { pricePence?: number; requiredPence?: 
 
 export function pmiAddonHttpStatus(code: PmiAddonCode): number {
   if (code === 'missing') return 404;
-  if (code === 'insufficient_credit' || code === 'seat_paused') return 402;
+  if (code === 'insufficient_credit' || code === 'seat_paused' || code === 'pack_topup_needed') return 402;
   if (code === 'already_done' || code === 'running' || code === 'price_changed') return 409;
   if (code === 'not_available' || code === 'unavailable') return 422;
   if (code === 'no_opinion') return 424;
@@ -88,19 +92,20 @@ export async function addSecondOpinion(input: { supabase: ServerClient; userId: 
 
   const payer = await payerFor(input.userId);
   if (payer.suspended) return fail('seat_paused');
+  if (!input.adminUser && deepNeedsTopUp(await packStateForPayer(payer.payerId))) return fail('pack_topup_needed');
   // Batch 22, Part H: PMI added later is +the first-run extra the first time for the paying account (never welcome-priced).
   const offered = input.adminUser ? null : await offeredPmiAddonFor(input.userId).catch(() => null);
   const price = input.adminUser ? 0 : offered ? offered.pmiPence : (await getBillingSettings()).dealPricing.pmiAddonPence;
   const mustAfford = isEnforcing() || Boolean(offered?.offer);
   if (!quoteMatches(input.quotedBasePence, { purchaseBasePence: price })) return fail('price_changed', { pricePence: price });
   if (price > 0 && mustAfford) {
-    const bal = await getBalance(payer.payerId).catch(() => null);
-    const available = bal?.spendableBasePence ?? 0;
+    // Batch 29: what PMI may spend (never the starter pack's restricted bonus).
+    const available = await spendableFor(payer.payerId, 'pmi_addon').catch(() => 0);
     if (available < price) return fail('insufficient_credit', { requiredPence: price, availablePence: Math.max(0, Math.round(available)) });
   }
   // What they pay from their own credit, as the button showed it.
   if (price > 0) {
-    const walk = (await quoterFor(payer.payerId, false)).quote(price);
+    const walk = (await quoterFor(payer.payerId, false)).quote(price, 'pmi_addon');
     if (walk.shortfallBasePence <= 0 && !faceMatches(input.quotedFacePence, walk.facePence)) return fail('price_changed', { pricePence: price });
   }
 

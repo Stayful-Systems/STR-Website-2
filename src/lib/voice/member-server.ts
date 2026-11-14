@@ -9,7 +9,8 @@ import { createAdminClient } from '../supabase/admin';
 import { getContact } from '../sms/store';
 import { isUkMobile } from '../sms/phone';
 import { teamOf } from '../team';
-import { getBalance } from '../credit/ledger';
+import { balanceFor } from '../credit/ledger';
+import { CALL_ACTION } from './config';
 import { isManagementOnly } from '../management/stamp-server';
 import { callablePence, maxSpendRate } from './charge';
 
@@ -49,7 +50,8 @@ export async function memberFacts(userId: string): Promise<MemberFacts | null> {
   }
   const row = p as { si_calls?: boolean; auto_topup_amount_pence: number | null; created_at: string; full_name: string | null; email: string | null };
   const phone = contact?.phone_e164 ?? null;
-  const [balance, managementOnly] = await Promise.all([getBalance(userId).catch(() => null), isManagementOnly(userId).catch(() => false)]);
+  // Batch 29: what a call may spend (never the starter pack's restricted bonus).
+  const [balance, managementOnly] = await Promise.all([balanceFor(userId, CALL_ACTION).catch(() => null), isManagementOnly(userId).catch(() => false)]);
   return {
     userId,
     isOwner: team.role === 'owner',

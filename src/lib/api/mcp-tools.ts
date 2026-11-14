@@ -13,6 +13,7 @@ import { parseLeadRules, rulesAreEmpty } from '../leads/rules';
 import { parseAnalysisInput } from '../analysis/input';
 import { reserveAnalysis, runAnalysis, GeocodeError } from '../analysis/run';
 import { InsufficientCreditError, getBalance } from '../credit/ledger';
+import { PackLimitError } from '../credit/pack-server';
 import { enqueueDelivery } from '../crm/deliver';
 import { getAreaCards } from '../market/cached';
 import { saturationBand, SATURATION_GUIDE } from '../market/competition';
@@ -413,6 +414,7 @@ export function registerTools(server: McpServer, access: ApiAccess): string[] {
           const reportId = await saveApiReport(userId, parsed.input, result);
           return text({ reportId, result });
         } catch (err) {
+          if (err instanceof PackLimitError) return failure(`${err.message} Nothing has been charged.`);
           if (err instanceof InsufficientCreditError) {
             return failure('Not enough credit to run this analysis. The account owner needs to top up first. Nothing has been charged.');
           }

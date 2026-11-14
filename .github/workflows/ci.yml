@@ -72,3 +72,5 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/credit-smoke.sql
       - name: Properties scanned checks (Batch 22e)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/scan-days-smoke.sql
+      - name: Starter pack bonus, cap and unlock checks (Batch 29)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/pack-smoke.sql

@@ -47,6 +47,8 @@ export interface PlanDeal {
   btl?: boolean;
   /** Batch 28: the member already has a buy-to-let report on it (charged once: never sold again). */
   btlReported?: boolean;
+  /** Batch 29: a saved analysis of it is young enough to reuse (never counts toward a pack-only member's fresh reports). */
+  saved?: boolean;
 }
 
 export interface PlanContext {
@@ -58,6 +60,11 @@ export interface PlanContext {
   deepSearch: 'available' | 'off' | 'running';
   /** The member may check listings (the Explorer's own rule). */
   linkChecks: boolean;
+  /**
+   * Batch 29: the paying account is pack-only (src/lib/credit/pack-rules.ts):
+   * no second opinion, and this many fresh full analyses left. Absent: no limits.
+   */
+  pack?: { packOnly: boolean; freshLeft: number | null };
 }
 
 export type ValidStep =
@@ -171,6 +178,7 @@ export function checkPlan(proposed: readonly ProposedStep[], ctx: PlanContext): 
   let asked: Set<string> | undefined;
   const targets = new Set<string>();
   const drop = (step: ProposedStep, reason: DropReason, target: string | null = null) => dropped.push({ action: String(step.action ?? '').slice(0, 40), target, reason });
+  let freshPlanned = 0;
 
   for (const [i, step] of proposed.entries()) {
     if (i >= MAX_PROPOSED_STEPS) {
@@ -206,6 +214,19 @@ export function checkPlan(proposed: readonly ProposedStep[], ctx: PlanContext): 
         if (kind === 'full_analysis' && deal.analysed) {
           drop(step, 'already_done', deal.label);
           continue;
+        }
+        // Batch 29: a pack-only member's second opinion needs credit beyond the pack.
+        if (kind === 'deep_report' && ctx.pack?.packOnly) {
+          drop(step, 'pack_topup_needed', deal.label);
+          continue;
+        }
+        // Batch 29: a fresh analysis takes one of their fresh reports; a saved one never does.
+        if (kind === 'full_analysis' && !deal.saved && ctx.pack?.freshLeft !== null && ctx.pack?.freshLeft !== undefined) {
+          if (freshPlanned >= ctx.pack.freshLeft) {
+            drop(step, 'pack_cap', deal.label);
+            continue;
+          }
+          freshPlanned += 1;
         }
         seen.add(key);
         targets.add(deal.dealId);

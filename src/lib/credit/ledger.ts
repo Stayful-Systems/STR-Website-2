@@ -93,6 +93,52 @@ export async function getBalance(userId: string): Promise<Balance> {
   };
 }
 
+/**
+ * Batch 29: base pence THIS action may spend (public.credit_spendable_for). The
+ * starter pack's restricted bonus counts only for the actions it pays for
+ * (src/lib/credit/pack-rules.ts); for those this equals getBalance's
+ * spendableBasePence. Use it for "can they afford it" before charging.
+ */
+export async function spendableFor(userId: string, action: string, meta: Record<string, unknown> = {}): Promise<number> {
+  if (!hasServiceRole()) return 0;
+  const { data, error } = await (await adminClient()).rpc('credit_spendable_for', { p_user: userId, p_action: action, p_meta: meta });
+  if (error) throwRpc(error, 'credit_spendable_for');
+  return round4(Number(data ?? 0) || 0);
+}
+
+/**
+ * Batch 29: the balance as one action sees it, for callers that size a face
+ * charge (calls, texts): the displayed pence and spendable base it may use
+ * (never the starter pack's restricted bonus unless the action is one it pays
+ * for), and what open reservations hold. Shaped for voice/charge.ts callablePence.
+ */
+export async function balanceFor(userId: string, action: string): Promise<{ totalPence: number; spendableBasePence: number; reservedBasePence: number; rates: SpendRates }> {
+  const [balance, face, spendable] = await Promise.all([getBalance(userId), faceAvailableFor(userId, action), spendableFor(userId, action)]);
+  return { totalPence: face, spendableBasePence: spendable, reservedBasePence: balance.reservedBasePence, rates: balance.rates };
+}
+
+/** Batch 29: displayed pence a face debit for this action may take (credit_face_available_for), before open reservations. */
+export async function faceAvailableFor(userId: string, action: string): Promise<number> {
+  if (!hasServiceRole()) return 0;
+  const { data, error } = await (await adminClient()).rpc('credit_face_available_for', { p_user: userId, p_action: action });
+  if (error) throwRpc(error, 'credit_face_available_for');
+  return round4(Number(data ?? 0) || 0);
+}
+
+/**
+ * Batch 29: the starter pack's bonus, marked as restricted credit with its
+ * expiry, in one transaction (public.credit_grant_pack_bonus). Idempotent on
+ * sourceRef, as grant() is.
+ */
+export async function grantPackBonus(userId: string, amountPence: number, opts: { sourceRef: string; description?: string | null }): Promise<string | null> {
+  if (!hasServiceRole()) return null;
+  const { data, error } = await (await adminClient()).rpc('credit_grant_pack_bonus', {
+    p: { user: userId, amount: round4(amountPence), source_ref: opts.sourceRef, description: opts.description ?? null },
+  });
+  if (error) throwRpc(error, 'credit_grant_pack_bonus');
+  return (data as string | null) ?? null;
+}
+
 export async function reserve(userId: string, action: string, actionId: string, maxBasePence: number, ttlMinutes = 10): Promise<string | null> {
   if (!hasServiceRole()) return null;
   if (maxBasePence <= 0) return null;
@@ -211,6 +257,32 @@ export async function expireDueGrants(): Promise<number> {
   const { data, error } = await (await adminClient()).rpc('credit_expire_due');
   if (error) throwRpc(error, 'credit_expire_due');
   return Number(data ?? 0) || 0;
+}
+
+/**
+ * Batch 29: what credit_expire_due would do now, writing nothing (the credit
+ * sweep's ?dry=1). A starter pack bonus whose member has paid again by its
+ * expiry is lifted (never expires); every other due grant with credit left
+ * expires.
+ */
+export async function previewDueGrants(now: Date = new Date()): Promise<{ expire: { user: string; kind: string; scope: string | null; remainingPence: number; expiresAt: string }[]; lift: { user: string; remainingPence: number; expiresAt: string }[] }> {
+  const out = { expire: [] as { user: string; kind: string; scope: string | null; remainingPence: number; expiresAt: string }[], lift: [] as { user: string; remainingPence: number; expiresAt: string }[] };
+  if (!hasServiceRole()) return out;
+  const admin = await adminClient();
+  const { data, error } = await admin.from('credit_grants').select('user_id, kind, scope, scope_lifted_at, remaining_pence, expires_at').lte('expires_at', now.toISOString()).gt('remaining_pence', 0).limit(5000);
+  if (error) throw new Error(error.message);
+  for (const g of (data ?? []) as { user_id: string; kind: string; scope: string | null; scope_lifted_at: string | null; remaining_pence: number; expires_at: string }[]) {
+    if (g.scope === 'pack_bonus' && !g.scope_lifted_at) {
+      const { data: paidAt, error: paidErr } = await admin.rpc('member_paid_again_at', { p_user: g.user_id });
+      if (paidErr) throw new Error(paidErr.message);
+      if (typeof paidAt === 'string' && Date.parse(paidAt) <= Date.parse(g.expires_at)) {
+        out.lift.push({ user: g.user_id, remainingPence: Number(g.remaining_pence), expiresAt: g.expires_at });
+        continue;
+      }
+    }
+    out.expire.push({ user: g.user_id, kind: g.kind, scope: g.scope, remainingPence: Number(g.remaining_pence), expiresAt: g.expires_at });
+  }
+  return out;
 }
 
 export class CodeError extends Error {

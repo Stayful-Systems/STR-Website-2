@@ -177,6 +177,8 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
             <span className="flex gap-1">
               {view.opened && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Opened</span>}
               {view.analysed && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Analysed</span>}
+              {/* Batch 29: a saved analysis exists. Only these words: nothing about the deal before it is opened. */}
+              {view.reportReady && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Report ready, opens instantly</span>}
             </span>
           ) : (
             <span className={"rounded-md px-2 py-1 text-xs font-semibold " + (opened ? "bg-primary/10 text-primary" : "bg-primary text-primary-foreground")}>{open}</span>

@@ -1,9 +1,55 @@
 /**
  * Google Places API (New) — fetches nearby amenities by category.
+ *
+ * Batch 29: results are cached by location and type (places_cache_days, 90 by
+ * default) in broker_cache under PLACES_QUESTION. The key is the type and the
+ * point rounded to 3 decimal places (about 111m × 69m in the UK): the key the
+ * meter already logs. The raw places are stored, and every distance is worked
+ * out again from the property itself, with the same filters, so the same
+ * property's report is identical. A cached read is logged as a free call
+ * (unit places_nearby_cached, cache_hit), the way Airbtics' cached report read
+ * is; the member's price is per report and does not change.
  */
 
 import type { DemandDrivers, NearbyAmenity } from '../types';
 import { meter } from '../credit/meter.ts';
+import { hasServiceRole } from '../credit/db.ts';
+import { getBillingSettings } from '../credit/unit-costs.ts';
+
+export const PLACES_QUESTION = 'placesNearby';
+
+/** The cache key: the type and the point to 3 decimal places. */
+export function placesCacheKey(includedType: string, lat: number, lng: number): string {
+  return `${includedType}|${lat.toFixed(3)},${lng.toFixed(3)}`;
+}
+
+/** Where the raw places are kept between reports (injected in tests). */
+export interface PlacesCache {
+  get(key: string): Promise<PlaceResult[] | null>;
+  set(key: string, places: PlaceResult[]): Promise<void>;
+}
+
+export const NO_PLACES_CACHE: PlacesCache = { get: async () => null, set: async () => {} };
+
+/** broker_cache, for places_cache_days (0: off, and off without a database). */
+async function defaultPlacesCache(): Promise<PlacesCache> {
+  if (!hasServiceRole()) return NO_PLACES_CACHE;
+  const days = (await getBillingSettings()).lifecycle.placesCacheDays;
+  if (!(days > 0)) return NO_PLACES_CACHE;
+  const { brokerStore } = await import('../broker/store');
+  const store = brokerStore();
+  return {
+    async get(key) {
+      const a = await store.get<PlaceResult[]>(PLACES_QUESTION, key);
+      if (!a || !Array.isArray(a.value) || !(Date.parse(a.expiresAt) > Date.now())) return null;
+      return a.value;
+    },
+    async set(key, places) {
+      const now = new Date();
+      await store.set(PLACES_QUESTION, key, { value: places, provider: 'google', level: 3, fetchedAt: now.toISOString(), expiresAt: new Date(now.getTime() + days * 86_400_000).toISOString() });
+    },
+  };
+}
 
 /** Batch 21 (G7): give up before the report's 60 s kill, so the refund path runs. */
 const PLACES_TIMEOUT_MS = 8_000;
@@ -21,7 +67,7 @@ const FIELD_MASK = [
   'places.location',
 ].join(',');
 
-interface PlaceResult {
+export interface PlaceResult {
   displayName?: { text?: string };
   formattedAddress?: string;
   types?: string[];
@@ -55,7 +101,15 @@ async function searchNearbyByType(
   lng: number,
   includedType: string,
   apiKey: string,
+  cache: PlacesCache = NO_PLACES_CACHE,
 ): Promise<NearbyAmenity[]> {
+  const cacheKey = placesCacheKey(includedType, lat, lng);
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached) {
+    // A free read of what an earlier report paid for: logged, never charged.
+    const places = await meter({ provider: 'google', unit: 'places_nearby_cached', key: cacheKey, cacheHit: () => true }, async () => cached);
+    return amenitiesFromPlaces(places, includedType, lat, lng);
+  }
   const radius = includedType === 'airport' ? AIRPORT_SEARCH_RADIUS
     : includedType === 'hospital' ? 15_000  // 15km — major hospitals may be further
     : SEARCH_RADIUS;
@@ -76,7 +130,7 @@ async function searchNearbyByType(
   };
 
   const response = await meter(
-    { provider: 'google', unit: 'places_nearby', key: `${includedType}|${lat.toFixed(3)},${lng.toFixed(3)}`, failed: (r) => !r.ok },
+    { provider: 'google', unit: 'places_nearby', key: cacheKey, failed: (r) => !r.ok },
     () =>
       fetch('https://places.googleapis.com/v1/places:searchNearby', {
         method: 'POST',
@@ -99,7 +153,17 @@ async function searchNearbyByType(
 
   const data = await response.json();
   const places: PlaceResult[] = data.places ?? [];
+  await cache.set(cacheKey, places).catch((err) => console.warn('[places] cache write failed:', err instanceof Error ? err.message : String(err)));
+  return amenitiesFromPlaces(places, includedType, lat, lng);
+}
 
+/**
+ * The amenities a Places answer gives for a property: each one's distance from
+ * the property itself, then the per-type filters (no helipads for airports;
+ * major hospitals only; one entry per university). The same for a fresh
+ * answer and a cached one.
+ */
+export function amenitiesFromPlaces(places: readonly PlaceResult[], includedType: string, lat: number, lng: number): NearbyAmenity[] {
   const amenities = places.map((place) => {
     const placeLat = place.location?.latitude ?? lat;
     const placeLng = place.location?.longitude ?? lng;
@@ -163,6 +227,7 @@ async function searchNearbyByType(
 export async function getNearbyAmenities(
   lat: number,
   lng: number,
+  opts: { cache?: PlacesCache } = {},
 ): Promise<DemandDrivers> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) {
@@ -170,9 +235,10 @@ export async function getNearbyAmenities(
   }
 
   const types = ['hospital', 'university', 'airport', 'train_station', 'bus_station', 'subway_station'] as const;
+  const cache = opts.cache ?? (await defaultPlacesCache().catch(() => NO_PLACES_CACHE));
 
   const results = await Promise.allSettled(
-    types.map((type) => searchNearbyByType(lat, lng, type, apiKey)),
+    types.map((type) => searchNearbyByType(lat, lng, type, apiKey, cache)),
   );
 
   const extract = (result: PromiseSettledResult<NearbyAmenity[]>): NearbyAmenity[] => {

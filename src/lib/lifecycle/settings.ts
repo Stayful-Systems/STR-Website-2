@@ -17,6 +17,14 @@
  *   inactivity_from            inactivity is never counted from before this
  *                              (the release date). Empty = the rules are off.
  *
+ * Batch 29 (starter pack guardrails; the rules are src/lib/credit/pack-rules.ts):
+ *   pack_bonus_expiry_days     the pack's bonus expires this many days after it is granted
+ *   pack_fresh_report_cap      fresh full analyses a pack-only member may run
+ *   pack_early_offer_pence     the one-off offer when a pack-only member's balance falls to this
+ *   pack_picks_pause_days      a pack-only member's picks pause after this many days without a visit
+ *   places_cache_days          Google Places nearby results are reused for this long
+ *   pack_paying_*_pct, pack_cost_*_pence   the lines on /admin/weekly-active's "Pack → paying"
+ *
  * Pure: no network, no database, no server-only.
  */
 import { parseDateSetting } from '../credit/deal-pricing.ts';
@@ -30,6 +38,17 @@ export interface LifecycleSettings {
   inactiveReengageDays: number;
   picksPauseInactiveDays: number;
   inactivityFrom: string | null;
+  packBonusExpiryDays: number;
+  packFreshReportCap: number;
+  packEarlyOfferPence: number;
+  packPicksPauseDays: number;
+  placesCacheDays: number;
+  packPayingHeadlineFloorPct: number;
+  packPayingHeadlineTargetPct: number;
+  packPayingRundownPaidFloorPct: number;
+  packPayingRundownPaidTargetPct: number;
+  packCostTargetPence: number;
+  packCostCeilingPence: number;
 }
 
 export const LIFECYCLE_KEYS = {
@@ -41,6 +60,17 @@ export const LIFECYCLE_KEYS = {
   inactiveReengageDays: 'inactive_reengage_days',
   picksPauseInactiveDays: 'picks_pause_inactive_days',
   inactivityFrom: 'inactivity_from',
+  packBonusExpiryDays: 'pack_bonus_expiry_days',
+  packFreshReportCap: 'pack_fresh_report_cap',
+  packEarlyOfferPence: 'pack_early_offer_pence',
+  packPicksPauseDays: 'pack_picks_pause_days',
+  placesCacheDays: 'places_cache_days',
+  packPayingHeadlineFloorPct: 'pack_paying_headline_floor_pct',
+  packPayingHeadlineTargetPct: 'pack_paying_headline_target_pct',
+  packPayingRundownPaidFloorPct: 'pack_paying_rundown_paid_floor_pct',
+  packPayingRundownPaidTargetPct: 'pack_paying_rundown_paid_target_pct',
+  packCostTargetPence: 'pack_cost_target_pence',
+  packCostCeilingPence: 'pack_cost_ceiling_pence',
 } as const satisfies Record<keyof LifecycleSettings, string>;
 
 export const DEFAULT_LIFECYCLE: LifecycleSettings = {
@@ -52,6 +82,17 @@ export const DEFAULT_LIFECYCLE: LifecycleSettings = {
   inactiveReengageDays: 14,
   picksPauseInactiveDays: 25,
   inactivityFrom: null,
+  packBonusExpiryDays: 30,
+  packFreshReportCap: 3,
+  packEarlyOfferPence: 1500,
+  packPicksPauseDays: 7,
+  placesCacheDays: 90,
+  packPayingHeadlineFloorPct: 10,
+  packPayingHeadlineTargetPct: 22,
+  packPayingRundownPaidFloorPct: 35,
+  packPayingRundownPaidTargetPct: 50,
+  packCostTargetPence: 190,
+  packCostCeilingPence: 250,
 };
 
 function wholeAtLeast(raw: unknown, min: number, fallback: number): number {
@@ -78,7 +119,23 @@ export function parseLifecycle(get: (key: string) => unknown): LifecycleSettings
     inactiveReengageDays: wholeAtLeast(get(LIFECYCLE_KEYS.inactiveReengageDays), 1, d.inactiveReengageDays),
     picksPauseInactiveDays: wholeAtLeast(get(LIFECYCLE_KEYS.picksPauseInactiveDays), 1, d.picksPauseInactiveDays),
     inactivityFrom: parseDateSetting(get(LIFECYCLE_KEYS.inactivityFrom)),
+    packBonusExpiryDays: wholeAtLeast(get(LIFECYCLE_KEYS.packBonusExpiryDays), 1, d.packBonusExpiryDays),
+    packFreshReportCap: wholeAtLeast(get(LIFECYCLE_KEYS.packFreshReportCap), 0, d.packFreshReportCap),
+    packEarlyOfferPence: wholeAtLeast(get(LIFECYCLE_KEYS.packEarlyOfferPence), 0, d.packEarlyOfferPence),
+    packPicksPauseDays: wholeAtLeast(get(LIFECYCLE_KEYS.packPicksPauseDays), 1, d.packPicksPauseDays),
+    placesCacheDays: wholeAtLeast(get(LIFECYCLE_KEYS.placesCacheDays), 0, d.placesCacheDays),
+    packPayingHeadlineFloorPct: pctOr(get(LIFECYCLE_KEYS.packPayingHeadlineFloorPct), d.packPayingHeadlineFloorPct),
+    packPayingHeadlineTargetPct: pctOr(get(LIFECYCLE_KEYS.packPayingHeadlineTargetPct), d.packPayingHeadlineTargetPct),
+    packPayingRundownPaidFloorPct: pctOr(get(LIFECYCLE_KEYS.packPayingRundownPaidFloorPct), d.packPayingRundownPaidFloorPct),
+    packPayingRundownPaidTargetPct: pctOr(get(LIFECYCLE_KEYS.packPayingRundownPaidTargetPct), d.packPayingRundownPaidTargetPct),
+    packCostTargetPence: wholeAtLeast(get(LIFECYCLE_KEYS.packCostTargetPence), 0, d.packCostTargetPence),
+    packCostCeilingPence: wholeAtLeast(get(LIFECYCLE_KEYS.packCostCeilingPence), 0, d.packCostCeilingPence),
   };
+}
+
+function pctOr(raw: unknown, fallback: number): number {
+  const n = wholeAtLeast(raw, 0, fallback);
+  return n <= 100 ? n : fallback;
 }
 
 /** The pack's free part: the credit it gives beyond what was paid. */

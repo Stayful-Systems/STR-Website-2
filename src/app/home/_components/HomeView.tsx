@@ -6,6 +6,9 @@ import { NAV_DESTINATIONS, NAV_TARGETS, EYE_NAV } from "@/lib/nav";
 import { StayfulEye, type EyeLevel } from "@/components/StayfulEye";
 import type { HomeFigures, SavedFigure, StageCounts, Tile, TimeSavedFigure, TodayFigure } from "@/lib/home/types";
 import { CountUp } from "./CountUp";
+import { PACK_COPY } from "@/lib/credit/pack-rules";
+import type { PackHomeCards } from "@/lib/credit/pack-home-server";
+import { dismissPackOfferAction } from "../actions";
 import { TapLink } from "./TapLink";
 
 const DASH = "—";
@@ -15,7 +18,7 @@ const pounds = (pence: number) => `£${(pence / 100).toLocaleString("en-GB", { m
 const stageLabel = (s: string) => PIPELINE_STATUSES.find((p) => p.key === s)?.label ?? s;
 
 /** Batch 22e: Home as drawn from its figures (src/lib/home). Every tile that could not be read shows "—". */
-export function HomeView({ greeting, level, figures }: { greeting: string; level: EyeLevel; figures: HomeFigures }) {
+export function HomeView({ greeting, level, figures, pack }: { greeting: string; level: EyeLevel; figures: HomeFigures; pack?: PackHomeCards }) {
   const { today, scanned, timeSaved, picked, saved, analyses, spent, feed } = figures;
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:py-8">
@@ -28,6 +31,8 @@ export function HomeView({ greeting, level, figures }: { greeting: string; level
           <p className="text-sm text-muted-foreground">Here’s what Stayful Intelligence has done for you.</p>
         </div>
       </header>
+
+      {pack && <PackCards pack={pack} />}
 
       <TodayCard tile={today} />
 
@@ -193,5 +198,40 @@ function SavedDeals({ tile }: { tile: Tile<SavedFigure> }) {
         </ol>
       )}
     </section>
+  );
+}
+
+/** Batch 29: the starter pack's two Home cards (src/lib/credit/pack-home-server.ts). */
+function PackCards({ pack }: { pack: PackHomeCards }) {
+  if (!pack.offer && !pack.picksBack) return null;
+  return (
+    <div className="mt-6 space-y-3">
+      {pack.picksBack && (
+        <section aria-label="Your daily picks" className="rounded-2xl border border-border bg-card p-4 text-sm text-foreground">
+          {PACK_COPY.picksBack}
+        </section>
+      )}
+      {pack.offer && (
+        <section aria-labelledby="pack-offer" className="rounded-2xl border border-primary/30 bg-primary/5 p-5">
+          <h2 id="pack-offer" className="text-xs font-semibold uppercase tracking-wide text-primary">
+            {PACK_COPY.earlyOfferTitle}
+          </h2>
+          <p className="mt-2 text-sm text-foreground">{PACK_COPY.earlyOffer(pack.offer.totalPence, pack.offer.bonusPence)}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Link href="/account/billing/choose?pick=starter" className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:opacity-90">
+              Start Starter
+            </Link>
+            <Link href="/account/billing/choose?pick=topup" className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground hover:bg-muted">
+              Top up
+            </Link>
+            <form action={dismissPackOfferAction}>
+              <button type="submit" className="text-xs text-muted-foreground hover:underline">
+                Not now
+              </button>
+            </form>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }

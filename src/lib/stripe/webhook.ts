@@ -14,7 +14,7 @@ import { planForPriceId, topupPenceForPriceId, type Env } from './prices.ts';
 import { subscriptionStateFromStripe } from '../subscription.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 import { planActivityKind, type ActivityKind } from '../activity/kinds.ts';
-import type { InvoiceFacts, TopupFacts } from '../meta/events.ts';
+import type { InvoiceFacts, PackFacts, RepeatFacts } from '../meta/events.ts';
 import { invoicePaymentIntentId, paymentFromIntent, paymentFromInvoice, type PaymentRecord, type RefundRecord } from '../payments/rules.ts';
 
 export interface WebhookUser {
@@ -84,9 +84,11 @@ export interface WebhookDeps {
    */
   enableAutoTopup?(userId: string, amountPence: number, thresholdPence: number): Promise<boolean>;
   /**
-   * Meta's Subscribe and Purchase (Batch 19, src/lib/meta/conversions.ts):
-   * the facts go in, and it decides whether they count. Recorded once per
-   * key, so a redelivery, or a top-up's two events, is one conversion.
+   * Meta's Subscribe, Purchase and RepeatPurchase (Batch 19 and 29,
+   * src/lib/meta/conversions.ts): the facts go in, and it decides whether
+   * they count. Recorded once per member and event, so a redelivery, or a
+   * top-up's two events, is one conversion. Purchase is the starter pack
+   * only; RepeatPurchase a pack buyer's first payment after it.
    * Optional; implementations must swallow their own errors.
    */
   recordConversion?(input: WebhookConversion): Promise<unknown>;
@@ -122,7 +124,8 @@ export interface WebhookDeps {
 
 export type WebhookConversion =
   | { name: 'Subscribe'; userId: string; eventId: string | null; invoice: InvoiceFacts }
-  | { name: 'Purchase'; userId: string; eventId: string; paymentIntentId: string; topup: TopupFacts };
+  | { name: 'Purchase'; userId: string; eventId: string; pack: PackFacts }
+  | { name: 'RepeatPurchase'; userId: string; eventId: string; repeat: RepeatFacts };
 
 export interface WebhookActivity {
   userId: string;
@@ -363,8 +366,9 @@ async function handleStarterPackPaid(pi: Stripe.PaymentIntent, deps: WebhookDeps
       // The activity log never fails a delivery.
     }
   }
-  // Meta's Purchase: the pack's price (the credit paid for, excluding VAT), once per PaymentIntent.
-  await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: pricePence, currency: pi.currency } });
+  // Meta's Purchase (Batch 29: the pack only): its price excluding VAT, once per member. A repeat charged
+  // anyway (blocked) sends nothing: it is not the pack, nor a payment after it.
+  if (outcome !== 'blocked') await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: pi.id, pack: { pricePence, currency: pi.currency, outcome } });
   await recordPaymentRow(deps, paymentFromIntent(pi, user.id));
   return { handled: true, note: `starter pack ${outcome}` };
 }
@@ -456,8 +460,9 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
           if (amount > 0) await deps.grantTopup(user.id, amount, `pi:${piId}`, user.email ?? email);
           if (amount > 0) await logTopupActivity(deps, user.id, piId, amount, false);
           if (amount > 0) await enableAutoTopupFromLink(deps, user.id, piId, pi?.metadata ?? session.metadata ?? null, amount);
-          // Meta's Purchase: payment_intent.succeeded carries the same key, so one is recorded.
-          if (amount > 0) await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: piId, paymentIntentId: piId, topup: { kind: 'topup', auto: pi?.metadata?.auto ?? session.metadata?.auto ?? null, amountPence: amount, currency: pi?.currency ?? session.currency ?? null } });
+          // Batch 29: a top-up is never a Purchase; a pack buyer's first payment after the pack is their
+          // RepeatPurchase (payment_intent.succeeded carries the same key and id, so one is recorded).
+          if (amount > 0) await recordMetaConversion(deps, { name: 'RepeatPurchase', userId: user.id, eventId: piId, repeat: { paymentId: `pi:${piId}`, topup: { kind: 'topup', auto: pi?.metadata?.auto ?? session.metadata?.auto ?? null, amountPence: amount, currency: pi?.currency ?? session.currency ?? null } } });
           // Batch 20: what was charged, for Total paid (the same row as payment_intent.succeeded's).
           await recordPaymentRow(deps, paymentFromIntent(pi ?? { id: piId, amount_received: session.amount_total ?? null, currency: session.currency ?? null, metadata: session.metadata ?? null }, user.id));
         }
@@ -496,8 +501,9 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       const granted = await deps.grantTopup(user.id, amount, `pi:${pi.id}`, user.email);
       await logTopupActivity(deps, user.id, pi.id, amount, pi.metadata?.auto === '1');
       await enableAutoTopupFromLink(deps, user.id, pi.id, pi.metadata, amount);
-      // Meta's Purchase (never an automatic top-up; Checkout's event carries the same key).
-      await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: pi.metadata?.kind, auto: pi.metadata?.auto, amountPence: amount, currency: pi.currency } });
+      // Batch 29: a pack buyer's first payment after the pack, chosen or automatic, is their RepeatPurchase
+      // (never a Purchase; Checkout's event carries the same key and id).
+      await recordMetaConversion(deps, { name: 'RepeatPurchase', userId: user.id, eventId: pi.id, repeat: { paymentId: `pi:${pi.id}`, topup: { kind: pi.metadata?.kind, auto: pi.metadata?.auto, amountPence: amount, currency: pi.currency } } });
       // Batch 20: what was charged, for Total paid.
       await recordPaymentRow(deps, paymentFromIntent(pi, user.id));
       return { handled: true, note: granted ? 'top-up granted' : 'already granted' };
@@ -569,18 +575,16 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
           await deps.grantPlanCycle(user.id, planCode, `inv:${invoice.id}`, periodEnd, user.email);
         }
         // Meta's Subscribe: the member's first paid invoice of a subscription started after tracking began.
-        await recordMetaConversion(deps, {
-          name: 'Subscribe',
-          userId: user.id,
-          eventId: invoice.id ?? null,
-          invoice: {
-            amountPaid: invoice.amount_paid,
-            totalExcludingTax: invoice.total_excluding_tax,
-            billingReason: reason,
-            currency: invoice.currency,
-            subscriptionStartedAt: sub ? isoFromUnix(sub.start_date) : reason === 'subscription_create' ? isoFromUnix(invoice.created) : null,
-          },
-        });
+        const invoiceFacts = {
+          amountPaid: invoice.amount_paid,
+          totalExcludingTax: invoice.total_excluding_tax,
+          billingReason: reason,
+          currency: invoice.currency,
+          subscriptionStartedAt: sub ? isoFromUnix(sub.start_date) : reason === 'subscription_create' ? isoFromUnix(invoice.created) : null,
+        };
+        await recordMetaConversion(deps, { name: 'Subscribe', userId: user.id, eventId: invoice.id ?? null, invoice: invoiceFacts });
+        // Batch 29 (question 10): a pack buyer whose first payment after the pack is this plan invoice sends RepeatPurchase too.
+        if (invoice.id) await recordMetaConversion(deps, { name: 'RepeatPurchase', userId: user.id, eventId: invoice.id, repeat: { paymentId: `inv:${invoice.id}`, invoice: invoiceFacts } });
         return { handled: true, note: `plan cycle granted (${reason ?? 'unspecified'})` };
       }
       if (reason === 'subscription_update') {

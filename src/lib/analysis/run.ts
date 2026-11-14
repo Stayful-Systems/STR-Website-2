@@ -11,7 +11,11 @@ import { getNearbyAmenities } from '../apis/google-places';
 import { getNearbyEvents } from '../apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '../apis/pricelabs';
 import { calculateFinancials, assessRisk, generateVerdict } from '../analysis.ts';
+import { randomUUID } from 'node:crypto';
 import { startAction, actionSpend } from '../credit/action';
+import { actionAlreadyCharged } from '../credit/ledger';
+import { claimFreshReport, packStateForPayer, releaseFreshReport, PackLimitError } from '../credit/pack-server';
+import { payerFor } from '../team';
 import { runMetered, type MeterContext } from '../credit/context';
 import { estimateAction, reportAction, type CreditAction } from '../credit/estimate';
 import { getUnitCostTable } from '../credit/unit-costs';
@@ -188,17 +192,48 @@ export async function reserveAnalysis(input: AnalysisInput, opts: AnalysisRunOpt
     markupOverride: opts.markupOverride,
   });
   const maxBasePence = opts.fixedPrice && opts.reserveBasePence !== undefined ? opts.reserveBasePence : estimate.maxBasePence;
-  const action = await startAction({
-    userId: opts.billedUserId,
-    admin: Boolean(opts.admin),
-    action: reportKind,
-    maxBasePence,
-    markupOverride: opts.markupOverride,
-    requireCredit: opts.requireCredit,
-    funnelId: opts.funnelId,
-    ...(opts.fixedPrice ? { fixedPrice: true } : {}),
-  });
-  return { ctx: action.ctx, finish: action.finish, reportKind, maxBasePence };
+  // Batch 29: a pack-only member's analyser / API / MCP report takes one of
+  // their fresh-report slots before anything is held, and their second opinion
+  // needs credit beyond the pack (src/lib/credit/pack-rules.ts). A management
+  // company's lead form runs (funnelId) are never capped.
+  const actionId = randomUUID();
+  let slot = false;
+  if (opts.billedUserId && !opts.admin && !opts.funnelId) {
+    const payer = await payerFor(opts.billedUserId);
+    const pack = await packStateForPayer(payer.payerId);
+    if (pack.packOnly) {
+      if (reportKind === 'report_enhanced') throw new PackLimitError('pack_topup_needed');
+      const claim = await claimFreshReport({ payerId: payer.payerId, actionId, kind: 'report', state: pack });
+      if (!claim.ok) throw new PackLimitError(claim.reason === 'pack_cap' ? 'pack_cap' : 'failed', claim.cap ?? pack.freshCap);
+      slot = true;
+    }
+  }
+  let action;
+  try {
+    action = await startAction({
+      userId: opts.billedUserId,
+      admin: Boolean(opts.admin),
+      action: reportKind,
+      actionId,
+      maxBasePence,
+      markupOverride: opts.markupOverride,
+      requireCredit: opts.requireCredit,
+      funnelId: opts.funnelId,
+      ...(opts.fixedPrice ? { fixedPrice: true } : {}),
+    });
+  } catch (err) {
+    if (slot) await releaseFreshReport(actionId);
+    throw err;
+  }
+  const started = action;
+  const finish = slot
+    ? async () => {
+        await started.finish();
+        // Nothing charged (a failed or empty run): the slot goes back.
+        if (!(await actionAlreadyCharged(actionId).catch(() => true))) await releaseFreshReport(actionId);
+      }
+    : started.finish;
+  return { ctx: started.ctx, finish, reportKind, maxBasePence };
 }
 
 export async function runAnalysis(

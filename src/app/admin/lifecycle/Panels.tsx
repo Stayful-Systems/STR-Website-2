@@ -32,6 +32,8 @@ export interface SettingsFormValues {
   lowCreditPence: number;
   inactiveReengageDays: number;
   picksPauseInactiveDays: number;
+  /** Batch 29: the starter pack guardrails and the "Pack → paying" lines, by form field name. */
+  pack: Record<string, number>;
 }
 
 function Field({ label, name, defaultValue, hint, type = 'number' }: { label: string; name: string; defaultValue: string | number; hint?: string; type?: string }) {
@@ -73,6 +75,23 @@ export function SettingsForm({ values }: { values: SettingsFormValues }) {
         <Field label="Low-credit decision at (pence)" name="low_credit_pence" defaultValue={values.lowCreditPence} hint="Members with no plan at or below this see Starter or a £10 top-up." />
         <Field label="Re-engage after (days inactive)" name="inactive_reengage_days" defaultValue={values.inactiveReengageDays} />
         <Field label="Pause daily picks after (days inactive)" name="picks_pause_inactive_days" defaultValue={values.picksPauseInactiveDays} />
+      </div>
+      <h3 className="mt-6 text-sm font-semibold text-foreground">Starter pack guardrails (Batch 29)</h3>
+      <div className="mt-2 grid gap-4 sm:grid-cols-2">
+        <Field label="Bonus expires after (days)" name="pack_bonus_expiry_days" defaultValue={values.pack.pack_bonus_expiry_days} hint="The bonus (credit beyond the price) pays for opening deals, saved reports and daily picks, and expires this long after the pack. A further payment lifts both." />
+        <Field label="Fresh reports for a pack-only member" name="pack_fresh_report_cap" defaultValue={values.pack.pack_fresh_report_cap} hint="Welcome-price ones included; saved reports don't count. The next one offers a top-up or Starter." />
+        <Field label="Early offer at (pence)" name="pack_early_offer_pence" defaultValue={values.pack.pack_early_offer_pence} hint="A pack-only member's balance at or below this gets the Home card and one email section, once. 0: off." />
+        <Field label="Pause a pack-only member's picks after (days away)" name="pack_picks_pause_days" defaultValue={values.pack.pack_picks_pause_days} hint="Days without a visit; any visit starts them again. Runs even while the inactivity rules are off." />
+        <Field label="Google Places answers kept for (days)" name="places_cache_days" defaultValue={values.pack.places_cache_days} hint="Nearby places for the same ~100m are reused, so the report is the same and costs nothing. 0: off." />
+      </div>
+      <h3 className="mt-6 text-sm font-semibold text-foreground">Pack → paying lines (on Weekly active)</h3>
+      <div className="mt-2 grid gap-4 sm:grid-cols-2">
+        <Field label="Paid again within 60 days: amber from (%)" name="pack_paying_headline_floor_pct" defaultValue={values.pack.pack_paying_headline_floor_pct} />
+        <Field label="Paid again within 60 days: green at (%)" name="pack_paying_headline_target_pct" defaultValue={values.pack.pack_paying_headline_target_pct} />
+        <Field label="Paid within 14 days of running down: amber from (%)" name="pack_paying_rundown_paid_floor_pct" defaultValue={values.pack.pack_paying_rundown_paid_floor_pct} />
+        <Field label="Paid within 14 days of running down: green at (%)" name="pack_paying_rundown_paid_target_pct" defaultValue={values.pack.pack_paying_rundown_paid_target_pct} />
+        <Field label="Data cost per pack-only member: green to (pence)" name="pack_cost_target_pence" defaultValue={values.pack.pack_cost_target_pence} />
+        <Field label="Data cost per pack-only member: amber to (pence)" name="pack_cost_ceiling_pence" defaultValue={values.pack.pack_cost_ceiling_pence} />
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button type="submit" disabled={pending} className={button}>

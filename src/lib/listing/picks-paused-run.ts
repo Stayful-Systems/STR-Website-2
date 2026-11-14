@@ -325,7 +325,18 @@ async function runAwayLetters(admin: ReturnType<typeof createAdminClient>, opts:
     console.warn("[picks-paused] away letters skipped (schema not run?):", error.message);
     return result;
   }
-  const ids = ((due ?? []) as { id: string }[]).map((r) => r.id);
+  let ids = ((due ?? []) as { id: string }[]).map((r) => r.id);
+  // Batch 29: a starter pack member's pause while away (picks_paused_reason 'pack') gets no letter: their
+  // picks start again on their next visit and Home says so. Unreadable (schema behind): no pack pause exists.
+  if (ids.length > 0) {
+    const pack = new Set<string>();
+    for (const some of chunk(ids, ID_CHUNK)) {
+      const { data: why, error: whyErr } = await admin.from("profiles").select("id").in("id", some).eq("picks_paused_reason", "pack");
+      if (whyErr) break;
+      for (const r of (why ?? []) as { id: string }[]) pack.add(r.id);
+    }
+    ids = ids.filter((id) => !pack.has(id));
+  }
   result.considered = ids.length;
   if (ids.length === 0) return result;
   const rows: { id: string; email: string | null; full_name: string | null; sourcing_alerts: boolean | null; alert_credit: boolean | null }[] = [];

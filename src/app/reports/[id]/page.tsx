@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { packStateForPayer } from "@/lib/credit/pack-server";
+import { deepNeedsTopUp } from "@/lib/credit/pack-rules";
 import { notFound } from "next/navigation";
 import EstimatePage from "@/app/estimate/page";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -35,6 +37,7 @@ export default async function SavedReportPage({ params }: { params: Promise<{ id
 
   let pmi = null;
   let pmiNote: string | null = null;
+  let pmiTopUp = false;
   // Batch 17: a Project deal's report shows the reader's own locked figures beside ours, read now and never stored on the report.
   const hasProject = Boolean(dealId && parseReportProject(result.project));
   const user = dealId && ((!result.secondOpinion && enhancedEnabled(true)) || hasProject) ? (await supabase.auth.getUser()).data.user : null;
@@ -42,11 +45,13 @@ export default async function SavedReportPage({ params }: { params: Promise<{ id
     const { payerId } = await payerFor(user.id);
     const adminUser = isAdminEmail(user.email);
     // R3 (R2-1): the label is the price addSecondOpinion will charge (the member's own offer), never the list price.
-    const [quoter, offered] = await Promise.all([quoterFor(payerId, adminUser), adminUser ? null : offeredPmiAddonFor(user.id).catch(() => null)]);
-    pmi = quoter.label(adminUser ? 0 : offered ? offered.pmiPence : quoter.pricing.pmiAddonPence);
+    const [quoter, offered, pack] = await Promise.all([quoterFor(payerId, adminUser), adminUser ? null : offeredPmiAddonFor(user.id).catch(() => null), adminUser ? null : packStateForPayer(payerId)]);
+    pmi = quoter.label(adminUser ? 0 : offered ? offered.pmiPence : quoter.pricing.pmiAddonPence, "pmi_addon");
     pmiNote = offerLabel(offered?.offer);
+    // Batch 29: a pack-only member's second opinion needs credit beyond the pack (the card says so; no price).
+    pmiTopUp = Boolean(pack && deepNeedsTopUp(pack));
   }
   const projectMine = user && dealId && hasProject && hasServiceRole() ? await reportProjectMineFor(createAdminClient(), user.id, dealId) : null;
 
-  return <EstimatePage initialResult={{ ...result, reportId: id }} savedAnalysis={dealId ? { dealId, analysedAt, pmi, pmiNote, projectMine } : undefined} />;
+  return <EstimatePage initialResult={{ ...result, reportId: id }} savedAnalysis={dealId ? { dealId, analysedAt, pmi, pmiNote, pmiTopUp, projectMine } : undefined} />;
 }

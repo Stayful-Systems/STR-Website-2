@@ -80,6 +80,19 @@ export default async function LifecyclePage() {
           lowCreditPence: s.lowCreditPence,
           inactiveReengageDays: s.inactiveReengageDays,
           picksPauseInactiveDays: s.picksPauseInactiveDays,
+          pack: {
+            pack_bonus_expiry_days: s.packBonusExpiryDays,
+            pack_fresh_report_cap: s.packFreshReportCap,
+            pack_early_offer_pence: s.packEarlyOfferPence,
+            pack_picks_pause_days: s.packPicksPauseDays,
+            places_cache_days: s.placesCacheDays,
+            pack_paying_headline_floor_pct: s.packPayingHeadlineFloorPct,
+            pack_paying_headline_target_pct: s.packPayingHeadlineTargetPct,
+            pack_paying_rundown_paid_floor_pct: s.packPayingRundownPaidFloorPct,
+            pack_paying_rundown_paid_target_pct: s.packPayingRundownPaidTargetPct,
+            pack_cost_target_pence: s.packCostTargetPence,
+            pack_cost_ceiling_pence: s.packCostCeilingPence,
+          },
         }}
       />
 

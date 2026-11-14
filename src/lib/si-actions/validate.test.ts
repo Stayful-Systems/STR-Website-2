@@ -180,3 +180,26 @@ test('Batch 28: a buy-to-let report the member already has is never sold again',
   assert.deepEqual(r.steps, []);
   assert.deepEqual(r.dropped.map((d) => d.reason), ['already_done']);
 });
+
+// ── Batch 29: a pack-only member's limits, said before anything is confirmed ──
+test('a pack-only member: no Deep report, and fresh analyses only up to what is left; saved ones never count', () => {
+  const D = '44444444-4444-4444-8444-444444444444';
+  const E = '55555555-5555-4555-8555-555555555555';
+  const deals = new Map([
+    [A, deal(A)],
+    [B, deal(B, { saved: true })],
+    [D, deal(D)],
+    [E, deal(E)],
+  ]);
+  const r = checkPlan(
+    [step({ action: 'full_analysis', dealId: A }), step({ action: 'full_analysis', dealId: B }), step({ action: 'full_analysis', dealId: D }), step({ action: 'deep_report', dealId: E })],
+    ctx({ deals, pack: { packOnly: true, freshLeft: 1 } }),
+  );
+  assert.deepEqual(r.steps.map((s) => ('dealId' in s ? s.dealId : null)), [A, B]);
+  assert.deepEqual(r.dropped.map((d) => d.reason), ['pack_cap', 'pack_topup_needed']);
+});
+
+test('anyone else is not limited', () => {
+  const r = checkPlan([step({ action: 'full_analysis', dealId: A }), step({ action: 'deep_report', dealId: B })], ctx());
+  assert.equal(r.dropped.length, 0);
+});

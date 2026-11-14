@@ -40,6 +40,15 @@ export interface OfferMember {
   hadDeepReport: boolean;
   /** This member already used the welcome price on this deal. */
   usedWelcomeOn: readonly string[];
+  /**
+   * Batch 29 (section G, decided by Zac): the paying account bought the starter
+   * pack, whether it is still pack-only (src/lib/credit/pack-rules.ts), and when
+   * it first paid for anything else. Absent: not a pack buyer (Batch 22's rules
+   * exactly as they were).
+   */
+  packBuyer?: boolean;
+  packOnly?: boolean;
+  paidAgainAt?: string | null;
 }
 
 export interface ListPrices {
@@ -74,6 +83,22 @@ function withinWindow(viewedAt: string | null, days: number, now: Date): boolean
   return now.getTime() <= t + Math.max(0, days) * 86_400_000;
 }
 
+/**
+ * Batch 29: the Deep report's welcome price. A pack buyer gets it only once
+ * they have paid again (a top-up, automatic top-up or plan payment after the
+ * pack); if that first further payment came after Batch 22's window closed,
+ * the window starts again from it (their own reveal's deals only). Everyone
+ * else: exactly the full analysis's welcome rule.
+ */
+export function deepWelcomeApplies(dealId: string, m: OfferMember, s: OfferSettings, now: Date): boolean {
+  if (!m.packBuyer) return welcomeApplies(dealId, m, s, now);
+  if (m.packOnly || !m.paidAgainAt) return false;
+  const viewed = m.revealViewedAt ? Date.parse(m.revealViewedAt) : NaN;
+  const paid = Date.parse(m.paidAgainAt);
+  const closedBeforePaying = Number.isFinite(viewed) && Number.isFinite(paid) && paid > viewed + Math.max(0, s.revealWelcomeDays) * 86_400_000;
+  return welcomeApplies(dealId, closedBeforePaying ? { ...m, revealViewedAt: m.paidAgainAt } : m, s, now);
+}
+
 /** The welcome price applies to this deal for this member now. */
 export function welcomeApplies(dealId: string, m: OfferMember, s: OfferSettings, now: Date): boolean {
   if (!m.paysForSelf) return false;
@@ -95,7 +120,10 @@ export function analysisOffer(input: { dealId: string; withPmi: boolean; list: L
   if (!m) return none;
   const off = pct(s.revealAnalysisDiscountPct) / 100;
 
-  if (welcomeApplies(input.dealId, m, s, input.now)) {
+  // Batch 29: a pack-only member cannot buy the second opinion at all (it needs
+  // credit beyond the pack), so no Deep price of any kind is offered to them.
+  if (input.withPmi && m.packOnly) return none;
+  if (input.withPmi ? deepWelcomeApplies(input.dealId, m, s, input.now) : welcomeApplies(input.dealId, m, s, input.now)) {
     if (!input.withPmi) {
       const full = Math.max(round2(list.fullPence * (1 - off)), floorTo(floors.fullRawPence));
       if (full < list.fullPence) return { fullPence: full, pmiPence: list.pmiPence, offer: 'welcome', firstDeep: false, listTotalPence: listTotal };
@@ -118,8 +146,9 @@ export function analysisOffer(input: { dealId: string; withPmi: boolean; list: L
 }
 
 /** PMI added to a finished analysis: the first time for the account, + the first-run extra. Never welcome-priced. */
-export function pmiAddonOffer(input: { listPmiPence: number; hadDeepReport: boolean; settings: Pick<OfferSettings, 'deepFirstRunExtraPence'>; floors: Pick<Floors, 'pmiRawPence'> }): { pmiPence: number; offer: OfferKind | null; firstDeep: boolean } {
-  if (input.hadDeepReport) return { pmiPence: input.listPmiPence, offer: null, firstDeep: false };
+export function pmiAddonOffer(input: { listPmiPence: number; hadDeepReport: boolean; settings: Pick<OfferSettings, 'deepFirstRunExtraPence'>; floors: Pick<Floors, 'pmiRawPence'>; packOnly?: boolean }): { pmiPence: number; offer: OfferKind | null; firstDeep: boolean } {
+  // Batch 29: never a first-time price for a pack-only member (they cannot buy PMI until they top up).
+  if (input.hadDeepReport || input.packOnly) return { pmiPence: input.listPmiPence, offer: null, firstDeep: false };
   const price = Math.max(Math.max(0, input.settings.deepFirstRunExtraPence), floorTo(input.floors.pmiRawPence));
   if (price >= input.listPmiPence) return { pmiPence: input.listPmiPence, offer: null, firstDeep: true };
   return { pmiPence: price, offer: 'first_pmi', firstDeep: true };

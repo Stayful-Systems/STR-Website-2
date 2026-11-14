@@ -44,6 +44,8 @@ export interface AnswerFacts {
   autoTopupOn: boolean;
   /** Part F's line, when there is a low or no match. */
   noMatch: string | null;
+  /** Batch 29: a pack-only member's bonus and fresh reports (null for everyone else). */
+  packMember?: MemberValues['pack'];
 }
 
 export interface Answer {
@@ -72,6 +74,7 @@ export function memberValuesFrom(f: AnswerFacts): MemberValues {
     welcome: f.welcome,
     firstDeepPence: f.firstDeepPence,
     noMatch: f.noMatch,
+    pack: f.packMember ?? null,
   };
 }
 
