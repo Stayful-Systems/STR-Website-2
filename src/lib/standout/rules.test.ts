@@ -52,9 +52,23 @@ test('no minimum-profit answer for the type: never standout', () => {
   assert.equal(judgeStandout(input({ wants: { minProfit: 1000, minProfitR2r: null } })).reason, 'no_min_profit_for_type');
 });
 
-test('at least five answers checked', () => {
-  assert.equal(judgeStandout(input({ judgement: judgement(4, 4) })).reason, 'too_few_checks');
-  assert.equal(judgeStandout(input({ judgement: judgement(5, 5) })).reason, 'standout');
+const sale = (over: Partial<StandoutInput> = {}) =>
+  input({ facts: { kind: 'sale', dealType: 'buy_str', project: null }, chosenTypes: ['buy_str'], wants: { minProfit: 1000, minProfitR2r: null }, ...over });
+
+test('a sale needs at least five answers checked', () => {
+  assert.equal(judgeStandout(sale({ judgement: judgement(4, 4) })).reason, 'too_few_checks');
+  assert.equal(judgeStandout(sale({ judgement: judgement(3, 3) })).reason, 'too_few_checks', 'the rent-to-rent bar does not apply to a sale');
+  assert.equal(judgeStandout(sale({ judgement: judgement(5, 5) })).reason, 'standout');
+});
+
+test('Batch 30: a rent-to-rent deal needs at least three: the shorter quiz leaves a new member at most four checks', () => {
+  assert.equal(judgeStandout(input({ judgement: judgement(2, 2) })).reason, 'too_few_checks');
+  assert.equal(judgeStandout(input({ judgement: judgement(3, 3) })).reason, 'standout', 'where, profit, setup cash on "anywhere" is three');
+  assert.equal(judgeStandout(input({ judgement: judgement(4, 4) })).reason, 'standout');
+  // The setting restores the old bar, and the 90% floor and every other rule still apply.
+  assert.equal(judgeStandout(input({ judgement: judgement(4, 4), settings: { ...DEFAULT_STANDOUT, minCheckedRent: 5 } })).reason, 'too_few_checks');
+  assert.equal(judgeStandout(input({ judgement: judgement(2, 3) })).reason, 'match_below_floor');
+  assert.equal(judgeStandout(input({ judgement: judgement(3, 3, ['location']) })).reason, 'must_have_missed');
 });
 
 test('the 90% floor uses the % the member sees: with 5–9 checks every check must pass', () => {

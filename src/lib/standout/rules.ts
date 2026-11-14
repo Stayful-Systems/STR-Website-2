@@ -6,7 +6,8 @@
  *   the SAME judging Today and the reveal use (judgeRow → judgeDeal), never a
  *   second scoring path;
  *   no must-have missed (Today's own pool rule);
- *   at least minChecked answers checked, and a match (met ÷ checked, the %
+ *   at least minChecked answers checked (minCheckedRent for a rent-to-rent deal:
+ *   Batch 30's shorter quiz gives it fewer checks to make), and a match (met ÷ checked, the %
  *   the member sees) of at least minMatchPct and at least their signup
  *   reveal's #1 (no reveal: the floor alone);
  *   the profit the profit check reads — the LOW end of the range, or for a
@@ -64,7 +65,7 @@ export interface StandoutInput {
   chosenTypes: readonly DealType[];
   /** The member's signup reveal #1's match % now, or null (no reveal, or it has gone). */
   revealPct: number | null;
-  settings: Pick<StandoutSettings, 'minMatchPct' | 'minChecked' | 'profitOverMinPct'>;
+  settings: Pick<StandoutSettings, 'minMatchPct' | 'minChecked' | 'minCheckedRent' | 'profitOverMinPct'>;
   /** Admin's test helper: every threshold is skipped (types and must-haves still apply). */
   forced?: boolean;
   /** Batch 28: what a buy-to-let deal is judged on instead (its own rule, Part D); absent: never a buy-to-let standout. */
@@ -123,7 +124,7 @@ export function judgeStandout(i: StandoutInput): StandoutJudgement {
   if (j.mustFails.length > 0) return no('must_have_missed', false);
   if (i.forced) return { outcome: 'standout', reason: 'forced', inPool: true, ...base };
   if (minProfit === null) return no('no_min_profit_for_type');
-  if (j.checked < i.settings.minChecked) return no('too_few_checks');
+  if (j.checked < (dealType === 'r2r' ? i.settings.minCheckedRent : i.settings.minChecked)) return no('too_few_checks');
   if (matchPct === null || matchPct < i.settings.minMatchPct) return no('match_below_floor');
   if (i.revealPct !== null && matchPct < i.revealPct) return no('below_reveal_match');
   if (profitLow === null) return no('profit_unknown');

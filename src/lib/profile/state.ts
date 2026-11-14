@@ -13,7 +13,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { DEFAULT_FINANCE_GOALS } from '../market/goals.ts';
-import { applyAnswer, isQuestionId, moneyQuestionsFor, questionsFor, type Answers, type Question, type QuestionId } from './questions.ts';
+import { applyAnswer, isQuestionId, PREDECESSORS, questionsFor, type Answers, type Question, type QuestionId } from './questions.ts';
 import { dealTypesFor, type DealType } from './deal-types.ts';
 
 export interface AnsweredMark {
@@ -111,13 +111,35 @@ export interface Progress {
   notSure: number;
 }
 
+/**
+ * Batch 30: the mark that counts for a question: its own, or, when it was not
+ * asked, the one a question it replaced left (PREDECESSORS), preferring a real
+ * answer over "Not sure". Null when neither was answered.
+ */
+export function markFor(id: QuestionId, answered: AnsweredMap): AnsweredMark | null {
+  const own = answered[id];
+  if (own) return own;
+  const old = (PREDECESSORS[id] ?? []).map((p) => answered[p]).filter((m): m is AnsweredMark => Boolean(m));
+  return old.find((m) => !m.notSure) ?? old[0] ?? null;
+}
+
+/**
+ * Whether a question counts as answered: it was, or a question it replaced
+ * was. The one rule progress(), the gate and "Start again" (profiles/reset.ts)
+ * share, so a member who answered the old questions is never asked again and
+ * never blocked.
+ */
+export function isAnswered(id: QuestionId, answered: AnsweredMap): boolean {
+  return markFor(id, answered) !== null;
+}
+
 export function progress(a: Answers, quiz: QuizRecord): Progress {
   const qs = questionsFor(a);
-  const answered = qs.filter((q) => quiz.answered[q.id]).map((q) => q.id);
-  const next = qs.find((q) => !quiz.answered[q.id])?.id ?? null;
+  const answered = qs.filter((q) => isAnswered(q.id, quiz.answered)).map((q) => q.id);
+  const next = qs.find((q) => !isAnswered(q.id, quiz.answered))?.id ?? null;
   const remaining = qs.length - answered.length;
   const mandatory = qs.filter((q) => q.mandatory).map((q) => q.id);
-  const notSure = answered.filter((id) => quiz.answered[id]?.notSure).length;
+  const notSure = answered.filter((id) => markFor(id, quiz.answered)?.notSure).length;
   return {
     types: dealTypesFor({ goals: a.goals, about: a.about }),
     questions: qs.map((q) => q.id),
@@ -127,7 +149,7 @@ export function progress(a: Answers, quiz: QuizRecord): Progress {
     minutesLeft: remaining === 0 ? 0 : Math.max(1, Math.ceil((remaining * SECONDS_PER_QUESTION) / 60)),
     complete: next === null,
     mandatory,
-    mandatoryDone: mandatory.every((id) => Boolean(quiz.answered[id])),
+    mandatoryDone: mandatory.every((id) => isAnswered(id, quiz.answered)),
     real: answered.length - notSure,
     notSure,
   };
@@ -179,14 +201,19 @@ export function seedFromGoals(a: Answers, now: Date): { answers: Answers; answer
   answers = { ...answers, goals: { ...answers.goals, where } };
   answered.where = { at, notSure: false };
 
-  // The money question for each type; "Not sure yet" was an answer then too.
-  const money = moneyQuestionsFor(answers.goals.dealTypes ?? []);
-  if (money.includes('budget')) answered.budget = { at, notSure: answers.goals.budget === null };
-  if (money.includes('max_rent')) answered.max_rent = { at, notSure: answers.goals.maxRentPcm === null };
+  // The welcome's money questions, as they were asked then ("Not sure yet" was an answer too). The
+  // marks are the old ids: they satisfy Buying cash and R2R setup cash through PREDECESSORS (Batch 30).
+  const seeded = answers.goals.dealTypes ?? [];
+  if (seeded.includes('buy_str')) answered.budget = { at, notSure: answers.goals.budget === null };
+  if (seeded.includes('r2r')) answered.max_rent = { at, notSure: answers.goals.maxRentPcm === null };
 
   if (answers.goals.bedrooms !== null) answered.bedrooms = { at, notSure: false };
-  const f = answers.goals.finance;
-  if (f.depositPct !== DEFAULT_FINANCE_GOALS.depositPct || f.mortgageRatePct !== DEFAULT_FINANCE_GOALS.mortgageRatePct) answered.finance = { at, notSure: false };
+  const f = a.goals.finance;
+  if (f.depositPct !== DEFAULT_FINANCE_GOALS.depositPct || f.mortgageRatePct !== DEFAULT_FINANCE_GOALS.mortgageRatePct) {
+    answered.finance = { at, notSure: false };
+    // They chose their own figures: today's average must not overwrite the rate (Batch 30).
+    answers = { ...answers, goals: { ...answers.goals, finance: { ...answers.goals.finance, rateSet: true } } };
+  }
   if (f.targetMarginPcm !== DEFAULT_FINANCE_GOALS.targetMarginPcm) {
     answered.min_profit = { at, notSure: false };
     // One answer then, two now: the rent-to-rent minimum starts as the same figure.

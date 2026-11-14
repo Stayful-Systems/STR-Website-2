@@ -146,7 +146,7 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
 
   async function views(cards: DealCard[]): Promise<Map<string, CardView>> {
     if (cards.length === 0) return new Map();
-    const [base, snapshot] = await Promise.all([cardViewsFor({ supabase: supabase as never, userId: member.userId, adminUser: member.admin, cards, finance, cashBuyer, btl: btlLookerFor(ctx.member.goals, ctx.member.savedAreas, ctx.member.tailoring?.about ?? null) }), getAreaCardsWithin(AREA_WAIT_MS)]);
+    const [base, snapshot] = await Promise.all([cardViewsFor({ supabase: supabase as never, userId: member.userId, adminUser: member.admin, cards, finance, cashBuyer, btl: btlLookerFor(ctx.member.goals, ctx.member.savedAreas, ctx.member.tailoring?.about ?? null), tailoring: ctx.member.tailoring ?? null }), getAreaCardsWithin(AREA_WAIT_MS)]);
     return withTailoring(base, cards, ctx.member.tailoring ?? null, snapshot, now, { why: true });
   }
 

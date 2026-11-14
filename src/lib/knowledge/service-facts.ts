@@ -19,7 +19,7 @@ WHAT IT IS
 
 ACCOUNTS AND WHO CAN USE IT
 - Anyone can sign up free; every new account gets {welcome_credit} of free credit, enough for about {analyses_in_welcome} Full analyses.
-- Members answer a short profile quiz (budget, areas, the kind of deal, deposit and mortgage rate, and more). A complete profile with real answers earns a one-off {profile_credit} of credit. Answers can be changed any time on the profile page.
+- Members answer a short profile quiz: what they are looking for (several kinds of deal can be ticked), where, the cash they can put into buying (Buying cash) or spend setting up a rent-to-rent property (R2R setup cash), their minimum profit, which end of a deal's profit range has to reach it, the kind of property, and a few about them. The deposit and mortgage rate are not asked: figures use today's average rate unless the member sets their own, and the deal card says which, with a way to change it. A complete profile with real answers earns a one-off {profile_credit} of credit. Answers can be changed any time on the profile page; a few days after joining, Home asks once what is holding them back (from day {blocker_card_day}).
 - A member can keep up to {saved_profiles_max} saved profiles (for example a sourcer with several clients); the active one decides Today, Browse and the Explorer.
 - Teams: an owner can invite colleagues, who use the owner's credit. Each seat costs {team_seat_cost} of the owner's credit every {team_seat_days} days. Team members manage nothing to do with billing.
 - Management companies can sign up for branded lead forms (a separate part of the product, under Leads).

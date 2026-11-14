@@ -10,6 +10,7 @@ import { PACK_COPY } from "@/lib/credit/pack-rules";
 import type { PackHomeCards } from "@/lib/credit/pack-home-server";
 import { dismissPackOfferAction } from "../actions";
 import { TapLink } from "./TapLink";
+import { BlockerCard } from "./BlockerCard";
 
 const DASH = "—";
 
@@ -18,7 +19,7 @@ const pounds = (pence: number) => `£${(pence / 100).toLocaleString("en-GB", { m
 const stageLabel = (s: string) => PIPELINE_STATUSES.find((p) => p.key === s)?.label ?? s;
 
 /** Batch 22e: Home as drawn from its figures (src/lib/home). Every tile that could not be read shows "—". */
-export function HomeView({ greeting, level, figures, pack }: { greeting: string; level: EyeLevel; figures: HomeFigures; pack?: PackHomeCards }) {
+export function HomeView({ greeting, level, figures, pack, blockerCard }: { greeting: string; level: EyeLevel; figures: HomeFigures; pack?: PackHomeCards; blockerCard?: { value: string; label: string }[] | null }) {
   const { today, scanned, timeSaved, picked, saved, analyses, spent, feed } = figures;
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:py-8">
@@ -33,6 +34,9 @@ export function HomeView({ greeting, level, figures, pack }: { greeting: string;
       </header>
 
       {pack && <PackCards pack={pack} />}
+
+      {/* Batch 30: after the pack cards, which it waits for: "What's holding you back?" (src/lib/home/blocker-card.ts). */}
+      {blockerCard && <BlockerCard options={blockerCard} />}
 
       <TodayCard tile={today} />
 

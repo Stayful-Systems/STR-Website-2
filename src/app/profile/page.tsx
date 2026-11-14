@@ -4,10 +4,10 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { GOALS_EDITOR_HREF, PROFILE_QUIZ_HREF } from "@/lib/nav";
 import { MIN_MONTHS_RANGE, MIN_WEEKS_RANGE, MOTIVATION_MODE_LABELS, PRIORITY_LABELS, type MotivationMode, type Priority } from "@/lib/market/goals";
-import { answerLabel, questionsFor, SECTION_TITLES, type SectionId } from "@/lib/profile/questions";
+import { answerLabel, currentValue, questionById, questionsFor, SECTION_TITLES, type Question, type SectionId } from "@/lib/profile/questions";
 import { describeTypes, typesShown } from "@/lib/profile/deal-types";
 import { matchLabel } from "@/lib/profile/matching";
-import { minutesLeftLabel, pillLabel } from "@/lib/profile/state";
+import { markFor, minutesLeftLabel, pillLabel } from "@/lib/profile/state";
 import { creditViewFor, matchCountFor, profileSummaryFor } from "@/lib/profile/server";
 import { logActivity } from "@/lib/activity/log";
 import { todayKey } from "@/lib/today/day";
@@ -18,7 +18,7 @@ import { tailoringForMember } from "@/lib/tailoring/server";
 import { activeCriteria, criterionForQuestion, modeOf, NOT_APPLIED, wantsFor } from "@/lib/tailoring/criteria";
 import { isSwitchable } from "@/lib/tailoring/profile";
 import { FilterModeSwitch } from "./_components/FilterModeSwitch";
-import { DEFAULT_FINANCE } from "@/lib/listing/deal";
+import { DEFAULT_FINANCE, ratePctLabel } from "@/lib/listing/deal";
 
 export const metadata: Metadata = {
   title: "Your profile — Stayful Intelligence",
@@ -70,6 +70,17 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   const questions = questionsFor(answers);
   const sections = SECTION_ORDER.map((id) => ({ id, questions: questions.filter((q) => q.section === id) })).filter((s) => s.questions.length > 0);
   const g = answers.goals;
+  // Batch 30: answers to questions no longer asked still count and can be changed, so they are shown, but only when they hold a value:
+  // a maximum rent, what's holding them back, and (for a buyer) the mortgage rate.
+  const buys = typesShown({ goals: answers.goals, about: answers.about }).some((t) => t === "buy_str" || t === "brrr" || t === "btl");
+  const retiredRows = (["max_rent", "blocker", "finance"] as const)
+    .filter((id) => (id === "finance" ? buys : currentValue(id, answers) !== null && currentValue(id, answers) !== undefined))
+    .map((id) => questionById(id))
+    .filter((q): q is Question => q !== null);
+  const labelFor = (q: Question): string | null => {
+    if (q.id === "finance") return g.finance.rateSet ? `Your rate, ${ratePctLabel(g.finance.mortgageRatePct)}` : `Today’s average (${ratePctLabel(g.finance.mortgageRatePct)})`;
+    return answerLabel(q.id, answers);
+  };
   const saved = first(params.saved);
   const editHref = (id: string) => `${PROFILE_QUIZ_HREF}?q=${encodeURIComponent(id)}&next=${encodeURIComponent(GOALS_EDITOR_HREF)}`;
   const continueHref = `${PROFILE_QUIZ_HREF}?next=${encodeURIComponent(GOALS_EDITOR_HREF)}`;
@@ -153,15 +164,16 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
           {progress.complete && credit.line && <p className="mt-2 text-sm text-muted-foreground">{credit.line}</p>}
         </header>
 
-        {sections.map((s) => (
-          <section key={s.id} aria-labelledby={`profile-${s.id}`} className="rounded-xl border border-border bg-card">
-            <h2 id={`profile-${s.id}`} className="border-b border-border px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {SECTION_TITLES[s.id]}
+        {[...sections.map((sec) => ({ key: sec.id, title: SECTION_TITLES[sec.id], questions: sec.questions })), ...(retiredRows.length > 0 ? [{ key: "other", title: "Other answers", questions: retiredRows }] : [])].map((s) => (
+          <section key={s.key} aria-labelledby={`profile-${s.key}`} className="rounded-xl border border-border bg-card">
+            <h2 id={`profile-${s.key}`} className="border-b border-border px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {s.title}
             </h2>
             <ul className="divide-y divide-border">
               {s.questions.map((q) => {
-                const mark = quiz.answered[q.id];
-                const label = mark?.notSure ? "Not sure" : answerLabel(q.id, answers);
+                // Batch 30: a question that replaced older ones counts as answered when they were (markFor).
+                const mark = markFor(q.id, quiz.answered);
+                const label = mark?.notSure ? "Not sure" : labelFor(q);
                 // Batch 14: the answer's switch, when this answer judges deals at all.
                 const criterion = criterionForQuestion(q.id);
                 const active = tailoring && criterion && switchedOn.has(criterion) && !mark?.notSure ? criterion : null;

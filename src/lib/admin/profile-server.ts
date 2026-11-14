@@ -13,6 +13,7 @@ import { DEFAULT_GOALS, parseMarketGoals } from '../market/goals';
 import { parseAboutYou } from '../profile/about';
 import { emptyAnswers } from '../profile/questions';
 import { EMPTY_QUIZ, parseQuizRow, progress, seedFromGoals, type QuizRecord } from '../profile/state';
+import { getBillingSettings } from '../credit/unit-costs';
 import { aggregateProfileStats, type ProfileStats, type QuizFact } from './profile';
 
 const LIMIT = 5000;
@@ -75,7 +76,10 @@ export async function loadProfileStats(): Promise<ProfileStatsLoad> {
       percent: prog.percent,
       complete: prog.complete,
       notSure: prog.answered.filter((id) => quiz!.answered[id]?.notSure),
+      questionsAsked: prog.questions.length,
+      answeredCount: prog.answered.length,
     });
   }
-  return { status: 'ok', stats: aggregateProfileStats(facts, profiles.length), truncated: (quizRes.data?.length ?? 0) >= LIMIT || (profilesRes.data?.length ?? 0) >= LIMIT };
+  const shorterFrom = (await getBillingSettings().catch(() => null))?.lifecycle.quizShorterFrom ?? null;
+  return { status: 'ok', stats: aggregateProfileStats(facts, profiles.length, shorterFrom), truncated: (quizRes.data?.length ?? 0) >= LIMIT || (profilesRes.data?.length ?? 0) >= LIMIT };
 }

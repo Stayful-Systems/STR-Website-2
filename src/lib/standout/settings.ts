@@ -16,6 +16,11 @@ export interface StandoutSettings {
   minMatchPct: number;
   /** …over at least this many checked answers. */
   minChecked: number;
+  /**
+   * Batch 30: the same, for a rent-to-rent deal. The shorter quiz leaves a new rent-to-rent member at most
+   * four checks (where, profit, setup cash, bedrooms; three on "anywhere"), so it has its own, lower bar.
+   */
+  minCheckedRent: number;
   /** The low end of the profit at least this % above the member's minimum. */
   profitOverMinPct: number;
   /** The listing confirmed live within this many hours; older is rechecked first. */
@@ -41,6 +46,7 @@ export interface StandoutSettings {
 export const STANDOUT_KEYS = {
   minMatchPct: 'standout_min_match_pct',
   minChecked: 'standout_min_checked',
+  minCheckedRent: 'standout_min_checked_rent',
   profitOverMinPct: 'standout_profit_over_min_pct',
   liveConfirmHours: 'standout_live_confirm_hours',
   callsPerMonth: 'standout_calls_per_month',
@@ -56,6 +62,7 @@ export const STANDOUT_KEYS = {
 export const DEFAULT_STANDOUT: StandoutSettings = {
   minMatchPct: 90,
   minChecked: 5,
+  minCheckedRent: 3,
   profitOverMinPct: 25,
   liveConfirmHours: 6,
   callsPerMonth: 2,
@@ -84,6 +91,7 @@ export function parseStandout(get: (key: string) => unknown): StandoutSettings {
   return {
     minMatchPct: numberIn(get(k.minMatchPct), 1, 100, d.minMatchPct),
     minChecked: numberIn(get(k.minChecked), 1, 30, d.minChecked),
+    minCheckedRent: numberIn(get(k.minCheckedRent), 1, 30, d.minCheckedRent),
     profitOverMinPct: numberIn(get(k.profitOverMinPct), 0, 500, d.profitOverMinPct),
     liveConfirmHours: numberIn(get(k.liveConfirmHours), 1, 72, d.liveConfirmHours),
     callsPerMonth: numberIn(get(k.callsPerMonth), 0, 31, d.callsPerMonth),

@@ -8,6 +8,7 @@
  * Relative `.ts` imports only.
  */
 
+import type { CardDisplay } from './card-display.ts';
 import { openPricePence, type DealOpenLadder } from './ladder.ts';
 import { profitRange, rangeCaption, upliftTag, widthFor, type ProfitRange } from './profit-range.ts';
 import { mostYouCanPay, type PayCeiling } from './most-you-can-pay.ts';
@@ -134,6 +135,14 @@ export interface CardView {
    * short-let figure above is then null; absent for any other deal.
    */
   btl?: BtlView | null;
+  /**
+   * Batch 30: how the range was worked out. `rateLine`: the mortgage rate in the figures ("Using 5.4%,
+   * today's average"), for a purchase at a mortgage; `rateSet`: it is the member's own rate;
+   * `endNote`: which end of the range their minimum is judged on. Never changes a figure.
+   */
+  rateLine?: string | null;
+  rateSet?: boolean;
+  endNote?: string | null;
 }
 
 export function cardView(input: {
@@ -158,6 +167,8 @@ export function cardView(input: {
   freeOpen?: boolean;
   /** Batch 28: who is looking, so a deal is shown as the type they chose (a buy-to-let-only deal is always Buy to let). */
   btl?: BtlLooker | null;
+  /** Batch 30: the rate and range-end lines (marketplace/card-display.ts). */
+  display?: CardDisplay | null;
 }): CardView {
   const { card, state } = input;
   if (showsAsBtl(card, input.btl)) return btlCardView(input);
@@ -192,6 +203,9 @@ export function cardView(input: {
     lowEntry: !pn && card.kind === 'sale' && isCheapPrice(price, { cheapMaxPrice: input.lowEntry?.cheapMaxPrice ?? DEFAULT_LOW_ENTRY.cheapMaxPrice }),
     lenderNote: card.kind === 'sale' ? lenderNote(price, { lenderMinPrice: input.lowEntry?.lenderMinPrice ?? DEFAULT_LOW_ENTRY.lenderMinPrice }, input.cashBuyer) : null,
     projectLine: pn ? projectSummary(pn) : null,
+    rateLine: card.kind === 'sale' && !input.cashBuyer ? input.display?.rateLine ?? null : null,
+    rateSet: input.display?.rateSet ?? false,
+    endNote: (card.kind === 'sale' ? input.display?.endSale : input.display?.endRent) ?? null,
     opened: state.opened,
     analysed,
     reportId: state.reportId,

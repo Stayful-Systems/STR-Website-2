@@ -23,7 +23,7 @@ function reportForMemberA(): AnalysisResult {
     councilTax: COUNCIL_TAX,
     stampDuty: { amount: 11_500, name: 'SDLT', effectiveRatePct: 5.8, country: 'england', source: 'propertydata' },
     growth: null,
-    finance: { depositPct: 40, mortgageRatePct: 6.25, termYears: 20, targetYieldPct: 12, targetMarginPcm: 900 },
+    finance: { depositPct: 40, mortgageRatePct: 6.25, termYears: 20, targetYieldPct: 12, targetMarginPcm: 900, rateSet: true, rateAsOf: null },
     liveRate: null,
   });
   return { ...base, deal, cashflow, futureValue, reportId: 'report-of-member-a', enhancedNotice: null, secondOpinion: { provider: 'pmi', updatedAt: '2026-09-20T00:00:00Z' } as AnalysisResult['secondOpinion'] };
@@ -47,7 +47,7 @@ test('what the providers said about the property is kept', () => {
 
 test('the buyer gets the figures at their own finance', () => {
   const report = rebuildForMember(toShared(reportForMemberA()), {
-    finance: { depositPct: 10, mortgageRatePct: 4, termYears: 30, targetYieldPct: 8, targetMarginPcm: 300 },
+    finance: { depositPct: 10, mortgageRatePct: 4, termYears: 30, targetYieldPct: 8, targetMarginPcm: 300, rateSet: true, rateAsOf: null },
     liveRate: null,
     askingPrice: 200_000,
     rentPcm: null,

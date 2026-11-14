@@ -12,6 +12,7 @@ import type { CardView } from "@/lib/marketplace/card-view";
 import { ANALYSIS_LEAD_LINE } from "@/lib/tailoring/about-prompts";
 import { openDealAction } from "../actions";
 import { DealCardFrame } from "./DealCardFrame";
+import { RateNote } from "./RateNote";
 import { emailedLabel } from "@/lib/home/emailed";
 import { BTL_BADGE, openProfitFor } from "@/lib/btl/view";
 
@@ -116,6 +117,8 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
               {view.caption}
               {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
             </p>
+            {/* Batch 30: which end of the range their minimum is judged on. */}
+            {view.endNote && <p className="text-[11px] text-muted-foreground">{view.endNote}</p>}
             {/* Batch 17: a Project deal's works and value added, numbers only. */}
             {view.projectLine && <p className="mt-0.5 text-[11px] text-muted-foreground">{view.projectLine}</p>}
             {/* Batch 16, Part F: what it takes to get in ("£38k cash in" / "£12k to start") sits with the price on every card. */}
@@ -147,6 +150,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
               {view.caption}{view.range ? ` · ${view.range.basis}` : ""}
               {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
             </p>
+            {view.endNote && <p className="text-xs text-muted-foreground">{view.endNote}</p>}
             {view.projectLine && <p className="text-xs text-muted-foreground">{view.projectLine}</p>}
             {/* Batch 14: the most they can pay to hit their own monthly profit, beside the asking figure; Batch 16: the cash in / to start. */}
             {(view.pay || view.cash) && <p className="mt-0.5 text-xs font-medium text-foreground">{[price ? `${priceWord} ${price}` : null, view.cash, view.pay ? payLine(view.pay) : null].filter(Boolean).join(" · ")}</p>}
@@ -189,16 +193,20 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
   );
   // The buttons sit outside the card's link: a button inside a link is not one.
   const buyButtons = view ? <PriceButtons dealId={card.id} live={card.status === "live"} view={view} /> : null;
+  // Batch 30: the rate in the figures, with "change", outside the card's link.
+  const rateNote = view?.rateLine ? <RateNote line={view.rateLine} rateSet={view.rateSet ?? false} className="px-3 pb-2" /> : null;
   if (!actions)
     return (
       <li className="overflow-hidden rounded-xl border border-border bg-card">
         {body}
+        {rateNote}
         {buyButtons}
       </li>
     );
   return (
     <DealCardFrame dealId={card.id} initialReaction={reaction} reasonGroups={PASS_REASON_GROUPS} share={share}>
       {body}
+      {rateNote}
       {buyButtons}
     </DealCardFrame>
   );

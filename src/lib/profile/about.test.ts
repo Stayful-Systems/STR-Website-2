@@ -46,3 +46,23 @@ test('roleList and the two mirrors', () => {
   assert.equal(RISK_TO_APPETITE.avoid, 'cautious');
   assert.equal(RISK_TO_APPETITE.go, 'tolerant');
 });
+
+import { STAGE_TO_ABOUT, stageOf } from './about.ts';
+
+test('Batch 30: stage writes both older fields, and reads back from stage, then units, then deals', () => {
+  assert.deepEqual(STAGE_TO_ABOUT.none, { dealsDone: '0', unitsNow: '0' });
+  assert.deepEqual(STAGE_TO_ABOUT['1-2'], { dealsDone: '1-3', unitsNow: '1-2' });
+  assert.deepEqual(STAGE_TO_ABOUT['3-10'], { dealsDone: '4-10', unitsNow: '3-5' });
+  assert.deepEqual(STAGE_TO_ABOUT['10+'], { dealsDone: '10+', unitsNow: '16+' });
+  for (const s of ['none', '1-2', '3-10', '10+'] as const) {
+    const w = STAGE_TO_ABOUT[s];
+    assert.equal(stageOf({ stage: null, unitsNow: w.unitsNow, dealsDone: null }), s, `${s} back from units`);
+    assert.equal(stageOf({ stage: null, unitsNow: null, dealsDone: w.dealsDone }), s, `${s} back from deals`);
+    assert.equal(stageOf({ stage: s, unitsNow: '0', dealsDone: '10+' }), s, `${s} stage wins`);
+  }
+  assert.equal(stageOf({ stage: null, unitsNow: '6-15', dealsDone: '0' }), '10+', 'units outrank deals');
+  assert.equal(stageOf({ stage: null, unitsNow: null, dealsDone: null }), null);
+  assert.equal(stageOf(null), null);
+  assert.equal(parseAboutYou({ version: 1, stage: '3-10' })!.stage, '3-10');
+  assert.equal(parseAboutYou({ version: 1, stage: 'lots' })!.stage, null);
+});

@@ -264,6 +264,10 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     return n === null ? null : countWords(n);
   }),
   pack_offer_at: g_('The balance at which a pack-only member is offered a plan or top-up to keep their bonus', 'billing_settings.pack_early_offer_pence', (g) => money(pence(g, 'pack_early_offer_pence'))),
+  blocker_card_day: g_('The day since sign-up the Home “What’s holding you back?” card first shows (Batch 30)', 'billing_settings.home_blocker_card_day', (g) => {
+    const d = whole(g, 'home_blocker_card_day', 0);
+    return d === null ? null : String(d);
+  }),
   pack_pause_days: g_('Days away before a pack-only member’s daily picks pause', 'billing_settings.pack_picks_pause_days', (g) => {
     const d = whole(g, 'pack_picks_pause_days', 1);
     return d === null ? null : String(d);

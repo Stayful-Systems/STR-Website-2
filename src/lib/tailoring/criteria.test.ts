@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { activeCriteria, checksFor, criterionForQuestion, factsFromRow, judge, judgeDeal, memberFigures, modeOf, mustHaveTest, tenureOf, wantsFor, type DealFacts } from './criteria.ts';
+import { NO_WANTS, activeCriteria, checksFor, criterionForQuestion, factsFromRow, judge, judgeDeal, memberFigures, type MemberFigures, modeOf, mustHaveTest, profitAt, profitEndFor, profitEndNote, tenureOf, wantsFor, type DealFacts } from './criteria.ts';
 import { plainProfile, type TailoringProfile } from './profile.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
+import { DEFAULT_ABOUT } from '../profile/about.ts';
 import { profitRange } from '../marketplace/profit-range.ts';
 import { purchaseDeal } from '../listing/deal.ts';
 
@@ -121,12 +122,12 @@ test('a cash buyer: no mortgage in their range or their cash needed, so the must
 
 test('cash available: the top of the band against deposit, stamp duty and setup at their deposit', () => {
   const finance = { ...DEFAULT_GOALS.finance, depositPct: 25 };
-  const p = profile({ path: 'buy', finance, buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '30-60' } });
+  const p = profile({ path: 'buy', finance, buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '30-60' } }, { answered: { cash_available: real } });
   const need = purchaseDeal(180_000, { grossRevenue: 32_000, adr: 0, bedrooms: 3, finance }).cashRequired;
   assert.equal(memberFigures(sale(), p).cashRequired, need);
   assert.equal(keys(p, sale()).cash, need <= 60_000 ? 'must:pass' : 'must:fail');
   assert.equal(keys(p, sale({ amount: 400_000 })).cash, 'must:fail');
-  assert.equal(wantsFor(profile({ path: 'buy', buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '200+' } })).cashTop, null, '"£200k or more" has no ceiling');
+  assert.equal(wantsFor(profile({ path: 'buy', buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '200+' } }, { answered: { cash_available: real } })).cashTop, null, '"£200k or more" has no ceiling');
 });
 
 test('bedrooms: an exact match, "4 or more" for four', () => {
@@ -137,11 +138,67 @@ test('bedrooms: an exact match, "4 or more" for four', () => {
 });
 
 test('rent-to-rent checks read the stored figures; no payback at all is a miss', () => {
-  const p = profile({ path: 'r2r', r2r: { ...DEFAULT_GOALS.r2r, setupBudget: '6-10k', breakEvenOccupancyPct: 50, paybackMonths: 12 } });
-  assert.deepEqual(keys(p, rental()), { setup: 'nice:pass', breakeven: 'nice:fail', payback: 'nice:fail' });
+  const p = profile({ path: 'r2r', r2r: { ...DEFAULT_GOALS.r2r, setupBudget: 'u10k', breakEvenOccupancyPct: 50, paybackMonths: 12 } });
+  assert.deepEqual(keys(p, rental()), { setup: 'must:pass' }, 'Batch 30: setup cash is a must-have; break-even and payback are never checked');
   const losing = rental({ deal: { kind: 'rent-to-rent', setupCost: 5_000, breakevenOccupancyPct: 90, paybackMonths: null, monthlyMargin: -40 } as never });
-  assert.equal(keys(p, losing).payback, 'nice:fail');
-  assert.equal(keys(p, rental({ deal: null })).payback, 'nice:unknown');
+  assert.deepEqual(keys(p, losing), { setup: 'must:pass' }, 'a deal that never pays back is not hidden by an answer that is no longer asked');
+  assert.deepEqual(keys(p, rental({ deal: null })), { setup: 'must:unknown' });
+  assert.equal(wantsFor(p).breakEvenMax, null);
+  assert.equal(wantsFor(p).paybackMax, null);
+  assert.ok(!activeCriteria(wantsFor(p)).has('breakeven') && !activeCriteria(wantsFor(p)).has('payback'), 'no switch is offered for them');
+  // Over the band top: out, unless the member (or the backfill, for an old answer) made it a nice-to-have.
+  const big = rental({ deal: { kind: 'rent-to-rent', setupCost: 13_000, breakevenOccupancyPct: 55, paybackMonths: 14, monthlyMargin: 650 } as never });
+  assert.equal(keys(p, big).setup, 'must:fail', 'a 2-bed at £13k is over "Under £10k"');
+  assert.equal(keys({ ...p, modes: { setup: 'nice' } }, big).setup, 'nice:fail');
+  const bands = (b: 'u10k' | '10-15k' | '15-20k' | '20k+') => wantsFor(profile({ path: 'r2r', r2r: { ...DEFAULT_GOALS.r2r, setupBudget: b } }, { answered: { setup_budget: real } })).setupTop;
+  assert.deepEqual([bands('u10k'), bands('10-15k'), bands('15-20k'), bands('20k+')], [10_000, 15_000, 20_000, null]);
+});
+
+test('Batch 30: minimum profit is judged on the end of the range the member chose; no range is unknown, as before', () => {
+  const f = sale();
+  const finance = { ...DEFAULT_GOALS.finance, targetMarginPcm: 500 };
+  const base = profile({ path: 'buy', finance }, { answered: { min_profit: real } });
+  const range = memberFigures(f, base).range!;
+  // A minimum that the low end misses but the top end clears.
+  const minimum = Math.round((range.lowPcm + range.highPcm) / 2 / 50) * 50;
+  const p = (risk: 'avoid' | 'consider' | 'go' | null) => ({ ...base, goals: { ...base.goals!, finance: { ...finance, targetMarginPcm: minimum } }, about: { ...DEFAULT_ABOUT, risk } });
+  assert.ok(range.lowPcm < minimum && minimum <= range.highPcm, 'the minimum sits inside the range');
+  assert.equal(keys(p('avoid'), f).profit, 'must:fail', 'play it safe: the low end');
+  assert.equal(keys(p('go'), f).profit, 'must:pass', 'the top end');
+  assert.equal(keys(p('consider'), f).profit, range.midPcm >= minimum ? 'must:pass' : 'must:fail', 'the middle');
+  assert.equal(keys(p(null), f).profit, keys(p('consider'), f).profit, 'unanswered reads as the middle');
+  assert.deepEqual((['avoid', 'consider', null, 'go'] as const).map((r) => wantsFor(p(r)).profitEnd), ['low', 'mid', 'mid', 'high']);
+  assert.equal(profitEndFor({ risk: 'avoid' }), 'low');
+  assert.equal(profitEndFor(null), 'mid');
+  const r = { lowPcm: 450, midPcm: 575, highPcm: 700 };
+  assert.deepEqual([profitAt(r, 'low'), profitAt(r, 'mid'), profitAt(r, 'high')], [450, 575, 700]);
+  // £450–£700 against a £500 minimum: fails on the low end, passes on the middle and the top.
+  const fixed: MemberFigures = { range: { kind: 'purchase', ...r } as never, cashRequired: null, cashOnCashPct: null, setupCost: null, breakEvenPct: null, paybackMonths: null };
+  const run = (end: 'low' | 'mid' | 'high', figures = fixed) => checksFor(f, figures, { ...NO_WANTS, minProfit: 500, profitEnd: end }, () => 'must').find((c) => c.key === 'profit')?.verdict;
+  assert.deepEqual([run('low'), run('mid'), run('high')], ['fail', 'pass', 'pass']);
+  assert.equal(run('high', { ...fixed, range: null }), 'unknown', 'no range is unknown and never hides a deal');
+  assert.equal(profitEndNote('low'), 'Low end used, as you asked');
+  assert.equal(profitEndNote('mid'), 'Middle of the range used, as you asked');
+  assert.equal(profitEndNote('high'), 'Top end used, as you asked');
+});
+
+test('Batch 30: a Buying cash answer filters; one worked out from a budget never does', () => {
+  const buyer = (extra: Partial<MarketGoals['buyer']>) => profile({ path: 'buy', buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: 'u30', ...extra } }, { answered: { cash_available: real } });
+  assert.equal(wantsFor(buyer({})).cashTop, 30_000);
+  assert.equal(wantsFor(buyer({ cashFromBudget: true })).cashTop, null, 'worked out, not answered');
+  assert.equal(wantsFor(profile({ path: 'buy', buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: 'u30' } })).cashTop, null, 'no real answer mark: no filter');
+  assert.equal(wantsFor(profile({ path: 'buy', buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: 'u30' } }, { answered: { cash_available: shrug } })).cashTop, null, '"Not sure"');
+  assert.equal(keys(buyer({}), sale({ amount: 400_000 })).cash, 'must:fail');
+  assert.equal(keys(buyer({ cashFromBudget: true }), sale({ amount: 400_000 })).cash, undefined);
+});
+
+test('Batch 30: the one minimum profit judges rentals too; it still judges a sale only for a profile that buys one', () => {
+  const finance = { ...DEFAULT_GOALS.finance, targetMarginPcm: 900 };
+  const r2r = wantsFor(profile({ dealTypes: ['r2r'], sourcingKind: 'rent', finance, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 900 } }, { answered: { min_profit: real } }));
+  assert.equal(r2r.minProfitR2r, 900, 'min_profit alone switches the rent-to-rent check on');
+  assert.equal(r2r.minProfit, null);
+  assert.equal(wantsFor(profile({ dealTypes: ['btl'], finance }, { answered: { min_profit: real } })).minProfit, null, 'a buy-to-let-only profile has no short-let profit check');
+  assert.equal(wantsFor(profile({ dealTypes: ['buy_str'], finance }, { answered: { min_profit: real } })).minProfit, 900);
 });
 
 test('modes: the member’s switch wins, and motivated sellers follow the answer', () => {

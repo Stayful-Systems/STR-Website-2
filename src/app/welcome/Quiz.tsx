@@ -12,7 +12,7 @@ import type { QuizArea } from "@/lib/onboarding/server";
 import type { CreditView, ProgressView, SampleDeal } from "@/lib/profile/server";
 import { answerQuestionAction, finishLaterAction, previewMatchCountAction, sampleMatchesAction } from "./actions";
 import { QuizPhoto } from "./_components/QuizPhoto";
-import { AmountChoice, AreasChoice, FinanceChoice, MultiChoice, PROFIT_INPUT, PrimaryButton, RENT_INPUT, SingleChoice, WhereChoice } from "./_components/Controls";
+import { AmountChoice, AreasChoice, FinanceChoice, MultiChoice, PROFIT_INPUT, PrimaryButton, PropertyChoice, RENT_INPUT, SingleChoice, WhereChoice } from "./_components/Controls";
 import { SampleDeals } from "./_components/SampleDeals";
 import { SignupConsentCheckbox } from "@/components/tracking/SignupConsentCheckbox";
 import { StarterPackOffer } from "@/components/starter-pack/StarterPackOffer";
@@ -273,12 +273,13 @@ export function Quiz(start: QuizStart) {
           <QuizPhoto image={image} priority />
         </div>
       )}
+      {q.label && <p className="mt-4 inline-block rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-primary">{text(q.label, answers)}</p>}
       <p className="mt-4 text-xs font-medium text-muted-foreground">
         <span className="font-semibold text-primary">Why we ask</span> · {text(q.why, answers)}
       </p>
       <h1 className="mt-1 text-2xl font-semibold text-foreground">{text(q.title, answers)}</h1>
       <div className="mt-4">
-        <Control q={q} answers={answers} value={value} areas={start.areas} busy={busy} onAnswer={(v) => answer(q.id, v, false)} onPreview={preview} />
+        <Control key={q.id} q={q} answers={answers} value={value} areas={start.areas} busy={busy} onAnswer={(v) => answer(q.id, v, false)} onPreview={preview} />
       </div>
       {error && (
         <p className="mt-3 text-sm text-destructive" role="alert">
@@ -396,9 +397,11 @@ function Control({ q, answers, value, areas, busy, onAnswer, onPreview }: { q: Q
   switch (q.kind) {
     case "single":
     case "budget":
-      return <SingleChoice options={options} value={typeof value === "string" ? value : null} onPick={onAnswer} busy={busy} />;
+      return <SingleChoice options={options} value={typeof value === "string" ? value : null} onPick={onAnswer} busy={busy} lineFor={q.lineFor ? (v) => q.lineFor!(v, answers) : undefined} />;
+    case "property":
+      return <PropertyChoice options={options} value={(value as { type: string; bedrooms: string } | null) ?? null} onSubmit={onAnswer} busy={busy} />;
     case "multi":
-      return <MultiChoice options={options} value={Array.isArray(value) ? (value as string[]) : []} onSubmit={onAnswer} busy={busy} allValue={q.allOption} />;
+      return <MultiChoice options={options} value={Array.isArray(value) ? (value as string[]) : []} onSubmit={onAnswer} busy={busy} allValue={q.allOption} allCovers={q.allCovers} />;
     case "where":
       return <WhereChoice options={options} value={(value as WhereAnswer | null) ?? null} areas={areas} onSubmit={onAnswer} onPreview={onPreview} busy={busy} />;
     case "rent":
@@ -406,7 +409,7 @@ function Control({ q, answers, value, areas, busy, onAnswer, onPreview }: { q: Q
     case "profit":
       return <AmountChoice presets={q.presets ?? []} value={typeof value === "number" ? value : null} {...PROFIT_INPUT} suffix=" a month" placeholder="500" onSubmit={onAnswer} busy={busy} />;
     case "finance":
-      return <FinanceChoice value={(value as { depositPct: number; mortgageRatePct: number } | null) ?? { depositPct: DEFAULT_FINANCE.depositPct, mortgageRatePct: DEFAULT_FINANCE.mortgageRatePct }} onSubmit={onAnswer} busy={busy} />;
+      return <FinanceChoice value={(value as { depositPct: number; mortgageRatePct: number } | null) ?? { depositPct: DEFAULT_FINANCE.depositPct, mortgageRatePct: DEFAULT_FINANCE.mortgageRatePct }} onSubmit={onAnswer} busy={busy} onUseAverage={() => onAnswer({ useAverage: true })} onAverage={!answers.goals.finance.rateSet} />;
     case "areas":
       return <AreasChoice areas={areas} value={Array.isArray(value) ? (value as string[]) : []} onSubmit={onAnswer} busy={busy} label={q.id === "unit_areas" ? "Where your units are" : "Your cities"} />;
   }

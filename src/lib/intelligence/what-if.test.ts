@@ -119,3 +119,44 @@ test('Batch 28: "add Buy to let" counts the buy-to-let deals it would show, judg
   assert.equal(r.best?.matchPct, null);
   assert.match(r.best!.profitLine!, /^£[\d,]+–£[\d,]+\/month as a buy to let$/, 'its cashflow, not its £99,000 short-let figure');
 });
+
+// ── Batch 30 ──
+
+test('Batch 30: a member who answered Buying cash is offered the next Buying cash band, not the budgets it worked out', () => {
+  const answeredCash = (cash: '30-60' | '200+', extra: Partial<MarketGoals['buyer']> = {}) =>
+    profile({ budget: 'u200', buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: cash, funding: 'btl', ...extra } }, { answered: { deals_done: real, cash_available: real } });
+  const v = whatIfChanges(answeredCash('30-60'), { nearbyAreas: [] });
+  const cash = v.find((x) => x.key === 'cash')!;
+  assert.ok(cash, 'the Buying cash variant');
+  assert.equal(cash.phrase, 'raise your Buying cash to £60–100k');
+  assert.equal(cash.goals.buyer.cashAvailable, '60-100');
+  assert.equal(cash.save, 'budget', 'a band is the member’s to change');
+  assert.equal(whatIfAnswer(cash, { goals: answeredCash('30-60').goals!, savedAreas: [] }), null);
+  assert.equal(changeQuestionFor('cash'), 'cash_available');
+  assert.ok(!v.some((x) => x.key === 'budget' || x.key === 'brrr_budget'), 'not the budgets the cash worked out');
+  assert.equal(isWhatIfKey('cash'), true);
+  // The top band has nowhere to go.
+  assert.ok(!whatIfChanges(answeredCash('200+'), { nearbyAreas: [] }).some((x) => x.key === 'cash'));
+  // A band worked out from an old budget is not an answer: that member keeps the budget variant.
+  const worked = whatIfChanges(answeredCash('30-60', { cashFromBudget: true }), { nearbyAreas: [] }).map((x) => x.key);
+  assert.ok(worked.includes('budget') && !worked.includes('cash'));
+  // So does a member with no Buying cash answer at all.
+  assert.ok(whatIfChanges(profile({ budget: 'u200' }), { nearbyAreas: [] }).some((x) => x.key === 'budget'));
+});
+
+test('Batch 30: the minimum profit what-if saves through the one minimum profit, for rentals too; max rent only where one is stored', () => {
+  const rent = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', maxRentPcm: null, finance: { ...DEFAULT_GOALS.finance, targetMarginPcm: 800 }, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 800 } }, { answered: { deals_done: real, min_profit: real } });
+  const keys = whatIfChanges(rent, { nearbyAreas: [] }).map((x) => x.key);
+  assert.ok(!keys.includes('rent_10') && !keys.includes('rent_20'), 'no stored max rent: no rent variants');
+  const profit = whatIfChanges(rent, { nearbyAreas: [] }).find((x) => x.key === 'profit')!;
+  assert.ok(profit);
+  const a = whatIfAnswer(profit, { goals: rent.goals!, savedAreas: [] })!;
+  assert.equal(a.questionId, 'min_profit');
+  assert.equal(a.value, profit.goals.r2r.minMarginPcm, 'a rent-to-rent-only member lowers the rent-to-rent figure, saved as the one minimum');
+  assert.equal(a.undo, 800, 'and Undo goes back to what it was');
+  assert.ok((a.value as number) < 800);
+  // A member with a stored maximum rent still gets the rent variants.
+  const stored = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', maxRentPcm: 1_500 });
+  assert.ok(whatIfChanges(stored, { nearbyAreas: [] }).some((x) => x.key === 'rent_10'));
+  assert.equal(whatIfAnswer(whatIfChanges(stored, { nearbyAreas: [] }).find((x) => x.key === 'rent_10')!, { goals: stored.goals!, savedAreas: [] })!.questionId, 'max_rent');
+});

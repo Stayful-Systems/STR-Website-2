@@ -53,6 +53,10 @@ export interface FinanceGoals {
   termYears: number; // 25
   targetYieldPct: number; // 10
   targetMarginPcm: number; // 500
+  /** Batch 30: true once the member chose their own rate; false means "today's average" (synced daily by live-rate-sync). */
+  rateSet: boolean;
+  /** Batch 30: the date (YYYY-MM-DD) the stored average rate was synced; null when it is the house default. */
+  rateAsOf: string | null;
 }
 
 /** The house figures: listing/deal.ts DEFAULT_FINANCE's five member fields (the mortgage type is not a goal; it lives there). */
@@ -62,6 +66,8 @@ export const DEFAULT_FINANCE_GOALS: FinanceGoals = {
   termYears: DEFAULT_FINANCE.termYears,
   targetYieldPct: DEFAULT_FINANCE.targetYieldPct,
   targetMarginPcm: DEFAULT_FINANCE.targetMarginPcm,
+  rateSet: false,
+  rateAsOf: null,
 };
 
 /** What the daily deal-sourcing digest should look for. */
@@ -166,7 +172,8 @@ export const GOAL_OPTIONS = {
   leaseholdOk: ['yes', 'no', 'depends'],
   restrictedAreas: ['avoid', 'warn'],
   // Rent-to-rent operator
-  setupBudget: ['u3k', '3-6k', '6-10k', '10k+'],
+  // Batch 30: four bands (under £10k, £10–15k, £15–20k, £20k+). The old four (u3k, 3-6k, 6-10k, 10k+) still read: see LEGACY_SETUP_BUDGET.
+  setupBudget: ['u10k', '10-15k', '15-20k', '20k+'],
   dealStructure: ['company_let', 'management', 'guaranteed_rent', 'any'],
   furnished: ['either', 'furnished', 'unfurnished'],
   // Deal sourcer
@@ -182,6 +189,9 @@ export type GoalOption<K extends keyof typeof GOAL_OPTIONS> = (typeof GOAL_OPTIO
 export type ProfilePath = GoalOption<'path'>;
 export type WhereMode = GoalOption<'where'>;
 
+/** Batch 30: a setup answer stored before the bands changed reads as the nearest new band, so nothing is lost before the backfill. */
+export const LEGACY_SETUP_BUDGET: Record<string, GoalOption<'setupBudget'>> = { u3k: 'u10k', '3-6k': 'u10k', '6-10k': 'u10k', '10k+': '10-15k' };
+
 export const BREAK_EVEN_OPTIONS = [50, 60, 70] as const;
 export const PAYBACK_OPTIONS = [6, 12, 18] as const;
 export const GROWTH_OPTIONS = [5, 10, 25] as const;
@@ -196,6 +206,12 @@ export interface BuyerGoals {
   condition: GoalOption<'condition'> | null;
   leaseholdOk: GoalOption<'leaseholdOk'> | null;
   restrictedAreas: GoalOption<'restrictedAreas'> | null;
+  /**
+   * Batch 30: true when the budget (and cashAvailable) was worked out from an
+   * older budget answer, not answered. A worked-out cash band never filters
+   * (tailoring/criteria.ts needs a real cash answer); it only shows on the profile.
+   */
+  cashFromBudget: boolean;
 }
 
 export type DealType = GoalOption<'dealTypes'>;
@@ -283,7 +299,7 @@ export interface MarketGoals {
   btl: BtlGoals;
 }
 
-export const DEFAULT_BUYER_GOALS: BuyerGoals = { cashAvailable: null, funding: null, entity: null, mainGoal: null, propertyType: null, condition: null, leaseholdOk: null, restrictedAreas: null };
+export const DEFAULT_BUYER_GOALS: BuyerGoals = { cashAvailable: null, funding: null, entity: null, mainGoal: null, propertyType: null, condition: null, leaseholdOk: null, restrictedAreas: null, cashFromBudget: false };
 export const DEFAULT_R2R_GOALS: R2rGoals = { minMarginPcm: null, setupBudget: null, dealStructure: null, breakEvenOccupancyPct: null, paybackMonths: null, furnished: null };
 export const DEFAULT_SOURCER_GOALS: SourcerGoals = { sourceFor: null, sourcingFee: null, dealsPerMonth: null };
 export const DEFAULT_MANAGER_GOALS: ManagerGoals = { unitsManaged: null, operatingAreas: [], lookingFor: null, growthTarget: null };
@@ -357,6 +373,8 @@ export function parseFinanceGoals(raw: unknown): FinanceGoals {
     termYears: financeField(f.termYears, d.termYears, 1, 40),
     targetYieldPct: financeField(f.targetYieldPct, d.targetYieldPct, 1, 50),
     targetMarginPcm: financeField(f.targetMarginPcm, d.targetMarginPcm, 0, 20000),
+    rateSet: f.rateSet === true,
+    rateAsOf: typeof f.rateAsOf === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(f.rateAsOf) ? f.rateAsOf : null,
   };
 }
 
@@ -414,6 +432,7 @@ export function parseBuyerGoals(raw: unknown): BuyerGoals {
     condition: goalOption('condition', b.condition),
     leaseholdOk: goalOption('leaseholdOk', b.leaseholdOk),
     restrictedAreas: goalOption('restrictedAreas', b.restrictedAreas),
+    cashFromBudget: b.cashFromBudget === true,
   };
 }
 
@@ -422,7 +441,7 @@ export function parseR2rGoals(raw: unknown): R2rGoals {
   const margin = r.minMarginPcm === null || r.minMarginPcm === undefined || r.minMarginPcm === '' ? Number.NaN : Number(r.minMarginPcm);
   return {
     minMarginPcm: Number.isFinite(margin) && margin >= 0 && margin <= 20000 ? margin : null,
-    setupBudget: goalOption('setupBudget', r.setupBudget),
+    setupBudget: goalOption('setupBudget', r.setupBudget) ?? (typeof r.setupBudget === 'string' ? (LEGACY_SETUP_BUDGET[r.setupBudget] ?? null) : null),
     dealStructure: goalOption('dealStructure', r.dealStructure),
     breakEvenOccupancyPct: numberOption(BREAK_EVEN_OPTIONS, r.breakEvenOccupancyPct),
     paybackMonths: numberOption(PAYBACK_OPTIONS, r.paybackMonths),

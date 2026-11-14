@@ -8518,3 +8518,77 @@ revoke all on function public.pack_paying_facts(jsonb) from public, anon, authen
 grant execute on function public.pack_paying_facts(jsonb) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 30: shorter signup questions
+-- =========================
+-- The signup quiz asks 9–15 questions, not 13–33 (src/lib/profile/questions.ts).
+-- Every older question id is kept, so no stored answer or mark changes. This
+-- section adds: the Home "What's holding you back?" card's dismissal, two
+-- settings, and the one function that keeps "today's average" mortgage rate
+-- current on every profile that has not chosen its own rate. Additive and
+-- re-runnable; nothing is added to ACCESS_COLUMNS.
+--   home_blocker_card_day   the Home card shows from this day since sign-up (default 3; 0 to test)
+--   quiz_shorter_from       when the shorter quiz went live: the first run's date, never moved by a later run
+--                           (/admin/profile compares members before and after it)
+--   standout_min_checked_rent  the standout rule's minimum checked answers for a rent-to-rent deal (3): the shorter
+--                           quiz leaves a new rent-to-rent member at most four checks; standout_min_checked (5) stays for sales
+
+alter table public.profile_quiz add column if not exists blocker_card_dismissed_at timestamptz;
+
+insert into public.billing_settings (key, value) values
+  ('home_blocker_card_day', '3'::jsonb),
+  ('quiz_shorter_from', to_jsonb(now())),
+  ('standout_min_checked_rent', '3'::jsonb)
+on conflict (key) do nothing;
+
+-- Once a day (market-warm, after the rates are bought) the live average is written into the finance of every
+-- profile whose member has not typed their own rate (finance.rateSet is not true): the member's live
+-- profiles.market_goals and every saved search_profiles.criteria. Every page then reads the same figure with no
+-- reader changes. Returns how many rows were changed. A profile already on this rate and date is left alone,
+-- so a second call changes nothing; market_goals_updated_at is not touched (it means "the member changed it").
+create or replace function public.sync_live_mortgage_rate(p_rate numeric, p_as_of date)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_profiles integer := 0;
+  v_saved integer := 0;
+  v_day text := to_char(p_as_of, 'YYYY-MM-DD');
+begin
+  if p_rate is null or p_as_of is null or p_rate < 0 or p_rate > 25 then
+    return jsonb_build_object('profiles', 0, 'search_profiles', 0, 'skipped', true);
+  end if;
+
+  update public.profiles
+     set market_goals = jsonb_set(
+           market_goals, '{finance}',
+           coalesce(market_goals->'finance', '{}'::jsonb) || jsonb_build_object('mortgageRatePct', p_rate, 'rateAsOf', v_day))
+   where market_goals is not null
+     and jsonb_typeof(market_goals) = 'object'
+     and coalesce(market_goals->'finance'->>'rateSet', 'false') <> 'true'
+     and (market_goals->'finance'->'mortgageRatePct' is distinct from to_jsonb(p_rate)
+          or market_goals->'finance'->>'rateAsOf' is distinct from v_day);
+  get diagnostics v_profiles = row_count;
+
+  update public.search_profiles
+     set criteria = jsonb_set(
+           criteria, '{finance}',
+           coalesce(criteria->'finance', '{}'::jsonb) || jsonb_build_object('mortgageRatePct', p_rate, 'rateAsOf', v_day))
+   where criteria is not null
+     and jsonb_typeof(criteria) = 'object'
+     and deleted_at is null
+     and coalesce(criteria->'finance'->>'rateSet', 'false') <> 'true'
+     and (criteria->'finance'->'mortgageRatePct' is distinct from to_jsonb(p_rate)
+          or criteria->'finance'->>'rateAsOf' is distinct from v_day);
+  get diagnostics v_saved = row_count;
+
+  return jsonb_build_object('profiles', v_profiles, 'search_profiles', v_saved, 'skipped', false);
+end;
+$$;
+revoke all on function public.sync_live_mortgage_rate(numeric, date) from public, anon, authenticated;
+grant execute on function public.sync_live_mortgage_rate(numeric, date) to service_role;
+
+notify pgrst, 'reload schema';

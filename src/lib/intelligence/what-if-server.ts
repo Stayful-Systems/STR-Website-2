@@ -10,7 +10,7 @@ import { bestWhatIfs, changeQuestionFor, NO_WHAT_IF_LINE, NO_WHAT_IF_LINE_NO_SEA
 import { WHAT_IF_SHOWN } from './config';
 
 export interface WhatIfView {
-  items: { key: string; line: string; mustHave: boolean; save: 'use' | 'budget'; bestHref: string | null; changeQuestionId: 'budget' | 'brrr_budget' | null }[];
+  items: { key: string; line: string; mustHave: boolean; save: 'use' | 'budget'; bestHref: string | null; changeQuestionId: 'budget' | 'brrr_budget' | 'cash_available' | null }[];
   none: string;
 }
 

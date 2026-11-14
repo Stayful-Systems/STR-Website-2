@@ -80,6 +80,8 @@ export default async function LifecyclePage() {
           lowCreditPence: s.lowCreditPence,
           inactiveReengageDays: s.inactiveReengageDays,
           picksPauseInactiveDays: s.picksPauseInactiveDays,
+          quizShorterFromLocal: isoToLondonLocal(s.quizShorterFrom),
+          homeBlockerCardDay: s.homeBlockerCardDay,
           pack: {
             pack_bonus_expiry_days: s.packBonusExpiryDays,
             pack_fresh_report_cap: s.packFreshReportCap,

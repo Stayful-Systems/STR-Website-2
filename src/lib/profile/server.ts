@@ -26,12 +26,14 @@ import { redirect } from 'next/navigation';
 import { after } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
+import { ask, pdMortgageRates } from '../broker';
+import { rateToSync } from '../listing/live-rate-sync';
 import { teamOf } from '../team';
 import { isAdminEmail } from '../admin';
 import { DEFAULT_GOALS, parseMarketGoals, type MarketGoals } from '../market/goals';
 import { areaCodeFrom } from '../market/lead-goals';
 import { parseAboutYou } from './about';
-import { applyAnswer, clearAnswer, emptyAnswers, questionById, questionsFor, SECTION_TOKENS, type Answers, type QuestionId, type WhereAnswer } from './questions';
+import { applyAnswer, clearAnswer, emptyAnswers, MARKS_WRITTEN, questionById, questionsFor, SECTION_TOKENS, type Answers, type QuestionId, type WhereAnswer } from './questions';
 import { EMPTY_QUIZ, parseQuizRow, progress, seedFromGoals, type AnsweredMap, type Progress, type QuizRecord } from './state';
 import { profileFilters, profileFiltersByType } from './matching';
 import { typesShown } from './deal-types';
@@ -272,13 +274,23 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   if (!s) return fail('Your profile cannot be saved right now. Please try again shortly.');
   const q = questionById(input.questionId);
   if (!q) return fail('Unknown question.');
-  if (!questionsFor(s.answers).some((x) => x.id === q.id)) return fail('That question is not part of your profile.');
+  // A retired question that is still editable (budget, max rent, rent-to-rent minimum, what's holding you back, the rate)
+  // saves from the profile page, chat, what-if and the Home card though it is no longer asked.
+  if (q.retired !== 'editable' && !questionsFor(s.answers).some((x) => x.id === q.id)) return fail('That question is not part of your profile.');
   if (input.notSure && q.mandatory) return fail('This one needs an answer.');
 
   let next: Answers;
   if (input.notSure) next = clearAnswer(q.id, s.answers);
   else {
-    const r = applyAnswer(q.id, input.value, s.answers);
+    let value = input.value;
+    // Batch 30: "Use today's average" on the rate screen: their deposit stays, the rate is the cached live average
+    // (or what they have, if the cache has none), and they are back on the daily average (rateSet false).
+    if (q.id === 'finance' && value && typeof value === 'object' && (value as { useAverage?: unknown }).useAverage === true) {
+      const finance = s.answers.goals.finance;
+      const today = rateToSync((await ask(pdMortgageRates, {}, { mode: 'cron', cacheOnly: true }).catch(() => null))?.value ?? null, new Date());
+      value = { depositPct: finance.depositPct, mortgageRatePct: today?.ratePct ?? finance.mortgageRatePct, useAverage: true, rateAsOf: today?.asOf ?? null };
+    }
+    const r = applyAnswer(q.id, value, s.answers);
     if (!r.ok) return fail(r.error);
     next = r.answers;
   }
@@ -321,7 +333,10 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   await syncSavedAreas(supabase, userId, s.answers.savedAreas, next.savedAreas);
 
   // ── The bookkeeping, as the service role ──
-  const answered: AnsweredMap = { ...s.quiz.answered, [q.id]: { at: nowIso, notSure: input.notSure } };
+  const mark = { at: nowIso, notSure: input.notSure };
+  const answered: AnsweredMap = { ...s.quiz.answered, [q.id]: mark };
+  // A question that replaced older ones also leaves their marks, so the readers of those marks work unchanged (Batch 30).
+  for (const old of MARKS_WRITTEN[q.id] ?? []) answered[old] = mark;
   const quiz: QuizRecord = { ...s.quiz, answered, startedAt: s.quiz.startedAt ?? nowIso, lastQuestion: q.id };
   const prog = progress(next, quiz);
   if (prog.complete && !quiz.completedAt) quiz.completedAt = nowIso;

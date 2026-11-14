@@ -41,14 +41,65 @@ function ChoiceCard({ option, on, onClick, disabled }: { option: Option; on: boo
   );
 }
 
-/** Tap one: it saves at once. */
-export function SingleChoice({ options, value, onPick, busy }: { options: readonly Option[]; value: string | null; onPick: (value: string) => void; busy: boolean }) {
+/**
+ * Tap one: it saves at once. With `lineFor` (Batch 30: what a cash band buys)
+ * a tap only chooses; the line shows under the cards and Continue saves.
+ */
+export function SingleChoice({ options, value, onPick, busy, lineFor }: { options: readonly Option[]; value: string | null; onPick: (value: string) => void; busy: boolean; lineFor?: (value: string) => string | null }) {
   const pictures = options.some((o) => o.image);
+  const [chosen, setChosen] = useState<string | null>(value);
+  const line = lineFor && chosen ? lineFor(chosen) : null;
   return (
     <div className={pictures ? "grid grid-cols-2 gap-3" : "space-y-3"}>
       {options.map((o) => (
-        <ChoiceCard key={o.value} option={o} on={value === o.value} onClick={() => onPick(o.value)} disabled={busy} />
+        <ChoiceCard key={o.value} option={o} on={lineFor ? chosen === o.value : value === o.value} onClick={() => (lineFor ? setChosen(o.value) : onPick(o.value))} disabled={busy} />
       ))}
+      {lineFor && chosen && line && (
+        <p className="rounded-lg bg-muted px-3 py-2 text-sm font-medium text-foreground" aria-live="polite">
+          {line}
+        </p>
+      )}
+      {lineFor && (
+        <PrimaryButton onClick={() => chosen && onPick(chosen)} disabled={busy || !chosen}>
+          Continue
+        </PrimaryButton>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Batch 30: "What kind of property?": flat, house or either, then the
+ * bedrooms (1, 2, 3, 4+). Continue only once both are chosen.
+ */
+export function PropertyChoice({ options, value, onSubmit, busy }: { options: readonly Option[]; value: { type: string; bedrooms: string } | null; onSubmit: (v: { type: string; bedrooms: number }) => void; busy: boolean }) {
+  const [type, setType] = useState<string | null>(value?.type ?? null);
+  const [beds, setBeds] = useState<string | null>(value?.bedrooms ?? null);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        {options.map((o) => (
+          <ChoiceCard key={o.value} option={o} on={type === o.value} onClick={() => setType(o.value)} disabled={busy} />
+        ))}
+      </div>
+      <div>
+        <p className="mb-2 text-sm font-medium text-foreground">Bedrooms</p>
+        <div className="grid grid-cols-4 gap-2">
+          {[
+            ["1", "1"],
+            ["2", "2"],
+            ["3", "3"],
+            ["4", "4+"],
+          ].map(([v, label]) => (
+            <button key={v} type="button" disabled={busy} aria-pressed={beds === v} onClick={() => setBeds(v)} className={`min-h-12 rounded-lg border-2 px-3 text-sm font-semibold transition-colors ${beds === v ? ON : OFF}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <PrimaryButton onClick={() => type && beds && onSubmit({ type, bedrooms: Number(beds) })} disabled={busy || !type || !beds}>
+        Continue
+      </PrimaryButton>
     </div>
   );
 }
@@ -59,15 +110,15 @@ export function SingleChoice({ options, value, onPick, busy }: { options: readon
  * ("All of them"); it reads as ticked when they all are, and never goes
  * into the answer itself.
  */
-export function MultiChoice({ options, value, onSubmit, busy, allValue }: { options: readonly Option[]; value: string[]; onSubmit: (values: string[]) => void; busy: boolean; allValue?: string }) {
-  // "All of them" ticks every option that can be chosen: never one that is coming soon.
+export function MultiChoice({ options, value, onSubmit, busy, allValue, allCovers }: { options: readonly Option[]; value: string[]; onSubmit: (values: string[]) => void; busy: boolean; allValue?: string; allCovers?: readonly string[] }) {
+  // "All of them" ticks every option it covers that can be chosen (Batch 30: the deal types, not the roles beside them): never one that is coming soon.
   const soon = new Set(options.filter((o) => o.soon).map((o) => o.value));
-  const others = options.filter((o) => o.value !== allValue && !soon.has(o.value)).map((o) => o.value);
+  const others = options.filter((o) => o.value !== allValue && !soon.has(o.value) && (!allCovers || allCovers.includes(o.value))).map((o) => o.value);
   const [picked, setPicked] = useState<string[]>(value.filter((v) => v !== allValue && !soon.has(v)));
   const allOn = allValue !== undefined && others.length > 0 && others.every((v) => picked.includes(v));
   const toggle = (v: string) => {
     if (soon.has(v)) return;
-    if (allValue !== undefined && v === allValue) return setPicked(allOn ? [] : others);
+    if (allValue !== undefined && v === allValue) return setPicked((p) => (allOn ? p.filter((x) => !others.includes(x)) : [...new Set([...p, ...others])]));
     setPicked((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]));
   };
   return (
@@ -137,7 +188,7 @@ export const RENT_INPUT = { min: MAX_RENT_PCM_RANGE.min, max: MAX_RENT_PCM_RANGE
 export const PROFIT_INPUT = { min: MIN_PROFIT_RANGE.min, max: MIN_PROFIT_RANGE.max, step: 50 } as const;
 
 /** Deposit % and mortgage rate, prefilled with the member's numbers (or ours). */
-export function FinanceChoice({ value, onSubmit, busy }: { value: { depositPct: number; mortgageRatePct: number }; onSubmit: (v: { depositPct: number; mortgageRatePct: number }) => void; busy: boolean }) {
+export function FinanceChoice({ value, onSubmit, busy, onUseAverage, onAverage }: { value: { depositPct: number; mortgageRatePct: number }; onSubmit: (v: { depositPct: number; mortgageRatePct: number }) => void; busy: boolean; onUseAverage?: () => void; onAverage?: boolean }) {
   const [deposit, setDeposit] = useState(String(value.depositPct));
   const [rate, setRate] = useState(String(value.mortgageRatePct));
   const [error, setError] = useState<string | null>(null);
@@ -170,6 +221,11 @@ export function FinanceChoice({ value, onSubmit, busy }: { value: { depositPct: 
       <PrimaryButton onClick={submit} disabled={busy}>
         Continue
       </PrimaryButton>
+      {onUseAverage && (
+        <button type="button" disabled={busy || onAverage} onClick={onUseAverage} className="min-h-12 w-full rounded-lg border border-border px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+          {onAverage ? "You’re on today’s average" : "Use today’s average"}
+        </button>
+      )}
     </div>
   );
 }

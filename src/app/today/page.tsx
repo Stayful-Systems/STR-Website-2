@@ -148,7 +148,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   if (short && widen.length > 0) {
     logActivity(user.id, "tailoring_widen_shown", { profileId, extras: { step: "shown", options: widen.length }, dedupeKey: `tailoring_widen_shown:${profileId ?? "member"}:${todayKey(now)}` });
   }
-  const [opened, baseViews, snapshot] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), btl: btlLookerFor(goals, savedAreas, tailoring?.about ?? null) }), getAreaCardsWithin(AREA_WAIT_MS)]);
+  const [opened, baseViews, snapshot] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), btl: btlLookerFor(goals, savedAreas, tailoring?.about ?? null), tailoring }), getAreaCardsWithin(AREA_WAIT_MS)]);
   // Batch 14: the three numbers for this member's role and goal.
   const views = withTailoring(baseViews, cards, tailoring, snapshot, now, { why: true });
   const pickCard = pickDealId ? cards.find((c) => c.id === pickDealId) ?? null : null;

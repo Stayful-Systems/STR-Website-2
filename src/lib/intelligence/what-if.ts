@@ -7,6 +7,9 @@
  * One change each:
  *   budget / brrr_budget  the next budget band up (bands can't be saved as
  *                         +10%: "Change my budget" instead of "Use this")
+ *   cash                  Batch 30: for a member who answered Buying cash, the next
+ *                         Buying cash band up instead of the two budgets ("Change my
+ *                         Buying cash"); members who did not keep the budget ones
  *   rent_10 / rent_20     maximum rent +10% / +20%
  *   areas                 the 3 nearest areas added (areas members)
  *   miles                 10 miles further from home (near-home members)
@@ -25,6 +28,8 @@ import type { MarketGoals } from '../market/goals.ts';
 import { BUDGET_CHOICES, BUDGET_LABELS, type Budget } from '../market/filters.ts';
 import { AVAILABLE_DEAL_TYPES, DEAL_TYPE_LABELS, dealTypeFor, typesShown, withAddedType, type DealType, type TypedDeal } from '../profile/deal-types.ts';
 import { activeCriteria, modeOf, wantsFor } from '../tailoring/criteria.ts';
+import { realAnswer } from '../tailoring/profile.ts';
+import { applyAnswer } from '../profile/questions.ts';
 import type { CriterionKey, TailoringProfile } from '../tailoring/profile.ts';
 import { WHAT_IF_BUDGET_STEPS, WHAT_IF_EXTRA_MILES, WHAT_IF_MAX_VARIANTS, WHAT_IF_MIN_PROFIT_STEP } from './config.ts';
 import type { ChooseInput, ChooseReads } from '../today/choose.ts';
@@ -36,7 +41,7 @@ import type { PoolRow } from '../today/candidates.ts';
 import type { BtlCard } from '../btl/card.ts';
 import { inBudget } from '../btl/deal.ts';
 
-export type WhatIfKey = 'budget' | 'brrr_budget' | 'rent_10' | 'rent_20' | 'areas' | 'miles' | 'beds_down' | 'beds_up' | 'type_either' | 'profit' | `add_${DealType}`;
+export type WhatIfKey = 'budget' | 'brrr_budget' | 'cash' | 'rent_10' | 'rent_20' | 'areas' | 'miles' | 'beds_down' | 'beds_up' | 'type_either' | 'profit' | `add_${DealType}`;
 
 /** How the change is made: saved for the member, or a link to the answer to change themselves. */
 export type WhatIfSave = 'use' | 'budget';
@@ -60,7 +65,7 @@ const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
 
 export function isWhatIfKey(v: unknown): v is WhatIfKey {
   if (typeof v !== 'string') return false;
-  if (['budget', 'brrr_budget', 'rent_10', 'rent_20', 'areas', 'miles', 'beds_down', 'beds_up', 'type_either', 'profit'].includes(v)) return true;
+  if (['budget', 'brrr_budget', 'cash', 'rent_10', 'rent_20', 'areas', 'miles', 'beds_down', 'beds_up', 'type_either', 'profit'].includes(v)) return true;
   return v.startsWith('add_') && (AVAILABLE_DEAL_TYPES as readonly string[]).includes(v.slice(4));
 }
 
@@ -71,6 +76,11 @@ const nextBand = (b: Exclude<Budget, 'any'> | null): Exclude<Budget, 'any'> | nu
   const i = BANDS.indexOf(b);
   return i < 0 ? null : (BANDS[i + 1] ?? null);
 };
+
+const CASH_BANDS_ASC = ['u30', '30-60', '60-100', '100-200', '200+'] as const;
+const nextCashBand = (b: (typeof CASH_BANDS_ASC)[number]) => CASH_BANDS_ASC[CASH_BANDS_ASC.indexOf(b) + 1] ?? null;
+const CASH_LABELS: Record<(typeof CASH_BANDS_ASC)[number], string> = { u30: 'under £30k', '30-60': '£30–60k', '60-100': '£60–100k', '100-200': '£100–200k', '200+': '£200k+' };
+const cashLabel = (b: (typeof CASH_BANDS_ASC)[number]) => CASH_LABELS[b];
 
 /** Every one-change variant this member could be offered, before counting (at most WHAT_IF_MAX_VARIANTS). */
 export function whatIfChanges(p: TailoringProfile, extra: { nearbyAreas: readonly string[] }): WhatIf[] {
@@ -83,12 +93,20 @@ export function whatIfChanges(p: TailoringProfile, extra: { nearbyAreas: readonl
   const add = (key: WhatIfKey, phrase: string, criterion: CriterionKey | null, goals: MarketGoals, save: WhatIfSave = 'use', savedAreas = p.savedAreas) =>
     out.push({ key, phrase, mustHave: criterion ? must(criterion) : false, save, goals, savedAreas, profile: { ...p, goals, savedAreas } });
 
-  // Budgets of the chosen types.
-  if (types.includes('buy_str')) {
+  // Batch 30: a member who answered Buying cash is offered the next band of that, not the budgets it worked out.
+  const cashBand = g.buyer.cashAvailable;
+  const cashAnswered = cashBand !== null && !g.buyer.cashFromBudget && realAnswer(p, 'cash_available');
+  if (cashAnswered && cashBand && (types.includes('buy_str') || types.includes('brrr') || types.includes('btl'))) {
+    const up = nextCashBand(cashBand);
+    const applied = up ? applyAnswer('cash_available', up, { goals: g, about: p.about, savedAreas: p.savedAreas }) : null;
+    if (up && applied?.ok) add('cash', `raise your Buying cash to ${cashLabel(up)}`, 'cash', applied.answers.goals, 'budget');
+  }
+  // Budgets of the chosen types (for a member with no Buying cash answer: as before).
+  if (!cashAnswered && types.includes('buy_str')) {
     const up = nextBand(g.budget);
     if (up) add('budget', `raise your budget to ${BUDGET_LABELS[up]}`, 'budget', { ...g, budget: up }, 'budget');
   }
-  if (types.includes('brrr')) {
+  if (!cashAnswered && types.includes('brrr')) {
     const up = nextBand(g.brrr.budget);
     if (up) add('brrr_budget', `raise your project budget to ${BUDGET_LABELS[up]}`, 'budget', { ...g, brrr: { ...g.brrr, budget: up } }, 'budget');
   }
@@ -246,6 +264,7 @@ export function whatIfAnswer(v: WhatIf, before: { goals: MarketGoals; savedAreas
   switch (v.key) {
     case 'budget':
     case 'brrr_budget':
+    case 'cash':
       return null;
     case 'rent_10':
     case 'rent_20':
@@ -260,9 +279,10 @@ export function whatIfAnswer(v: WhatIf, before: { goals: MarketGoals; savedAreas
     case 'type_either':
       return { questionId: 'property_type', value: 'either', undo: b.buyer.propertyType };
     case 'profit':
+      // Batch 30: one minimum profit for everyone: the rent-to-rent figure saves through it too.
       return g.finance.targetMarginPcm !== b.finance.targetMarginPcm
         ? { questionId: 'min_profit', value: g.finance.targetMarginPcm, undo: b.finance.targetMarginPcm }
-        : { questionId: 'r2r_min_profit', value: g.r2r.minMarginPcm, undo: b.r2r.minMarginPcm };
+        : { questionId: 'min_profit', value: g.r2r.minMarginPcm, undo: b.r2r.minMarginPcm ?? b.finance.targetMarginPcm };
     default:
       // add_<type>: the deal types with one added.
       return { questionId: 'deal_types', value: g.dealTypes, undo: b.dealTypes };
@@ -270,7 +290,8 @@ export function whatIfAnswer(v: WhatIf, before: { goals: MarketGoals; savedAreas
 }
 
 /** R3 (R2-67): the quiz question a "Change my budget" link opens for a budget what-if; null for the rest. */
-export function changeQuestionFor(key: WhatIfKey): 'budget' | 'brrr_budget' | null {
+export function changeQuestionFor(key: WhatIfKey): 'budget' | 'brrr_budget' | 'cash_available' | null {
+  if (key === 'cash') return 'cash_available';
   if (key === 'budget') return 'budget';
   if (key === 'brrr_budget') return 'brrr_budget';
   return null;

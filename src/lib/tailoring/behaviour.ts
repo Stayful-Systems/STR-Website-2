@@ -19,16 +19,20 @@
  *     type        said flats (or houses); the other kind's answers kept
  *     bedrooms    said N bedrooms; other sizes' answers kept (the size kept most)
  *     location    a must-have where; answers outside it kept
- *     budget      a must-have budget; answers outside it kept
+ *     budget      a must-have budget; answers outside it kept (Batch 30: for a
+ *                 member who answered Buying cash, deals that need more cash
+ *                 than it, and accepting makes Buying cash a nice-to-have)
  *     kind        a deal type the profile doesn't show; its answers kept
  *   on Passes (the group's Passes agree)
  *     kind_drop   a deal type it shows; its answers passed, while another
  *                 shown type has Keeps ("kept 6 rent-to-rent deals and passed
  *                 every BRRR one"). Never offered when it would leave none.
  *     budget_band its budget band; answers in or above the band passed, while
- *                 something below was kept: the next band down
+ *                 something below was kept: the next band down (Batch 30: with
+ *                 Buying cash answered, its next band down)
  *     max_rent    answers above a rent passed, at or below it mostly kept:
- *                 that rent (rounded up to £50) as the maximum
+ *                 that rent (rounded up to £50) as the maximum; only for a
+ *                 member who has a maximum rent stored (Batch 30)
  *     type_pass   said either; flats (or houses) passed, the other kept: the
  *                 other only
  *     location_pass  where is a nice-to-have; answers outside it passed,
@@ -49,6 +53,8 @@ import type { MarketGoals } from '../market/goals.ts';
 import { BUDGET_CHOICES, BUDGET_LABELS } from '../market/filters.ts';
 import { budgetBounds } from '../listing/sourcing.ts';
 import { DEAL_TYPES, DEAL_TYPE_LABELS, availableTypes, kindsFor, typesShown, withAddedType, type DealType } from '../profile/deal-types.ts';
+import { cashNeededFor } from '../profile/buying-power.ts';
+import { applyAnswer, questionById } from '../profile/questions.ts';
 import { TAILORING } from './config.ts';
 import { wantsFor } from './criteria.ts';
 import { asked, type CriterionKey, type Mode, type Signal, type TailoringProfile } from './profile.ts';
@@ -118,6 +124,20 @@ export function bandBelow(band: Exclude<MarketGoals['budget'], null>): Exclude<M
   return i > 0 ? BUDGET_CHOICES[i - 1] : null;
 }
 
+const CASH_BANDS_ASC = ['u30', '30-60', '60-100', '100-200', '200+'] as const;
+
+/** The Buying cash band one step below this one, or null at the bottom. */
+export function cashBandBelow(band: (typeof CASH_BANDS_ASC)[number]): (typeof CASH_BANDS_ASC)[number] | null {
+  const i = CASH_BANDS_ASC.indexOf(band);
+  return i > 0 ? CASH_BANDS_ASC[i - 1] : null;
+}
+
+/** "£30–60k" for a Buying cash band, from the question's own options. */
+function cashLabel(band: string): string {
+  const options = questionById('cash_available')?.options;
+  return (Array.isArray(options) ? (options as readonly { value: string; label: string }[]).find((o) => o.value === band)?.label : undefined) ?? band;
+}
+
 /** Every prompt this profile's answers call for, in the order they are asked. `passes`: the profile's Passes in the window. */
 export function promptsFor(p: TailoringProfile, passes: readonly PassAnswer[] = []): Prompt[] {
   const g = p.goals;
@@ -160,7 +180,13 @@ export function promptsFor(p: TailoringProfile, passes: readonly PassAnswer[] = 
     if (a) out.push({ question: 'location', count: a.agreeing, text: `I’ve noticed you’ve kept ${a.agreeing} deals outside where you look. Want me to show deals from further afield too?`, accept: 'Make location a nice-to-have', keep: KEEP_MY_ANSWER, change: { kind: 'mode', criterion: 'location', to: 'nice' } });
   }
 
-  if (wants.budget && modeOf('budget') === 'must') {
+  // Batch 30: a member with Buying cash answered is asked about the cash, not the budget the cash worked out.
+  const cashTop = wants.cashTop;
+  const cashFunding = g.buyer.funding === 'cash';
+  if (cashTop !== null && modeOf('cash') === 'must') {
+    const a = agrees(sales.filter((s) => s.amount !== null && typeOf(s) !== 'brrr' && cashNeededFor(s.amount, cashFunding) > cashTop), 'keep');
+    if (a) out.push({ question: 'budget', count: a.agreeing, text: `I’ve noticed you’ve kept ${a.agreeing} deals that need more cash than your Buying cash. Want me to show those too?`, accept: 'Make Buying cash a nice-to-have', keep: KEEP_MY_ANSWER, change: { kind: 'mode', criterion: 'cash', to: 'nice' } });
+  } else if (cashTop === null && wants.budget && modeOf('budget') === 'must') {
     const b = wants.budget;
     const a = agrees(sales.filter((s) => typeOf(s) !== 'brrr' && s.amount !== null && ((b.min !== null && s.amount < b.min) || (b.max !== null && s.amount > b.max))), 'keep');
     if (a) out.push({ question: 'budget', count: a.agreeing, text: `I’ve noticed you’ve kept ${a.agreeing} deals outside your budget. Want me to show deals outside it too?`, accept: 'Make budget a nice-to-have', keep: KEEP_MY_ANSWER, change: { kind: 'mode', criterion: 'budget', to: 'nice' } });
@@ -203,8 +229,21 @@ export function promptsFor(p: TailoringProfile, passes: readonly PassAnswer[] = 
     }
   }
 
+  // Batch 30: Buying cash answered: deals needing more cash than the band below passed, something under it kept → that band.
+  const cashBand = g.buyer.cashAvailable;
+  const lowerCash = cashTop !== null && cashBand ? cashBandBelow(cashBand) : null;
+  if (cashTop !== null && lowerCash) {
+    const lowerTop = TAILORING.cashAvailableTop[lowerCash] as number;
+    const priced = sales.filter((s) => s.amount !== null && typeOf(s) !== 'brrr');
+    const a = agrees(priced.filter((s) => cashNeededFor(s.amount!, cashFunding) > lowerTop), 'pass');
+    if (a && priced.some((s) => cashNeededFor(s.amount!, cashFunding) <= lowerTop && s.verdict === 'keep')) {
+      const next = applyAnswer('cash_available', lowerCash, { goals: g, about: p.about, savedAreas: p.savedAreas });
+      if (next.ok) out.push({ question: 'budget_band', count: a.agreeing, text: `I’ve noticed you pass on ${share(a.all, 'deal', 'deals')} needing over ${money(lowerTop)} cash. Want me to change your Buying cash to ${cashLabel(lowerCash).replace(/^Under/, 'under')}?`, accept: 'Change my Buying cash', keep: KEEP_MY_ANSWER, change: { kind: 'goals', goals: next.answers.goals } });
+    }
+  }
+
   // The budget band: deals in or above it passed, something below it kept → the next band down.
-  if (g.budget) {
+  if (g.budget && cashTop === null) {
     const lower = bandBelow(g.budget);
     const floor = lower ? budgetBounds(lower).max : null;
     if (lower && floor !== null) {
@@ -217,9 +256,10 @@ export function promptsFor(p: TailoringProfile, passes: readonly PassAnswer[] = 
   }
 
   // Rent: places above a rent passed, at or below it mostly kept → that rent as the maximum.
+  // Batch 30: only when they have a maximum rent stored; nobody is offered a ceiling they never set.
   const rents = answers.filter((s) => s.kind === 'rent' && s.amount !== null);
-  if (rents.length > 0) {
-    const steps = [...new Set(rents.map((s) => roundUpToFifty(s.amount!)))].filter((x) => x > 0 && (wants.rentMax === null || x < wants.rentMax)).sort((x, y) => x - y);
+  if (rents.length > 0 && wants.rentMax !== null) {
+    const steps = [...new Set(rents.map((s) => roundUpToFifty(s.amount!)))].filter((x) => x > 0 && x < wants.rentMax!).sort((x, y) => x - y);
     for (const cap of steps) {
       const a = agrees(rents.filter((s) => s.amount! > cap), 'pass');
       const under = rents.filter((s) => s.amount! <= cap);

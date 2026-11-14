@@ -23,6 +23,10 @@
  *   pack_early_offer_pence     the one-off offer when a pack-only member's balance falls to this
  *   pack_picks_pause_days      a pack-only member's picks pause after this many days without a visit
  *   places_cache_days          Google Places nearby results are reused for this long
+ *
+ * Batch 30 (shorter signup questions):
+ *   home_blocker_card_day      the Home "What's holding you back?" card shows from this day since sign-up (0: from the first visit)
+ *   quiz_shorter_from          when the shorter quiz went live: /admin/profile compares members before and after it
  *   pack_paying_*_pct, pack_cost_*_pence   the lines on /admin/weekly-active's "Pack → paying"
  *
  * Pure: no network, no database, no server-only.
@@ -49,6 +53,8 @@ export interface LifecycleSettings {
   packPayingRundownPaidTargetPct: number;
   packCostTargetPence: number;
   packCostCeilingPence: number;
+  homeBlockerCardDay: number;
+  quizShorterFrom: string | null;
 }
 
 export const LIFECYCLE_KEYS = {
@@ -71,6 +77,8 @@ export const LIFECYCLE_KEYS = {
   packPayingRundownPaidTargetPct: 'pack_paying_rundown_paid_target_pct',
   packCostTargetPence: 'pack_cost_target_pence',
   packCostCeilingPence: 'pack_cost_ceiling_pence',
+  homeBlockerCardDay: 'home_blocker_card_day',
+  quizShorterFrom: 'quiz_shorter_from',
 } as const satisfies Record<keyof LifecycleSettings, string>;
 
 export const DEFAULT_LIFECYCLE: LifecycleSettings = {
@@ -93,6 +101,8 @@ export const DEFAULT_LIFECYCLE: LifecycleSettings = {
   packPayingRundownPaidTargetPct: 50,
   packCostTargetPence: 190,
   packCostCeilingPence: 250,
+  homeBlockerCardDay: 3,
+  quizShorterFrom: null,
 };
 
 function wholeAtLeast(raw: unknown, min: number, fallback: number): number {
@@ -130,6 +140,8 @@ export function parseLifecycle(get: (key: string) => unknown): LifecycleSettings
     packPayingRundownPaidTargetPct: pctOr(get(LIFECYCLE_KEYS.packPayingRundownPaidTargetPct), d.packPayingRundownPaidTargetPct),
     packCostTargetPence: wholeAtLeast(get(LIFECYCLE_KEYS.packCostTargetPence), 0, d.packCostTargetPence),
     packCostCeilingPence: wholeAtLeast(get(LIFECYCLE_KEYS.packCostCeilingPence), 0, d.packCostCeilingPence),
+    homeBlockerCardDay: wholeAtLeast(get(LIFECYCLE_KEYS.homeBlockerCardDay), 0, d.homeBlockerCardDay),
+    quizShorterFrom: parseDateSetting(get(LIFECYCLE_KEYS.quizShorterFrom)),
   };
 }
 

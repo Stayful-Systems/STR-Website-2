@@ -13,6 +13,13 @@
  * look, and one money question per chosen type — gate the rest of the app
  * (src/lib/profile/state.ts); every other question can be answered "Not sure".
  *
+ * Batch 30 shortened the quiz: "what are you looking for" merged the old
+ * "which describes you" and "which deals" questions, the two money questions
+ * became Buying cash and R2R setup cash, and several pairs became one
+ * (stage, property, short-let rules). Every older question id is kept as a
+ * RETIRED question: never asked, still parsed, still stored and read, so no
+ * member loses a filter or progress (MARKS_WRITTEN, PREDECESSORS below).
+ *
  * This module also does the two translations the quiz needs: an answer
  * (applyAnswer) into new goals / about-you objects, and stored values back
  * into a label for the profile page (answerLabel). Both are pure and tested.
@@ -42,8 +49,9 @@ import {
 import { BUDGET_CHOICES, BUDGET_LABELS, isBudget } from '../market/filters.ts';
 import { DEFAULT_FINANCE } from '../listing/deal.ts';
 import { areaMetaForCode } from '../market/areas.ts';
-import { ABOUT_OPTIONS, DEFAULT_ABOUT, RISK_TO_APPETITE, ROLE_OPTIONS, TIME_TO_MANAGEMENT, aboutOption, pathFor, roleList, type AboutYou, type Role } from './about.ts';
-import { AVAILABLE_DEAL_TYPES, availableTypes, COMING_SOON_DEAL_TYPES, DEAL_TYPE_LABELS, DEAL_TYPE_LONG_LABELS, DEAL_TYPES, dealTypesFor, isAvailableDealType, kindsFor } from './deal-types.ts';
+import { ABOUT_OPTIONS, DEFAULT_ABOUT, RISK_TO_APPETITE, ROLE_OPTIONS, STAGE_TO_ABOUT, TIME_TO_MANAGEMENT, aboutOption, pathFor, roleList, stageOf, type AboutYou, type Role } from './about.ts';
+import { btlBandFromCash, budgetFromCash, priceLine } from './buying-power.ts';
+import { AVAILABLE_DEAL_TYPES, availableTypes, COMING_SOON_DEAL_TYPES, DEAL_TYPE_LABELS, DEAL_TYPES, dealTypesFor, kindsFor } from './deal-types.ts';
 import type { ImageKey } from './images.ts';
 
 export type SectionId = 'about' | 'buy' | 'r2r' | 'source' | 'manage';
@@ -99,7 +107,11 @@ export type QuestionId =
   | 'units_managed'
   | 'operating_areas'
   | 'looking_for'
-  | 'growth_target';
+  | 'growth_target'
+  // Batch 30
+  | 'stage'
+  | 'property'
+  | 'short_let_rules';
 
 /**
  *   single   one tap card
@@ -110,8 +122,9 @@ export type QuestionId =
  *   finance  deposit % and mortgage rate, prefilled
  *   profit   a £ per month, presets or typed
  *   areas    postcode areas picked from the list
+ *   property Batch 30: flat / house / either, then the bedrooms; both required
  */
-export type QuestionKind = 'single' | 'multi' | 'where' | 'budget' | 'rent' | 'finance' | 'profit' | 'areas';
+export type QuestionKind = 'single' | 'multi' | 'where' | 'budget' | 'rent' | 'finance' | 'profit' | 'areas' | 'property';
 
 /** Everything an answer can be read from or written to. */
 export interface Answers {
@@ -155,6 +168,19 @@ export interface Question {
   presets?: readonly number[];
   /** For 'multi': the option that ticks every other one ("All of them"). */
   allOption?: string;
+  /** Batch 30: for 'multi' with an allOption, the values "All of them" ticks (default: every option). */
+  allCovers?: readonly string[];
+  /** Batch 30: a small heading above the title ("Rent-to-rent", "Buying"). */
+  label?: Text;
+  /**
+   * Batch 30: not asked of anyone any more. Kept so its id still parses and its
+   * stored answer is still read. 'editable': the profile page, chat, what-if,
+   * the Home card and a rate "change" link can still save it (the server
+   * accepts it though it is not in the member's questions).
+   */
+  retired?: true | 'editable';
+  /** Batch 30: a line shown under the chosen answer, from the answer and the member's other answers. */
+  lineFor?: (value: string, a: Answers) => string | null;
 }
 
 export const RENT_PRESETS_PCM: readonly number[] = [1000, 1500, 2000, 3000];
@@ -186,8 +212,12 @@ function budgetVoice(a: Answers): 'own' | 'clients' | 'manager' {
   return 'own';
 }
 
-/** The "All of them" option of "Which deals do you want to see?". */
+/** The "All of them" option of "What are you looking for?". */
 export const ALL_DEAL_TYPES = 'all';
+/** Batch 30: the three ticks of "What are you looking for?" that are roles, not deal types. */
+export const SOURCE_TICK = 'source';
+export const MANAGE_TICK = 'manage';
+export const EXPLORING_TICK = 'exploring';
 
 /** The line under each deal type in the question. */
 const DEAL_TYPE_HELP: Record<DealType, string> = {
@@ -204,7 +234,7 @@ const BTL_CASH_OPTIONS: readonly Option[] = [opt('under_25k', 'Under £25k'), op
 // Batch 22c: five brackets, "Under £200k" split in two. A stored 'u200' is still accepted and labelled "Under £200k", never offered.
 const BUDGET_OPTIONS: readonly Option[] = BUDGET_CHOICES.map((b) => opt(b, BUDGET_LABELS[b]));
 
-export const QUESTIONS: readonly Question[] = [
+const DEFINITIONS: readonly Question[] = [
   // ── Section A: about you ──
   {
     id: 'roles',
@@ -221,17 +251,24 @@ export const QUESTIONS: readonly Question[] = [
     id: 'deal_types',
     section: 'about',
     kind: 'multi',
-    title: 'Which deals do you want to see?',
-    why: 'Today mixes the kinds you pick, and asks only what each one needs.',
+    title: 'What are you looking for?',
+    why: 'Tick everything. I’ll only ask what each one needs.',
     image: 'deal_types',
-    short: 'Deals you want',
-    // Every declared type in the question's order; one not yet available is shown greyed out,
-    // "Coming soon" (AVAILABLE_DEAL_TYPES, market/goals.ts). "All of them" is every available one.
-    options: DEAL_TYPES.map((t) => {
-      const o = opt(t, DEAL_TYPE_LONG_LABELS[t], DEAL_TYPE_HELP[t]);
-      return isAvailableDealType(t) ? o : { ...o, soon: 'Coming soon' };
-    }).concat([opt(ALL_DEAL_TYPES, 'All of them')]),
+    short: 'What you’re looking for',
+    // Batch 30: the older "Which describes you?" and "Which deals?" in one. The first four are
+    // deal types; "All of them" ticks those four; the last three are roles that are not a deal type.
+    options: [
+      opt('buy_str', 'Buy a ready short-let', DEAL_TYPE_HELP.buy_str),
+      opt('brrr', 'Buy a project (BRRR)', DEAL_TYPE_HELP.brrr),
+      opt('r2r', 'Rent-to-rent', DEAL_TYPE_HELP.r2r),
+      opt('btl', 'Buy to let', DEAL_TYPE_HELP.btl),
+      opt(ALL_DEAL_TYPES, 'All of them'),
+      opt(SOURCE_TICK, 'I source deals for clients'),
+      opt(MANAGE_TICK, 'I run a management company'),
+      opt(EXPLORING_TICK, 'Just exploring'),
+    ],
     allOption: ALL_DEAL_TYPES,
+    allCovers: ['buy_str', 'brrr', 'r2r', 'btl'],
     mandatory: true,
     affectsMatch: true,
   },
@@ -244,7 +281,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'where',
     short: 'Where to look',
     options: [
-      opt('near', 'Near me', 'Your postcode and how far you’d go'),
+      opt('near', 'Near me', 'Your home or your current units, and how far you’d go'),
       opt('areas', 'Specific areas', 'Pick from Stayful’s ranked areas'),
       opt('anywhere', 'Most profitable anywhere in the UK', 'No area limit, just the strongest numbers'),
       opt('near_plus_best', 'Near me + the best elsewhere', 'Your area first, plus the strongest deals anywhere'),
@@ -392,24 +429,43 @@ export const QUESTIONS: readonly Question[] = [
     id: 'risk',
     section: 'about',
     kind: 'single',
-    title: 'A deal could make £800 a month, but £300 in a slow year. Would you…',
-    why: 'Everyone’s comfort with risk is different. No wrong answer.',
+    title: 'Profit is shown as a range, like £450–£700 a month. When should a deal count as hitting your minimum?',
+    why: 'I’ll judge every deal’s range this way.',
     image: 'cards',
-    short: 'Risk',
-    options: [opt('avoid', 'Avoid it', undefined, 'risk_avoid'), opt('consider', 'Consider it', undefined, 'plain'), opt('go', 'Go for it', undefined, 'risk_go')],
+    short: 'Profit range',
+    // The stored values stay avoid / consider / go (low / middle / top end of the range).
+    options: [
+      opt('avoid', 'Play it safe', 'Even the low end hits it', 'risk_avoid'),
+      opt('consider', 'The middle of the range hits it', undefined, 'plain'),
+      opt('go', 'The top end hits it', undefined, 'risk_go'),
+    ],
+  },
+  {
+    id: 'stage',
+    section: 'about',
+    kind: 'single',
+    title: 'Where are you at?',
+    why: 'So I explain as much or as little as you need.',
+    image: 'units_now',
+    short: 'Where you’re at',
+    options: [opt('none', 'Not started yet'), opt('1-2', '1–2 units'), opt('3-10', '3–10 units'), opt('10+', 'More than 10')],
   },
 
   // ── Section B: investor buying ──
   {
     id: 'cash_available',
-    section: 'buy',
+    section: 'about',
     kind: 'single',
-    title: 'How much cash can you put in?',
-    why: 'So we only show deals you can actually fund.',
+    label: 'Buying',
+    title: (a) => (budgetVoice(a) === 'clients' ? 'How much cash can your clients put into buying a property?' : 'How much cash can you put into buying a property?'),
+    why: 'Your deposit, stamp duty and furnishing. For a project, the works too.',
     image: 'cash_available',
-    short: 'Cash available',
-    options: [opt('u30', 'Under £30k'), opt('30-60', '£30k to £60k'), opt('60-100', '£60k to £100k'), opt('100-200', '£100k to £200k'), opt('200+', '£200k or more')],
-    applies: wants('buy_str', 'brrr'),
+    short: 'Buying cash',
+    options: [opt('u30', 'Under £30k'), opt('30-60', '£30–60k'), opt('60-100', '£60–100k'), opt('100-200', '£100–200k'), opt('200+', '£200k+')],
+    mandatory: true,
+    affectsMatch: true,
+    applies: wants('buy_str', 'brrr', 'btl'),
+    lineFor: (v, a) => priceLine(goalOption('cashAvailable', v), a.goals.buyer.funding),
   },
   {
     id: 'funding',
@@ -421,6 +477,7 @@ export const QUESTIONS: readonly Question[] = [
     short: 'Funding',
     options: [opt('cash', 'Cash'), opt('btl', 'Buy-to-let mortgage'), opt('holiday_let', 'Holiday-let mortgage'), opt('bridging', 'Bridging')],
     applies: wants('buy_str', 'brrr'),
+    lineFor: (v, a) => priceLine(a.goals.buyer.cashAvailable, goalOption('funding', v)),
   },
   {
     id: 'finance',
@@ -456,14 +513,13 @@ export const QUESTIONS: readonly Question[] = [
   },
   {
     id: 'min_profit',
-    section: 'buy',
+    section: 'about',
     kind: 'profit',
     title: 'What’s the least profit a deal should make each month?',
     why: 'So you never see deals that aren’t worth your time.',
     image: 'min_profit',
     short: 'Minimum profit',
     presets: PROFIT_PRESETS_PCM,
-    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'property_type',
@@ -485,6 +541,28 @@ export const QUESTIONS: readonly Question[] = [
     image: 'bedrooms',
     short: 'Bedrooms',
     options: [opt('1', '1 bed'), opt('2', '2 bed'), opt('3', '3 bed'), opt('4', '4 or more')],
+    applies: wants('buy_str', 'brrr'),
+  },
+  {
+    id: 'property',
+    section: 'about',
+    kind: 'property',
+    title: 'What kind of property?',
+    why: 'Some people only want flats, some only houses, and bigger places earn more but cost more to run.',
+    image: 'cards',
+    short: 'Property',
+    options: [opt('flat', 'Flat', undefined, 'property_flat'), opt('house', 'House', undefined, 'property_house'), opt('either', 'Either', undefined, 'plain')],
+    affectsMatch: true,
+  },
+  {
+    id: 'short_let_rules',
+    section: 'buy',
+    kind: 'single',
+    title: 'Leasehold and council short-let rules?',
+    why: 'Many leases and some councils limit short lets.',
+    image: 'leasehold',
+    short: 'Short-let rules',
+    options: [opt('hide', 'Hide anything risky'), opt('warn', 'Show them with a warning')],
     applies: wants('buy_str', 'brrr'),
   },
   {
@@ -535,13 +613,16 @@ export const QUESTIONS: readonly Question[] = [
   },
   {
     id: 'setup_budget',
-    section: 'r2r',
+    section: 'about',
     kind: 'single',
-    title: 'Setup budget per unit?',
-    why: 'Furnishing and setup is your biggest upfront cost.',
+    label: 'Rent-to-rent',
+    title: (a) => (budgetVoice(a) === 'clients' ? 'How much can your clients spend setting up a rent-to-rent property?' : 'How much can you spend setting up a rent-to-rent property?'),
+    why: 'Furniture and getting it guest-ready. My setup figure doesn’t include the landlord’s deposit or first month’s rent.',
     image: 'setup_budget',
-    short: 'Setup budget',
-    options: [opt('u3k', 'Under £3k'), opt('3-6k', '£3k to £6k'), opt('6-10k', '£6k to £10k'), opt('10k+', '£10k or more')],
+    short: 'R2R setup cash',
+    options: [opt('u10k', 'Under £10k'), opt('10-15k', '£10–15k'), opt('15-20k', '£15–20k'), opt('20k+', '£20k+')],
+    mandatory: true,
+    affectsMatch: true,
     applies: wants('r2r'),
   },
   {
@@ -670,6 +751,75 @@ export const QUESTIONS: readonly Question[] = [
   },
 ];
 
+/**
+ * The questions a member is asked, in the order they are asked (Batch 30).
+ * Everything not listed here is retired.
+ */
+export const LIVE_ORDER: readonly QuestionId[] = [
+  'deal_types',
+  'where',
+  'setup_budget',
+  'cash_available',
+  'funding',
+  'min_profit',
+  'stage',
+  'time',
+  'risk',
+  'main_goal',
+  'property',
+  'short_let_rules',
+  'brrr_work',
+  'btl_priority',
+  'next_deal',
+  'sourcing_fee',
+  'motivated_sellers',
+  'looking_for',
+  'operating_areas',
+];
+
+/**
+ * The retired questions: kept in QuestionId and here so an id still parses and
+ * its stored answer is still read, but never asked. The editable ones can
+ * still be saved from the profile page, chat, what-if, the Home card and a
+ * rate "change" link.
+ */
+export const RETIRED: Readonly<Partial<Record<QuestionId, true | 'editable'>>> = {
+  roles: true,
+  budget: 'editable',
+  brrr_budget: 'editable',
+  max_rent: 'editable',
+  btl_cash: true,
+  deals_done: true,
+  units_now: true,
+  unit_areas: true,
+  deals_wanted: true,
+  blocker: 'editable',
+  finance: 'editable',
+  entity: true,
+  // Still saved by id from chat and what-if ("3 bedrooms", "flats as well as houses"), so editable.
+  property_type: 'editable',
+  bedrooms: 'editable',
+  leasehold: true,
+  restricted_areas: true,
+  r2r_min_profit: 'editable',
+  deal_structure: true,
+  break_even: true,
+  payback: true,
+  furnished: true,
+  deals_per_month: true,
+  units_managed: true,
+  growth_target: true,
+};
+
+/** Live questions first, in LIVE_ORDER; then the retired ones: never mandatory, never asked (questionsFor skips them). */
+export const QUESTIONS: readonly Question[] = (() => {
+  const byDef = new Map(DEFINITIONS.map((q) => [q.id, q]));
+  const live = LIVE_ORDER.map((id) => byDef.get(id)!);
+  // `applies` is kept: asked() in tailoring/profile.ts still routes an old answer by it (a buyer's answers do not judge a profile that no longer buys).
+  const retired = DEFINITIONS.filter((q) => RETIRED[q.id]).map((q): Question => ({ ...q, retired: RETIRED[q.id], mandatory: false }));
+  return [...live, ...retired];
+})();
+
 const BY_ID = new Map(QUESTIONS.map((q) => [q.id, q]));
 
 export function questionById(id: string): Question | null {
@@ -682,7 +832,7 @@ export function isQuestionId(v: unknown): v is QuestionId {
 
 /** The questions this member is asked, in order. */
 export function questionsFor(a: Answers): Question[] {
-  return QUESTIONS.filter((q) => !q.applies || q.applies(a));
+  return QUESTIONS.filter((q) => !q.retired && (!q.applies || q.applies(a)));
 }
 
 export function text(t: Text, a: Answers): string {
@@ -698,15 +848,45 @@ export function imageOf(q: Question, a: Answers): ImageKey | 'cards' {
   return typeof q.image === 'function' ? q.image(a) : q.image;
 }
 
-/** The money question for each chosen type (all mandatory, Q27): the budget, the project budget, the rent ceiling; Batch 28: the cash a buy-to-let deal needs. */
+/**
+ * The money question(s) for the chosen types (mandatory): Buying cash for a
+ * short-let, a project or a buy to let (one question, shared), and R2R setup
+ * cash for rent-to-rent (Batch 30; it used to be a budget, a project budget, a
+ * rent ceiling and a buy-to-let cash question).
+ */
 export function moneyQuestionsFor(types: readonly DealType[]): QuestionId[] {
   const out: QuestionId[] = [];
-  if (types.includes('buy_str')) out.push('budget');
-  if (types.includes('brrr')) out.push('brrr_budget');
-  if (types.includes('r2r')) out.push('max_rent');
-  if (types.includes('btl')) out.push('btl_cash');
+  if (types.includes('r2r')) out.push('setup_budget');
+  if (types.includes('buy_str') || types.includes('brrr') || types.includes('btl')) out.push('cash_available');
   return out;
 }
+
+/**
+ * Batch 30: the marks a new question also writes, so a reader that asks "was
+ * the old question answered?" (asked() / realAnswer() in tailoring/profile.ts)
+ * works unchanged.
+ */
+export const MARKS_WRITTEN: Readonly<Partial<Record<QuestionId, readonly QuestionId[]>>> = {
+  deal_types: ['roles'],
+  stage: ['deals_done', 'units_now'],
+  property: ['property_type', 'bedrooms'],
+  short_let_rules: ['leasehold', 'restricted_areas'],
+  min_profit: ['r2r_min_profit'],
+};
+
+/**
+ * Batch 30: a new question counts as answered (for progress and gating) when
+ * any old question it replaces was answered, so a member who answered the old
+ * ones is not asked again and is not blocked.
+ */
+export const PREDECESSORS: Readonly<Partial<Record<QuestionId, readonly QuestionId[]>>> = {
+  cash_available: ['budget', 'brrr_budget', 'btl_cash'],
+  setup_budget: ['max_rent'],
+  stage: ['deals_done', 'units_now'],
+  property: ['property_type', 'bedrooms'],
+  short_let_rules: ['leasehold', 'restricted_areas'],
+  min_profit: ['r2r_min_profit'],
+};
 
 // ── Answering ──
 
@@ -751,6 +931,42 @@ export function dealTypesFromAnswer(raw: unknown): DealType[] {
   return availableTypes(list.filter((v): v is DealType => (DEAL_TYPES as readonly unknown[]).includes(v)));
 }
 
+/** The ticked values of "What are you looking for?" as a list; "All of them" is the four deal types. */
+function tickList(raw: unknown): string[] {
+  return (Array.isArray(raw) ? raw : [raw]).filter((v): v is string => typeof v === 'string');
+}
+
+/**
+ * What the roles alone imply as deal types, for a member who ticked no deal
+ * type: a sourcer sees Short-let and Rent-to-rent, a management company
+ * Short-let, and someone just exploring every available type. Written
+ * explicitly so the profile does not depend on the old role mapping.
+ */
+function typesForRoles(roles: readonly Role[], sourceFor: SourcerGoals['sourceFor']): DealType[] {
+  if (roles.includes('exploring')) return [...AVAILABLE_DEAL_TYPES];
+  const out = new Set<DealType>();
+  if (roles.includes('sourcer')) {
+    if (sourceFor !== 'r2r') out.add('buy_str');
+    if (sourceFor !== 'buyers') out.add('r2r');
+  }
+  if (roles.includes('manager')) out.add('buy_str');
+  return availableTypes(out);
+}
+
+/** The roles and deal types "What are you looking for?" posts mean. */
+export function lookingForFrom(raw: unknown, current: { roles: readonly Role[]; sourceFor: SourcerGoals['sourceFor'] }): { roles: Role[]; types: DealType[] } {
+  const ticks = tickList(raw);
+  const types = dealTypesFromAnswer(ticks);
+  const roles = new Set<Role>();
+  if (types.some((t) => t === 'buy_str' || t === 'brrr' || t === 'btl')) roles.add('investor');
+  if (types.includes('r2r')) roles.add('r2r');
+  if (ticks.includes(SOURCE_TICK)) roles.add('sourcer');
+  if (ticks.includes(MANAGE_TICK)) roles.add('manager');
+  if (ticks.includes(EXPLORING_TICK)) roles.add('exploring');
+  const roleList_ = ROLE_OPTIONS.filter((r) => roles.has(r));
+  return { roles: roleList_, types: types.length > 0 ? types : typesForRoles(roleList_, current.sourceFor) };
+}
+
 const setBuyer = (a: Answers, patch: Partial<BuyerGoals>): Answers => ({ ...a, goals: { ...a.goals, buyer: { ...a.goals.buyer, ...patch } } });
 const setR2r = (a: Answers, patch: Partial<R2rGoals>): Answers => ({ ...a, goals: { ...a.goals, r2r: { ...a.goals.r2r, ...patch } } });
 const setSourcer = (a: Answers, patch: Partial<SourcerGoals>): Answers => ({ ...a, goals: { ...a.goals, sourcer: { ...a.goals.sourcer, ...patch } } });
@@ -775,12 +991,15 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
       return { ok: true, answers: withRoles(a, { ...a.about, roles, mainRole }) };
     }
     case 'deal_types': {
-      const types = dealTypesFromAnswer(raw);
-      const posted = Array.isArray(raw) ? raw : [raw];
+      const posted = tickList(raw);
       const soon = COMING_SOON_DEAL_TYPES.filter((t) => posted.includes(t));
-      if (types.length === 0 && soon.length > 0) return fail(`${soon.map((t) => DEAL_TYPE_LABELS[t]).join(' and ')} ${soon.length === 1 ? 'is' : 'are'} coming soon. Tick one of the others for now.`);
-      if (types.length === 0) return fail('Tick at least one.');
-      return { ok: true, answers: { ...a, goals: { ...goals, dealTypes: types, sourcingKind: kindsFor(types) } } };
+      const { roles, types } = lookingForFrom(raw, { roles: a.about.roles, sourceFor: goals.sourcer.sourceFor });
+      if (types.length === 0 && roles.length === 0 && soon.length > 0) return fail(`${soon.map((t) => DEAL_TYPE_LABELS[t]).join(' and ')} ${soon.length === 1 ? 'is' : 'are'} coming soon. Tick one of the others for now.`);
+      if (roles.length === 0 || types.length === 0) return fail('Tick at least one.');
+      const mainRole = roles.length === 1 ? roles[0] : a.about.mainRole && roles.includes(a.about.mainRole) ? a.about.mainRole : null;
+      const about: AboutYou = { ...a.about, roles, mainRole };
+      const next = { ...a, about, goals: { ...goals, dealTypes: types, sourcingKind: kindsFor(types), path: pathFor(about) } };
+      return { ok: true, answers: next };
     }
     case 'where': {
       const w = (raw && typeof raw === 'object' ? raw : {}) as WhereAnswer;
@@ -857,17 +1076,57 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
       if (!v) return fail('Choose one.');
       return { ok: true, answers: { ...a, about: { ...a.about, risk: v }, goals: { ...goals, riskAppetite: RISK_TO_APPETITE[v] } } };
     }
-    case 'cash_available':
-    case 'funding':
+    case 'cash_available': {
+      const v = goalOption('cashAvailable', raw);
+      if (!v) return fail('Choose how much cash you can put in.');
+      // A real answer: it sets the older budget as a ceiling (so the readers that
+      // still use it keep working) and the Buy to let band, and is no longer "worked out".
+      const budget = budgetFromCash(v, goals.buyer.funding);
+      const withCash = setBuyer(a, { cashAvailable: v, cashFromBudget: false });
+      return { ok: true, answers: { ...withCash, goals: { ...withCash.goals, budget, brrr: { ...withCash.goals.brrr, budget }, btl: { ...withCash.goals.btl, cashBand: btlBandFromCash(v) } } } };
+    }
+    case 'funding': {
+      const v = goalOption('funding', raw);
+      if (!v) return fail('Choose one.');
+      const withFunding = setBuyer(a, { funding: v });
+      const cash = withFunding.goals.buyer;
+      // The price a band buys depends on how it is funded, so the ceiling follows (only for a real cash answer).
+      if (cash.cashAvailable && !cash.cashFromBudget) {
+        const budget = budgetFromCash(cash.cashAvailable, v);
+        return { ok: true, answers: { ...withFunding, goals: { ...withFunding.goals, budget, brrr: { ...withFunding.goals.brrr, budget } } } };
+      }
+      return { ok: true, answers: withFunding };
+    }
     case 'entity':
     case 'main_goal':
     case 'property_type':
     case 'leasehold':
     case 'restricted_areas': {
-      const key = ({ cash_available: 'cashAvailable', funding: 'funding', entity: 'entity', main_goal: 'mainGoal', property_type: 'propertyType', leasehold: 'leaseholdOk', restricted_areas: 'restrictedAreas' } as const)[id];
+      const key = ({ entity: 'entity', main_goal: 'mainGoal', property_type: 'propertyType', leasehold: 'leaseholdOk', restricted_areas: 'restrictedAreas' } as const)[id];
       const v = goalOption(key, raw);
       if (!v) return fail('Choose one.');
       return { ok: true, answers: setBuyer(a, { [key]: v }) };
+    }
+    case 'property': {
+      const p = (raw && typeof raw === 'object' ? raw : {}) as { type?: unknown; bedrooms?: unknown };
+      const type = goalOption('propertyType', p.type);
+      const beds = num(p.bedrooms);
+      if (!type) return fail('Choose flat, house or either.');
+      if (beds !== 1 && beds !== 2 && beds !== 3 && beds !== 4) return fail('Choose the bedrooms.');
+      const withType = setBuyer(a, { propertyType: type });
+      return { ok: true, answers: { ...withType, goals: { ...withType.goals, bedrooms: beds } } };
+    }
+    case 'short_let_rules': {
+      if (raw !== 'hide' && raw !== 'warn') return fail('Choose one.');
+      return { ok: true, answers: setBuyer(a, raw === 'hide' ? { leaseholdOk: 'no', restrictedAreas: 'avoid' } : { leaseholdOk: 'depends', restrictedAreas: 'warn' }) };
+    }
+    case 'stage': {
+      const v = aboutOption('stage', raw);
+      if (!v) return fail('Choose one.');
+      const w = STAGE_TO_ABOUT[v];
+      const about: AboutYou = { ...a.about, stage: v, dealsDone: w.dealsDone, unitsNow: w.unitsNow };
+      if (v === 'none') about.unitAreas = [];
+      return { ok: true, answers: { ...a, about } };
     }
     case 'finance': {
       const f = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -875,15 +1134,19 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
       const rate = num(f.mortgageRatePct);
       if (deposit === null || deposit < 0 || deposit > 100) return fail('Enter a deposit between 0% and 100%.');
       if (rate === null || rate < 0 || rate > 25) return fail('Enter a mortgage rate between 0% and 25%.');
-      return { ok: true, answers: { ...a, goals: { ...goals, finance: parseFinanceGoals({ ...goals.finance, depositPct: deposit, mortgageRatePct: rate }) } } };
+      // Batch 30: "Use today's average" keeps the member on the daily average (rateSet false); typing a rate makes it theirs.
+      const average = f.useAverage === true;
+      const rateAsOf = average && typeof f.rateAsOf === 'string' ? f.rateAsOf : goals.finance.rateAsOf;
+      return { ok: true, answers: { ...a, goals: { ...goals, finance: parseFinanceGoals({ ...goals.finance, depositPct: deposit, mortgageRatePct: rate, rateSet: !average, rateAsOf }) } } };
     }
     case 'min_profit':
     case 'r2r_min_profit': {
       const n = num(raw);
       if (n === null || n < MIN_PROFIT_RANGE.min || n > MIN_PROFIT_RANGE.max) return fail(`Enter a monthly profit between £0 and £${MIN_PROFIT_RANGE.max.toLocaleString('en-GB')}.`);
-      // Two answers, two fields: the rent-to-rent one no longer overwrites the buyer's (Batch 17).
+      // Batch 30: one minimum profit for everyone writes both fields; the retired rent-to-rent one still saves just its own.
       if (id === 'r2r_min_profit') return { ok: true, answers: setR2r(a, { minMarginPcm: Math.round(n) }) };
-      return { ok: true, answers: { ...a, goals: { ...goals, finance: { ...goals.finance, targetMarginPcm: Math.round(n) } } } };
+      const both = setR2r(a, { minMarginPcm: Math.round(n) });
+      return { ok: true, answers: { ...both, goals: { ...both.goals, finance: { ...both.goals.finance, targetMarginPcm: Math.round(n) } } } };
     }
     case 'bedrooms': {
       const n = num(raw);
@@ -955,10 +1218,22 @@ export function clearAnswer(id: QuestionId, a: Answers): Answers {
     case 'where':
     case 'budget':
     case 'brrr_budget':
-    case 'max_rent':
     case 'btl_priority':
     case 'btl_cash':
+    case 'cash_available':
+    case 'setup_budget':
       return a;
+    case 'max_rent':
+      // Retired (Batch 30) but editable: a member can clear a ceiling they set before.
+      return { ...a, goals: { ...goals, maxRentPcm: null } };
+    case 'stage':
+      return setAbout(a, { stage: null, dealsDone: null, unitsNow: null, unitAreas: [] });
+    case 'property': {
+      const x = setBuyer(a, { propertyType: null });
+      return { ...x, goals: { ...x.goals, bedrooms: null } };
+    }
+    case 'short_let_rules':
+      return setBuyer(a, { leaseholdOk: null, restrictedAreas: null });
     case 'brrr_work':
       return { ...a, goals: { ...goals, brrr: { ...goals.brrr, work: null } } };
     case 'deals_done':
@@ -977,18 +1252,16 @@ export function clearAnswer(id: QuestionId, a: Answers): Answers {
       return setAbout(a, { blocker: null });
     case 'risk':
       return { ...a, about: { ...a.about, risk: null }, goals: { ...goals, riskAppetite: 'balanced' } };
-    case 'cash_available':
-      return setBuyer(a, { cashAvailable: null });
     case 'funding':
       return setBuyer(a, { funding: null });
     case 'finance':
-      return { ...a, goals: { ...goals, finance: { ...goals.finance, depositPct: DEFAULT_FINANCE.depositPct, mortgageRatePct: DEFAULT_FINANCE.mortgageRatePct } } };
+      return { ...a, goals: { ...goals, finance: { ...goals.finance, depositPct: DEFAULT_FINANCE.depositPct, mortgageRatePct: DEFAULT_FINANCE.mortgageRatePct, rateSet: false } } };
     case 'entity':
       return setBuyer(a, { entity: null });
     case 'main_goal':
       return setBuyer(a, { mainGoal: null });
     case 'min_profit':
-      return { ...a, goals: { ...goals, finance: { ...goals.finance, targetMarginPcm: DEFAULT_FINANCE.targetMarginPcm } } };
+      return setR2r({ ...a, goals: { ...goals, finance: { ...goals.finance, targetMarginPcm: DEFAULT_FINANCE.targetMarginPcm } } }, { minMarginPcm: null });
     case 'r2r_min_profit':
       return setR2r(a, { minMarginPcm: null });
     case 'property_type':
@@ -999,8 +1272,6 @@ export function clearAnswer(id: QuestionId, a: Answers): Answers {
       return setBuyer(a, { leaseholdOk: null });
     case 'restricted_areas':
       return setBuyer(a, { restrictedAreas: null });
-    case 'setup_budget':
-      return setR2r(a, { setupBudget: null });
     case 'deal_structure':
       return setR2r(a, { dealStructure: null });
     case 'break_even':
@@ -1036,8 +1307,17 @@ export function currentValue(id: QuestionId, a: Answers): unknown {
     case 'roles':
       return b.roles.length > 0 ? b.roles : null;
     case 'deal_types': {
-      const t = typesOf(a);
-      return t.length > 0 ? t : null;
+      // The deal types, plus a tick for each role that is not a deal type, prefilled from the roles so
+      // answering again keeps them (a sourcer's or manager's own types are left out: they follow the role).
+      const types = typesOf(a);
+      const noInvesting = !b.roles.includes('investor') && !b.roles.includes('r2r');
+      const implied = noInvesting ? typesForRoles(b.roles, g.sourcer.sourceFor) : [];
+      const sameAsRoles = implied.length > 0 && implied.length === types.length && implied.every((t) => types.includes(t));
+      const ticks: string[] = sameAsRoles ? [] : [...types];
+      if (b.roles.includes('sourcer')) ticks.push(SOURCE_TICK);
+      if (b.roles.includes('manager')) ticks.push(MANAGE_TICK);
+      if (b.roles.includes('exploring')) ticks.push(EXPLORING_TICK);
+      return ticks.length > 0 ? ticks : null;
     }
     case 'where':
       if (!g.where) return null;
@@ -1072,6 +1352,15 @@ export function currentValue(id: QuestionId, a: Answers): unknown {
       return b.risk;
     case 'cash_available':
       return g.buyer.cashAvailable;
+    case 'stage':
+      return stageOf(b);
+    case 'property':
+      return g.buyer.propertyType && g.bedrooms !== null ? { type: g.buyer.propertyType, bedrooms: String(g.bedrooms) } : null;
+    case 'short_let_rules': {
+      const { leaseholdOk, restrictedAreas } = g.buyer;
+      if (leaseholdOk === null && restrictedAreas === null) return null;
+      return leaseholdOk === 'no' || restrictedAreas === 'avoid' ? 'hide' : 'warn';
+    }
     case 'funding':
       return g.buyer.funding;
     case 'finance':
@@ -1132,13 +1421,26 @@ export function answerLabel(id: QuestionId, a: Answers): string | null {
   switch (q.kind) {
     case 'single': {
       const o = optionsOf(q, a).find((x) => x.value === String(v));
-      return o?.label ?? null;
+      if (!o) return null;
+      // Batch 30: a cash band worked out from an older budget says so.
+      return id === 'cash_available' && a.goals.buyer.cashFromBudget ? `${o.label} (worked out from your budget)` : o.label;
+    }
+    case 'property': {
+      const p = v as { type: string; bedrooms: string };
+      const type = optionsOf(q, a).find((x) => x.value === p.type)?.label ?? p.type;
+      return `${type}, ${p.bedrooms === '4' ? '4+' : p.bedrooms} bed`;
     }
     case 'multi': {
       const opts = optionsOf(q, a);
       const picked = v as string[];
-      // "All of them": every option that can be chosen (never one that is coming soon).
-      if (q.allOption && opts.filter((o) => o.value !== q.allOption && !o.soon).every((o) => picked.includes(o.value))) return opts.find((o) => o.value === q.allOption)?.label ?? null;
+      // "All of them": every option it covers that can be chosen (never one that is coming soon).
+      if (q.allOption) {
+        const covered = opts.filter((o) => o.value !== q.allOption && !o.soon && (!q.allCovers || q.allCovers.includes(o.value)));
+        if (covered.every((o) => picked.includes(o.value))) {
+          const rest = picked.filter((x) => !covered.some((o) => o.value === x)).map((x) => opts.find((o) => o.value === x)?.label).filter((x): x is string => Boolean(x));
+          return [opts.find((o) => o.value === q.allOption)?.label ?? 'All of them', ...rest].join(', ');
+        }
+      }
       const labels = picked.map((x) => opts.find((o) => o.value === x)?.label).filter((x): x is string => Boolean(x));
       return labels.length > 0 ? labels.join(', ') : null;
     }

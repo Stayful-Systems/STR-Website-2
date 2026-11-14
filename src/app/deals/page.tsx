@@ -124,7 +124,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   const [opened, reactions, baseViews, emailed] = await Promise.all([
     openedDealIds((await payerFor(user.id)).payerId, ids),
     reactionsFor(user.id, ids),
-    cardViewsFor({ supabase, userId: user.id, adminUser, cards: shownCards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), btl: btlLookerFor(goals, savedAreas, tailoring?.about ?? null) }),
+    cardViewsFor({ supabase, userId: user.id, adminUser, cards: shownCards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), btl: btlLookerFor(goals, savedAreas, tailoring?.about ?? null), tailoring }),
     emailedDealDates(user.id, ids),
   ]);
   const capped = "capped" in page && page.capped;

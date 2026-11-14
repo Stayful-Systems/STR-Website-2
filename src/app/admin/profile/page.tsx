@@ -4,7 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
 import { loadProfileStats } from "@/lib/admin/profile-server";
-import { pctLabel, type QuestionCount } from "@/lib/admin/profile";
+import { pctLabel, type CohortStats, type QuestionCount } from "@/lib/admin/profile";
 
 export const metadata: Metadata = { title: "Profile quiz — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -89,6 +89,41 @@ export default async function AdminProfilePage() {
             <Stat label="Incomplete: typical progress" value={load.stats.medianPercent === null ? "—" : `${Math.round(load.stats.medianPercent)}%`} sub={load.stats.averagePercent === null ? undefined : `average ${Math.round(load.stats.averagePercent)}%`} />
           </div>
           {load.truncated && <p className="mt-3 text-xs text-muted-foreground">More than 5,000 rows: the figures cover the first 5,000.</p>}
+
+          {/* Batch 30: the shorter quiz, before and after the day it went live. */}
+          <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Shorter quiz: before and after</h2>
+          {load.stats.shorter === null ? (
+            <p className="text-sm text-muted-foreground">The day the shorter quiz went live is not set (quiz_shorter_from, on /admin/lifecycle).</p>
+          ) : (
+            <div className="rounded-xl border border-border bg-card p-4">
+              <p className="mb-3 text-sm text-muted-foreground">Members who started before and from {new Date(load.stats.shorter.from).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}. Questions are counted on today’s list for everyone, so the difference is who has answered what, and who finished.</p>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="py-1 pr-3 font-medium"> </th>
+                    <th className="py-1 pr-3 font-medium">Before</th>
+                    <th className="py-1 font-medium">After</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(
+                    [
+                      ["Members started", (c: CohortStats) => String(c.started)],
+                      ["Average questions asked", (c: CohortStats) => (c.averageAsked === null ? "—" : c.averageAsked.toFixed(1))],
+                      ["Average answered", (c: CohortStats) => (c.averageAnswered === null ? "—" : c.averageAnswered.toFixed(1))],
+                      ["Completion rate", (c: CohortStats) => pctLabel(c.completionRate)],
+                    ] as [string, (c: CohortStats) => string][]
+                  ).map(([label, f]) => (
+                    <tr key={label} className="border-t border-border">
+                      <td className="py-1.5 pr-3 text-foreground">{label}</td>
+                      <td className="py-1.5 pr-3 tabular-nums text-foreground">{f(load.stats.shorter!.before)}</td>
+                      <td className="py-1.5 tabular-nums text-foreground">{f(load.stats.shorter!.after)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Where members stop</h2>
           <p className="mb-3 text-sm text-muted-foreground">The last question each member with an unfinished profile was on. The top row is where the quiz most often loses people.</p>
