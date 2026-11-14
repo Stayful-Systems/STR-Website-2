@@ -6,6 +6,8 @@ import { profileSummaryFor } from "@/lib/profile/server";
 import { eyeLevelFor } from "@/lib/home/eye-server";
 import { loadHomeFigures } from "@/lib/home/server";
 import { packHomeCardsFor } from "@/lib/credit/pack-home-server";
+import { blockerCardShown } from "@/lib/home/blocker-card-server";
+import { optionsOf, questionById } from "@/lib/profile/questions";
 import { londonParts } from "@/lib/sms/uk-time";
 import { HomeView } from "./_components/HomeView";
 
@@ -44,8 +46,12 @@ export default async function HomePage() {
     packHomeCardsFor(user.id, now),
   ]);
   const level = await eyeLevelFor(summary);
+  // Batch 30: "What's holding you back?", from day 3, after the starter pack's cards (it waits while one shows).
+  const showBlocker = await blockerCardShown(user.id, user.created_at ?? null, summary, Boolean(pack.offer || pack.picksBack), now);
+  const blockerQuestion = showBlocker && summary ? questionById("blocker") : null;
+  const blockerOptions = blockerQuestion && summary ? optionsOf(blockerQuestion, summary.answers).map((o) => ({ value: o.value, label: o.label })) : null;
   const fullName = (nameRow.data as { full_name?: string | null } | null)?.full_name?.trim() ?? "";
   const firstName = fullName ? fullName.split(/\s+/)[0] : null;
 
-  return <HomeView greeting={greeting(now, firstName)} level={level} figures={figures} pack={pack} />;
+  return <HomeView greeting={greeting(now, firstName)} level={level} figures={figures} pack={pack} blockerCard={blockerOptions} />;
 }

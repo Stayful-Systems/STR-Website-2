@@ -15,7 +15,7 @@ export interface WhatIfItem {
   /** The best deal it would find (for "Show me"). */
   bestHref: string | null;
   /** R3 (R2-67): the quiz question "Change my budget" opens (the project budget for a BRRR what-if). */
-  changeQuestionId?: "budget" | "brrr_budget" | null;
+  changeQuestionId?: "budget" | "brrr_budget" | "cash_available" | null;
 }
 
 /**
@@ -100,7 +100,7 @@ export function WhatIfSuggestions({ items, none, surface, tone = "dark", changeB
                 </button>
               ) : (
                 <Link href={`${changeBase}&q=${it.changeQuestionId ?? "budget"}`} className={btn}>
-                  Change my budget
+                  {it.changeQuestionId === "cash_available" ? "Change my Buying cash" : "Change my budget"}
                 </Link>
               )}
             </div>

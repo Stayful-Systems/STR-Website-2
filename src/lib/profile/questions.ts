@@ -796,8 +796,9 @@ export const RETIRED: Readonly<Partial<Record<QuestionId, true | 'editable'>>> =
   blocker: 'editable',
   finance: 'editable',
   entity: true,
-  property_type: true,
-  bedrooms: true,
+  // Still saved by id from chat and what-if ("3 bedrooms", "flats as well as houses"), so editable.
+  property_type: 'editable',
+  bedrooms: 'editable',
   leasehold: true,
   restricted_areas: true,
   r2r_min_profit: 'editable',

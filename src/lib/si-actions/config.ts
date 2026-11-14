@@ -48,12 +48,13 @@ export function isCriteriaQuestion(v: unknown): v is CriteriaQuestion {
 }
 
 /** The Batch 12 question each criteria change is saved through. */
-export const CRITERIA_SAVED_AS: Record<CriteriaQuestion, 'bedrooms' | 'budget' | 'max_rent' | 'min_profit' | 'r2r_min_profit' | 'property_type' | 'deal_types' | 'where'> = {
+export const CRITERIA_SAVED_AS: Record<CriteriaQuestion, 'bedrooms' | 'budget' | 'cash_available' | 'max_rent' | 'min_profit' | 'r2r_min_profit' | 'property_type' | 'deal_types' | 'where'> = {
   bedrooms: 'bedrooms',
   budget: 'budget',
   max_rent: 'max_rent',
   min_profit: 'min_profit',
-  r2r_min_profit: 'r2r_min_profit',
+  // Batch 30: one minimum profit for everyone, so the rent-to-rent figure saves through it.
+  r2r_min_profit: 'min_profit',
   property_type: 'property_type',
   add_deal_type: 'deal_types',
   remove_deal_type: 'deal_types',

@@ -46,7 +46,8 @@ import { BUDGET_CHOICES, BUDGET_LABELS } from '../market/filters';
 import { deepQuoteFor, runSearchSlice, searchStatusFor, startDeepSearch, type DeepQuoteView } from '../sourcing-demand/member-search';
 import { SEARCH_SLICE_MS } from '../intelligence/config';
 import { answerQuestion, matchCountFor, profileSummaryFor } from '../profile/server';
-import { applyAnswer, currentValue, questionsFor, type Answers } from '../profile/questions';
+import { applyAnswer, currentValue, questionById, questionsFor, type Answers } from '../profile/questions';
+import { cashBandFromBudget } from '../profile/buying-power';
 import { DEAL_TYPE_LABELS, typesShown } from '../profile/deal-types';
 import { activeProfileFor } from '../profiles/server';
 import { ACTIVITY_BY, CRITERIA_SAVED_AS, type CriteriaQuestion } from './config';
@@ -174,7 +175,7 @@ export async function restoreStage(m: ActingMember, instructionId: string, dealI
 // ── Profile changes ─────────────────────────────────────────────────────────
 
 export interface CriteriaPreview {
-  savedAs: 'bedrooms' | 'budget' | 'max_rent' | 'min_profit' | 'r2r_min_profit' | 'property_type' | 'deal_types' | 'where';
+  savedAs: 'bedrooms' | 'budget' | 'cash_available' | 'max_rent' | 'min_profit' | 'r2r_min_profit' | 'property_type' | 'deal_types' | 'where';
   value: unknown;
   before: unknown;
   label: string;
@@ -184,6 +185,18 @@ export interface CriteriaPreview {
 }
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
+
+/** Batch 30: the member answered Buying cash for real (a worked-out band from an old budget does not count). */
+function hasRealBuyingCash(s: { answers: Answers; quiz: { answered: Record<string, { notSure: boolean } | undefined> } }): boolean {
+  const m = s.quiz.answered.cash_available;
+  return Boolean(m) && !m!.notSure && s.answers.goals.buyer.cashAvailable !== null && !s.answers.goals.buyer.cashFromBudget;
+}
+
+/** "£30–60k" for a Buying cash band, from the question's own options. */
+function cashBandLabel(band: string): string {
+  const options = questionById('cash_available')?.options;
+  return (Array.isArray(options) ? (options as readonly { value: string; label: string }[]).find((o) => o.value === band)?.label : undefined) ?? band;
+}
 const asNumber = (v: string): number | null => {
   const s = v.trim().toLowerCase().replace(/[£,\s]/g, '').replace(/pcm|amonth|pm$/g, '');
   const m = /^(\d+(?:\.\d+)?)(k)?$/.exec(s);
@@ -193,7 +206,7 @@ const asNumber = (v: string): number | null => {
 };
 
 /** The new value a change makes from the member's answers, with its words; or why it can't. */
-function nextValue(q: CriteriaQuestion, raw: string, a: Answers): { value: unknown; label: string } | { reason: 'bad_value' | 'already_there' | 'not_areas_mode' } {
+function nextValue(q: CriteriaQuestion, raw: string, a: Answers, cash: boolean): { value: unknown; label: string } | { reason: 'bad_value' | 'already_there' | 'not_areas_mode'; message?: string } {
   switch (q) {
     case 'bedrooms': {
       const n = asNumber(raw.replace(/\+|beds?|bedrooms?/gi, ''));
@@ -203,9 +216,18 @@ function nextValue(q: CriteriaQuestion, raw: string, a: Answers): { value: unkno
     case 'budget': {
       const v = raw.trim();
       if (!(BUDGET_CHOICES as readonly string[]).includes(v)) return { reason: 'bad_value' };
+      // Batch 30: a member who answered Buying cash changes that, not the budget it worked out (the band a budget of this size needs).
+      if (cash) {
+        const band = cashBandFromBudget(v as Exclude<keyof typeof BUDGET_LABELS, 'any' | 'u200'>);
+        if (!band) return { reason: 'bad_value' };
+        if (band === a.goals.buyer.cashAvailable) return { reason: 'already_there' };
+        return { value: band, label: `Buying cash: ${cashBandLabel(band)}` };
+      }
       return { value: v, label: `Budget: ${BUDGET_LABELS[v as keyof typeof BUDGET_LABELS]}` };
     }
     case 'max_rent': {
+      // Batch 30: R2R setup cash replaced the rent ceiling; only a member who has one stored can change it.
+      if (a.goals.maxRentPcm === null) return { reason: 'bad_value', message: 'You haven’t set a maximum rent.' };
       const n = asNumber(raw);
       if (n === null) return { reason: 'bad_value' };
       return { value: Math.round(n), label: `Most rent: ${gbp(n)} a month` };
@@ -252,9 +274,11 @@ function nextValue(q: CriteriaQuestion, raw: string, a: Answers): { value: unkno
 export async function previewCriteria(m: ActingMember, q: CriteriaQuestion, raw: string): Promise<CriteriaPreview | { reason: 'bad_value' | 'already_there' | 'not_areas_mode' | 'failed'; message?: string }> {
   const s = await profileSummaryFor(m.userId);
   if (!s) return { reason: 'failed' };
-  const savedAs = CRITERIA_SAVED_AS[q];
-  if (!questionsFor(s.answers).some((x) => x.id === savedAs)) return { reason: 'bad_value', message: 'Your profile doesn’t ask that.' };
-  const next = nextValue(q, raw, s.answers);
+  const cash = q === 'budget' && hasRealBuyingCash(s);
+  const savedAs: CriteriaPreview['savedAs'] = cash ? 'cash_available' : CRITERIA_SAVED_AS[q];
+  // A question that is no longer asked but still saves (the maximum rent, bedrooms, property type) is allowed.
+  if (!questionsFor(s.answers).some((x) => x.id === savedAs) && questionById(savedAs)?.retired !== 'editable') return { reason: 'bad_value', message: 'Your profile doesn’t ask that.' };
+  const next = nextValue(q, raw, s.answers, cash);
   if ('reason' in next) return next;
   const applied = applyAnswer(savedAs, next.value, s.answers);
   if (!applied.ok) return { reason: 'bad_value', message: applied.error };
@@ -263,7 +287,9 @@ export async function previewCriteria(m: ActingMember, q: CriteriaQuestion, raw:
     matchCountFor({ userId: m.userId, email: m.email, answers: applied.answers, answered: s.quiz.answered }).catch(() => null),
     activeProfileFor(m.userId).catch(() => null),
   ]);
-  return { savedAs, value: next.value, before: currentValue(savedAs, s.answers), label: next.label, countBefore, countAfter, profileId: active?.id ?? null };
+  // The rent-to-rent minimum saves through the one minimum profit, but its own figure is what Undo goes back to.
+  const before = q === 'r2r_min_profit' ? (s.answers.goals.r2r.minMarginPcm ?? currentValue(savedAs, s.answers)) : currentValue(savedAs, s.answers);
+  return { savedAs, value: next.value, before, label: next.label, countBefore, countAfter, profileId: active?.id ?? null };
 }
 
 /** Saves a change through the profile editor's own save; the count after is the one it worked out. */

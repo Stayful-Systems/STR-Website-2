@@ -80,9 +80,9 @@ export const CRITERIA: Record<CriterionKey, CriterionSpec> = {
   work: { label: 'How much work', kinds: ['sale'], defaultMode: 'must', questions: ['brrr_work'] },
   rent: { label: 'Rent', kinds: ['rent'], defaultMode: 'must', questions: ['max_rent'] },
   profit: { label: 'Minimum profit', kinds: ['sale', 'rent'], defaultMode: 'must', questions: ['min_profit', 'r2r_min_profit'] },
-  bedrooms: { label: 'Bedrooms', kinds: ['sale', 'rent'], defaultMode: 'nice', questions: ['bedrooms'] },
+  bedrooms: { label: 'Bedrooms', kinds: ['sale', 'rent'], defaultMode: 'nice', questions: ['property', 'bedrooms'] },
   type: { label: 'Flat or house', kinds: ['sale'], defaultMode: 'nice', questions: ['property_type'] },
-  leasehold: { label: 'No leasehold', kinds: ['sale'], defaultMode: 'nice', questions: ['leasehold'] },
+  leasehold: { label: 'No leasehold', kinds: ['sale'], defaultMode: 'nice', questions: ['short_let_rules', 'leasehold'] },
   restricted: { label: 'No short-let restrictions', kinds: ['sale'], defaultMode: 'nice', questions: ['restricted_areas'] },
   // Batch 30: R2R setup cash is a must-have for new members; the backfill keeps it a nice-to-have for those who answered the old question.
   setup: { label: 'Setup budget', kinds: ['rent'], defaultMode: 'must', questions: ['setup_budget'] },

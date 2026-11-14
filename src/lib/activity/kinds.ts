@@ -43,6 +43,8 @@ export const ACTIVITY_KINDS = {
   // Batch 22e: a Home tile or "This week" item tapped. Record only: the page it opens logs its own view.
   home_tile_tap: recordOnly('Tapped a Home tile'),
   home_feed_tap: recordOnly('Tapped a "This week" item on Home'),
+  // Batch 30: "Not now" on Home's "What's holding you back?" card. Record only: it never counts towards weekly active.
+  home_blocker_dismissed: recordOnly('Closed the "What’s holding you back?" card on Home'),
 
   // Deals
   keep: inApp('Kept a deal'),
