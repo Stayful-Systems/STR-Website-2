@@ -7,7 +7,8 @@ import { loadProfileMetrics, loadResetMetrics } from "@/lib/profiles/admin-serve
 import { weekLabel } from "@/lib/activity/week";
 import { pct } from "@/lib/activity/metrics";
 import { runDealTypesBackfill, type BackfillLine } from "@/lib/profile/deal-types-backfill-run";
-import { runDealTypesBackfillAction } from "./actions";
+import { runQuizV2Backfill, type QuizV2Line } from "@/lib/profile/quiz-v2-backfill-run";
+import { runDealTypesBackfillAction, runQuizV2BackfillAction } from "./actions";
 
 export const metadata: Metadata = { title: "Saved profiles — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -37,6 +38,8 @@ export default async function AdminProfilesPage({ searchParams }: { searchParams
   const one = (k: string) => (Array.isArray(params[k]) ? params[k][0] : params[k]) ?? null;
   // Batch 17: the deal-types backfill's dry run is a read, made here when asked for.
   const dealTypesDry = one("dealTypes") === "dry" ? await runDealTypesBackfill({ dry: true, triggeredBy: user.email ?? "admin" }) : null;
+  // Batch 30: the shorter-quiz backfill's dry run, read when asked for.
+  const quizV2Dry = one("quizV2") === "dry" ? await runQuizV2Backfill({ dry: true, triggeredBy: user.email ?? "admin" }) : null;
   const [{ status, message, metrics }, resets] = await Promise.all([loadProfileMetrics(), loadResetMetrics()]);
   return (
     <main className="min-h-screen bg-background">
@@ -132,9 +135,81 @@ export default async function AdminProfilesPage({ searchParams }: { searchParams
           )}
         </section>
 
+        <QuizV2Backfill dry={quizV2Dry} done={one("quizV2")} written={one("written")} left={one("left")} already={one("already")} outOfTime={one("outOfTime") === "1"} />
+
         <DealTypesBackfill dry={dealTypesDry} done={one("dealTypes")} written={one("written")} left={one("left")} already={one("already")} outOfTime={one("outOfTime") === "1"} />
       </div>
     </main>
+  );
+}
+
+/**
+ * Batch 30: moving existing profiles onto the shorter quiz. The dry run lists
+ * every profile that would change (short ids and option keys, never a name,
+ * email or address); Run writes them. A second run changes nothing.
+ */
+function QuizV2Backfill({ dry, done, written, left, already, outOfTime }: { dry: { status: number; body: Record<string, unknown> } | null; done: string | null; written: string | null; left: string | null; already: string | null; outOfTime: boolean }) {
+  const body = dry?.body as { toMap?: number; alreadyMoved?: number; noGoals?: number; profiles?: number; filterModesReadable?: boolean; lines?: QuizV2Line[]; error?: string } | undefined;
+  const changes = (body?.lines ?? []).filter((l) => l.status === "map");
+  return (
+    <section id="quiz-v2" className="rounded-xl border border-border bg-card p-5">
+      <h2 className="text-base font-semibold text-foreground">Shorter quiz: move existing profiles (Batch 30)</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Keeps what existing members already told us working under the shorter quiz: an old rent-to-rent setup answer moves onto the new bands and stays a nice-to-have (as it was), a buyer with a budget but no Buying cash gets the band that budget points to (shown as “worked out from your budget”, never a filter), and a mortgage rate a member chose is kept as theirs. Run it before 7am UK. Press Dry run first: it changes nothing. Running twice is safe: the second run writes 0.
+      </p>
+      {done === "done" && (
+        <p role="status" className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
+          Written: {written ?? "0"} · left for the next run: {left ?? "0"} · already moved: {already ?? "0"}{outOfTime ? " · ran out of time: press Run again" : ""}.
+        </p>
+      )}
+      {done === "failed" && <p role="alert" className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">The run could not read the profiles. Nothing was written.</p>}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Link href="/admin/profiles?quizV2=dry#quiz-v2" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry run</Link>
+        <form action={runQuizV2BackfillAction}>
+          <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run</button>
+        </form>
+      </div>
+      {dry && dry.status !== 200 && <p role="alert" className="mt-3 text-sm text-destructive">{body?.error ?? "The dry run failed."}</p>}
+      {dry && dry.status === 200 && body && (
+        <div className="mt-4 overflow-x-auto">
+          <p className="text-sm text-foreground">
+            {body.profiles ?? 0} profiles: {body.toMap ?? 0} to move, {body.alreadyMoved ?? 0} already fine, {body.noGoals ?? 0} with no answers.
+          </p>
+          {body.filterModesReadable === false && <p className="mt-1 text-xs text-destructive">The must-have switches can’t be read, so an old setup answer would not be kept as a nice-to-have. Don’t run it until that is fixed.</p>}
+          {changes.length === 0 ? (
+            <p className="mt-3 text-sm text-muted-foreground">Nothing to move.</p>
+          ) : (
+            <table className="mt-3 w-full text-xs">
+              <thead>
+                <tr className="text-left uppercase tracking-wide text-muted-foreground">
+                  <th className="py-1 pr-2 font-medium">Member</th>
+                  <th className="py-1 pr-2 font-medium">Profile</th>
+                  <th className="py-1 pr-2 font-medium">Before</th>
+                  <th className="py-1 font-medium">After</th>
+                </tr>
+              </thead>
+              <tbody>
+                {changes.map((l) => (
+                  <tr key={`${l.member}-${l.profile ?? "own"}`} className="border-t border-border align-top">
+                    <td className="py-1.5 pr-2 font-mono text-foreground">{l.member}</td>
+                    <td className="py-1.5 pr-2 text-foreground">
+                      {/* Never the profile's name: a client profile's name can identify the client. */}
+                      {l.profile ? <span className="font-mono">{l.profile}</span> : "(no profile rows)"} {l.active && <span className="text-muted-foreground">· active</span>}
+                    </td>
+                    <td className="py-1.5 pr-2 text-muted-foreground">
+                      {l.before ? `setup ${l.before.setup ?? "—"} · budget ${l.before.budget ?? "—"} · project budget ${l.before.brrrBudget ?? "—"} · cash ${l.before.cash ?? "—"} · rate ${l.before.rate}%${l.before.rateSet ? " (own)" : ""} · setup switch ${l.before.setupMode ?? "—"}` : "—"}
+                    </td>
+                    <td className="py-1.5 text-foreground">
+                      {l.after ? `setup ${l.after.setup ?? "—"}${l.after.setupMode ? ` (${l.after.setupMode})` : ""} · cash ${l.after.cash ?? "—"}${l.after.cashFromBudget ? " (worked out)" : ""}${l.after.rateSet ? " · rate kept as theirs" : ""}` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
