@@ -67,7 +67,7 @@ TypeScript list and the SQL list are the same.
 8. Existing pack buyers are restricted, with expiry 30 days from release. There are none live today (0 purchases).
 9. The wording is as built (first person, plain English).
 10. Meta: a pack buyer's first plan invoice sends Subscribe and RepeatPurchase; top-ups by members who joined before the pack send nothing.
-11. Worst case is £3.45 including calls and picks, against the £2.50 target; £2.51 on reports alone. Accept as is?
+11. Worst case is £3.45 including calls and picks, against the £2.50 target; £2.51 on reports alone. **Decided (Zac, 14 Nov): accepted.**
 12. First-week checklist and profile-complete rewards are welcome-kind but not pack bonus, so they stay unrestricted.
 13. The brief's £2.50 / £3.50 are £2.00 / £3.00 live. No price change was made.
 14. The cap line says a saved report "still opens with your bonus credit", not "free" (a saved analysis costs the normal Full analysis price, from the bonus).
