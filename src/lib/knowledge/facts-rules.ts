@@ -4,7 +4,7 @@
  * A fact is saved only after the member said yes to "Want me to remember
  * that?" (the caller passes confirmed: true and the question asked). Never
  * kept: health, protected characteristics, money beyond what the profile
- * already holds (budget, cash, deposit, mortgage), anything about other
+ * already holds (Buying cash, setup cash, minimum profit, deposit, mortgage rate), anything about other
  * people, or contact and card details. The agent and the chat are told never
  * to ask to remember those; these rules are the backstop.
  *
