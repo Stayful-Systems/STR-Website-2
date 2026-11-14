@@ -45,6 +45,7 @@ const BASIS: Record<string, string> = { range: "low end", after_works: "after wo
 const SETTING_FIELDS: { key: keyof StandoutSettings; label: string }[] = [
   { key: "minMatchPct", label: "Minimum match %" },
   { key: "minChecked", label: "Minimum answers checked" },
+  { key: "minCheckedRent", label: "Minimum answers checked, rent-to-rent" },
   { key: "profitOverMinPct", label: "Profit above the member's minimum, %" },
   { key: "liveConfirmHours", label: "Confirmed live within, hours" },
   { key: "callsPerMonth", label: "Deal calls a member, per calendar month" },
@@ -99,7 +100,7 @@ export default async function StandoutAdminPage({ searchParams }: { searchParams
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Standout deals</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Saving is {standoutEnabled() ? "ON" : "OFF (set STANDOUT_ENABLED=true)"} · deal calls are {dealCallsEnabled() ? "ON" : "OFF (set STANDOUT_CALLS_ENABLED=true; Batch 23's SI_CALLS_ENABLED too)"}. A deal is standout for a member when, on their primary profile and for a deal type it shows, it misses no must-have, checks at least {s.minChecked} answers at {s.minMatchPct}% or better (and at least their signup reveal&rsquo;s best), and the low end of its profit is {s.profitOverMinPct}% or more above their minimum. At most {s.maxPerDay || "any number of"} a day, beating what they already had in the last {s.beatBestDays} days; {s.callsPerMonth} calls a calendar month.
+            Saving is {standoutEnabled() ? "ON" : "OFF (set STANDOUT_ENABLED=true)"} · deal calls are {dealCallsEnabled() ? "ON" : "OFF (set STANDOUT_CALLS_ENABLED=true; Batch 23's SI_CALLS_ENABLED too)"}. A deal is standout for a member when, on their primary profile and for a deal type it shows, it misses no must-have, checks at least {s.minChecked} answers ({s.minCheckedRent} for rent-to-rent) at {s.minMatchPct}% or better (and at least their signup reveal&rsquo;s best), and the low end of its profit is {s.profitOverMinPct}% or more above their minimum. At most {s.maxPerDay || "any number of"} a day, beating what they already had in the last {s.beatBestDays} days; {s.callsPerMonth} calls a calendar month.
           </p>
         </div>
         <Link href="/admin" className="text-sm font-medium text-primary hover:underline">← Dashboard</Link>

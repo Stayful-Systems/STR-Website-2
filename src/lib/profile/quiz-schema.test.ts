@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { ACCESS_COLUMNS } from '../access.ts';
 import { DEFAULT_LIFECYCLE, LIFECYCLE_KEYS, parseLifecycle } from '../lifecycle/settings.ts';
 import { parseLifecycleForm } from '../lifecycle/admin-form.ts';
+import { DEFAULT_STANDOUT } from '../standout/settings.ts';
 
 /**
  * The Batch 30 section of supabase/schema.sql, held to the rules every
@@ -50,6 +51,8 @@ test('the settings the section seeds match the code defaults', () => {
   const s = parseLifecycle(get);
   assert.equal(s.homeBlockerCardDay, 0, '0 is allowed (a test shows the card from the first visit)');
   assert.equal(s.quizShorterFrom, '2026-11-14T10:00:00.123Z');
+  assert.match(section, /\('standout_min_checked_rent', '3'::jsonb\)/, 'the standout rent-to-rent minimum is seeded');
+  assert.equal(DEFAULT_STANDOUT.minCheckedRent, 3);
   assert.equal(parseLifecycle(() => 'junk').homeBlockerCardDay, 3);
   assert.equal(parseLifecycle(() => 'junk').quizShorterFrom, null);
 });

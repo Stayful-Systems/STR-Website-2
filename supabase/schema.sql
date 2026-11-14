@@ -8531,12 +8531,15 @@ notify pgrst, 'reload schema';
 --   home_blocker_card_day   the Home card shows from this day since sign-up (default 3; 0 to test)
 --   quiz_shorter_from       when the shorter quiz went live: the first run's date, never moved by a later run
 --                           (/admin/profile compares members before and after it)
+--   standout_min_checked_rent  the standout rule's minimum checked answers for a rent-to-rent deal (3): the shorter
+--                           quiz leaves a new rent-to-rent member at most four checks; standout_min_checked (5) stays for sales
 
 alter table public.profile_quiz add column if not exists blocker_card_dismissed_at timestamptz;
 
 insert into public.billing_settings (key, value) values
   ('home_blocker_card_day', '3'::jsonb),
-  ('quiz_shorter_from', to_jsonb(now()))
+  ('quiz_shorter_from', to_jsonb(now())),
+  ('standout_min_checked_rent', '3'::jsonb)
 on conflict (key) do nothing;
 
 -- Once a day (market-warm, after the rates are bought) the live average is written into the finance of every

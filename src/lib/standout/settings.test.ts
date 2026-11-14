@@ -11,6 +11,7 @@ test('no rows: every default', () => {
 test('the defaults are the decided numbers', () => {
   assert.equal(DEFAULT_STANDOUT.minMatchPct, 90);
   assert.equal(DEFAULT_STANDOUT.minChecked, 5);
+  assert.equal(DEFAULT_STANDOUT.minCheckedRent, 3, 'Batch 30: a lower bar for rent-to-rent');
   assert.equal(DEFAULT_STANDOUT.profitOverMinPct, 25);
   assert.equal(DEFAULT_STANDOUT.liveConfirmHours, 6);
   assert.equal(DEFAULT_STANDOUT.callsPerMonth, 2);
@@ -31,6 +32,8 @@ test('a bad or out-of-range row takes its default', () => {
   const s = parseStandout(from({ [STANDOUT_KEYS.minMatchPct]: 150, [STANDOUT_KEYS.minChecked]: 2.5, [STANDOUT_KEYS.callsPerMonth]: 'lots', [STANDOUT_KEYS.liveConfirmHours]: 0 }));
   assert.equal(s.minMatchPct, DEFAULT_STANDOUT.minMatchPct);
   assert.equal(s.minChecked, DEFAULT_STANDOUT.minChecked);
+  assert.equal(parseStandout(from({ [STANDOUT_KEYS.minCheckedRent]: 0 })).minCheckedRent, DEFAULT_STANDOUT.minCheckedRent, 'out of bounds falls back');
+  assert.equal(parseStandout(from({ [STANDOUT_KEYS.minCheckedRent]: 4 })).minCheckedRent, 4);
   assert.equal(s.callsPerMonth, DEFAULT_STANDOUT.callsPerMonth);
   assert.equal(s.liveConfirmHours, DEFAULT_STANDOUT.liveConfirmHours);
 });
