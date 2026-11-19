@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSpend, describeSteps, laterCheck, spendLine, splitAtCap, type PricedStep, type SpendInput } from './spend.ts';
+import { analysisBonusBasePence, decideSpend, describeSteps, laterCheck, spendLine, splitAtCap, stepLedgerAction, type PricedStep, type SpendInput } from './spend.ts';
 
 const analysis = (index: number, face = 400, o: Partial<PricedStep> = {}): PricedStep => ({ index, kind: 'full_analysis', basePence: face, facePence: face, opensDeal: false, ...o });
 
@@ -80,4 +80,35 @@ test('the spend line', () => {
   assert.equal(spendLine([{ index: 0, kind: 'deep_search', basePence: 750, facePence: 750, opensDeal: false, aboutFacePence: 420 }]), 'Running a deep search — about £4.20, up to £7.50');
   assert.equal(spendLine([{ index: 0, kind: 'check_link', basePence: 3, facePence: 3, opensDeal: false }]), 'Checking the listing — 3p');
   assert.equal(describeSteps([{ kind: 'full_analysis' }, { kind: 'deep_report' }, { kind: 'full_analysis' }]), '2 full analyses and a Deep report');
+});
+
+// Review R4 (R4-06, Zac 19 Nov 2026): a pack buyer (£10 paid, £20 bonus) who has spent £8 asks for a deep search.
+// credit_spendable_for gives 2200 for an open (bonus counts) and 200 for anything else.
+test('the scoped figure: a deep search the bonus can’t pay for is not enough credit, up front (no countdown)', () => {
+  const search: PricedStep = { index: 0, kind: 'deep_search', basePence: 750, facePence: 750, opensDeal: false, aboutFacePence: 420 };
+  const d = decideSpend(input({ steps: [search], spendableBasePence: 2200, spendableOtherBasePence: 200, balanceFacePence: 200 }));
+  assert.deepEqual(d, { kind: 'insufficient', requiredBasePence: 750, availableBasePence: 200, requiredFacePence: 750 });
+});
+
+test('the scoped figure: the part the bonus may pay for (the open) counts it, the rest does not', () => {
+  // A fresh analysis of an unopened deal: a 60p open (bonus may pay) and a £4 analysis (it may not).
+  const fresh = analysis(0, 460, { opensDeal: true, bonusBasePence: 60 });
+  assert.equal(decideSpend(input({ steps: [fresh], spendableBasePence: 2200, spendableOtherBasePence: 300, balanceFacePence: 300 })).kind, 'insufficient');
+  const ok = decideSpend(input({ steps: [fresh], spendableBasePence: 2200, spendableOtherBasePence: 400, balanceFacePence: 1000 }));
+  assert.equal(ok.kind, 'run');
+  // A saved analysis (no PMI) is all bonus-payable: the bonus alone covers it.
+  const saved = analysis(0, 460, { opensDeal: true, bonusBasePence: 460 });
+  assert.equal(decideSpend(input({ steps: [saved], spendableBasePence: 2200, spendableOtherBasePence: 0, balanceFacePence: 2200 })).kind, 'run');
+  assert.deepEqual(laterCheck({ steps: [fresh], spendableBasePence: 2200, spendableOtherBasePence: 100, balanceFacePence: 2200 }), { ok: false, requiredBasePence: 460, availableBasePence: 160 });
+});
+
+test('each step is judged on its own code’s ledger action; the bonus pays the open and a saved analysis only', () => {
+  assert.equal(stepLedgerAction('deep_search'), 'deep_search');
+  assert.equal(stepLedgerAction('check_link'), 'quick_view');
+  assert.equal(stepLedgerAction('deep_report', { addOn: true }), 'pmi_addon');
+  assert.equal(stepLedgerAction('btl_report'), 'btl_report');
+  const due = { openBasePence: 60, analysisBasePence: 400, pmiBasePence: 0 };
+  assert.equal(analysisBonusBasePence(due, false), 60);
+  assert.equal(analysisBonusBasePence(due, true), 460);
+  assert.equal(analysisBonusBasePence({ ...due, pmiBasePence: 300 }, true), 60);
 });

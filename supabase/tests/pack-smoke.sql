@@ -250,4 +250,39 @@ begin
   raise notice 'pack paying facts ok';
 end $$;
 
+-- ── Review R4 (R4-06): what Stayful Intelligence's pre-checks now mirror. A pack-only member who has spent nearly
+-- all of the £10 they paid still shows £20 in credit_available, but the chat's hold (si_chat_full) and a deep search
+-- are judged on credit_spendable_for, which leaves the bonus out: refused. An open still may use the bonus. ──
+do $$
+declare
+  m uuid := gen_random_uuid();
+  rate numeric := credit_spend_rate('topup');
+  avail numeric;
+begin
+  insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
+  values (m, 'pack-smoke-si@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now());
+  insert into profiles (id, email) values (m, 'pack-smoke-si@example.test') on conflict (id) do nothing;
+  insert into starter_pack_purchases (payment_intent_id, user_id, status, price_pence, credit_pence, granted_at)
+  values ('pi_smoke_pack_si', m, 'granted', 1000, 3000, now());
+  perform credit_grant(m, 'topup', 1000, null, 'pi:pi_smoke_pack_si', 'Starter pack');
+  perform credit_grant_pack_bonus(jsonb_build_object('user', m, 'amount', 2000, 'source_ref', 'pack_bonus:pi_smoke_pack_si'));
+  -- £9.90 of the paid £10 spent: 10p of paid credit left, the £20 bonus untouched.
+  update credit_grants set remaining_pence = 10 where user_id = m and source_ref = 'pi:pi_smoke_pack_si';
+  select spendable_base_pence into avail from credit_available(m);
+  if avail < 25 then raise exception 'credit_available should still show the bonus as spendable: %', avail; end if;
+  if abs(credit_spendable_for(m, 'si_chat_full') - 10 / rate) > 0.01 then raise exception 'the chat may only see the paid credit: %', credit_spendable_for(m, 'si_chat_full'); end if;
+  begin
+    perform credit_reserve(m, 'si_chat_full', gen_random_uuid(), 25);
+    raise exception 'a full-view question hold should be refused: the bonus cannot pay for chat';
+  exception when sqlstate 'P0402' then null; end;
+  begin
+    perform credit_reserve(m, 'deep_search', gen_random_uuid(), 750);
+    raise exception 'a deep search hold should be refused: the bonus cannot pay for it';
+  exception when sqlstate 'P0402' then null; end;
+  -- The figure Stayful Intelligence uses for the whole (an action the bonus pays for) still counts it.
+  if credit_spendable_for(m, 'deal_open') < 2000 then raise exception 'an open may use the bonus: %', credit_spendable_for(m, 'deal_open'); end if;
+  perform credit_release(credit_reserve(m, 'deal_open', gen_random_uuid(), 60));
+  raise notice 'si pre-check scope ok';
+end $$;
+
 rollback;

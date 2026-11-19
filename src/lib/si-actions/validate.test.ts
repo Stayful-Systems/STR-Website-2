@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { areaCodes, checkPlan, dealTypeOf, memberAskedToRemove, type PlanContext, type PlanDeal, type ProposedStep } from './validate.ts';
+import { areaCodes, checkPlan, dealTypeOf, memberAskedToRemove, TYPE_WORDS, type PlanContext, type PlanDeal, type ProposedStep } from './validate.ts';
+import { CHAT_TOOLS } from '../chat/tools.ts';
+import { savedOnInputs } from '../analysis/reuse.ts';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -202,4 +204,41 @@ test('a pack-only member: no Deep report, and fresh analyses only up to what is 
 test('anyone else is not limited', () => {
   const r = checkPlan([step({ action: 'full_analysis', dealId: A }), step({ action: 'deep_report', dealId: B })], ctx());
   assert.equal(r.dropped.length, 0);
+});
+
+// Review R4 (R4-08): the criteria tool tells the model every deal type a member can add or remove, buy-to-let included.
+test('change_criteria tool text names every TYPE_WORDS type', () => {
+  const tool = CHAT_TOOLS.find((t) => t.name === 'propose_actions')!;
+  const value = ((tool.input_schema as { properties: { steps: { items: { properties: { value: { description?: string; anyOf?: { description?: string }[] } } } } } }).properties.steps.items.properties.value);
+  const text = JSON.stringify(value).toLowerCase();
+  for (const [type, words] of Object.entries(TYPE_WORDS)) assert.ok(words.some((w) => text.includes(w)), `the tool text never names ${type}`);
+  // Retired Batch 30 fields are gone from it; the price ceiling, Buying cash and setup cash are there.
+  assert.doesNotMatch(text, /max_rent/);
+  assert.match(text, /price ceiling/);
+  assert.match(text, /cash_available/);
+  assert.match(text, /setup_budget/);
+  assert.match(text, /btl_priority/);
+});
+
+// Review R4 (R4-09): "saved" for the planner is the purchase's own test, the same deal on the same inputs.
+test('a deal analysed on different listing inputs is fresh: with one fresh report left, two analyses drop one (pack_cap)', () => {
+  const now = new Date('2026-11-19T12:00:00Z');
+  const good = { shortLet: { annualRevenue: 30000 } } as never;
+  // Deal A was analysed when the listing said 2 bedrooms; it has since been corrected to 3. Deal C was analysed on today's inputs.
+  const rows = [
+    { deal_id: A, input_key: 'v1|LS6 1AA|2|4|1|flat|0|false|sale', analysed_at: '2026-11-18T12:00:00Z', result: { result: good } },
+    { deal_id: C, input_key: 'v1|LS6 2BB|2|4|1|flat|0|false|sale', analysed_at: '2026-11-18T12:00:00Z', result: { result: good } },
+  ];
+  const keys = new Map([[A, 'v1|LS6 1AA|3|6|1|flat|0|false|sale'], [B, 'v1|LS6 3CC|2|4|1|flat|0|false|sale'], [C, 'v1|LS6 2BB|2|4|1|flat|0|false|sale']]);
+  const saved = savedOnInputs(rows, keys, 30, now);
+  assert.equal(saved.has(A), false, 'the deal-only badge would say Report ready; the purchase would run it fresh');
+  assert.equal(saved.has(C), true);
+  const deals = new Map([
+    [A, deal(A, { saved: saved.has(A) })],
+    [B, deal(B, { opened: true, saved: saved.has(B) })],
+    [C, deal(C, { saved: saved.has(C) })],
+  ]);
+  const r = checkPlan([step({ action: 'full_analysis', dealId: A }), step({ action: 'full_analysis', dealId: B }), step({ action: 'full_analysis', dealId: C })], ctx({ deals, pack: { packOnly: true, freshLeft: 1 } }));
+  assert.deepEqual(r.steps.map((x) => 'dealId' in x && x.dealId), [A, C]);
+  assert.deepEqual(r.dropped.map((d) => d.reason), ['pack_cap']);
 });

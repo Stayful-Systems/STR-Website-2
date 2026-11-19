@@ -42,17 +42,18 @@ import type { QuickEstimate } from '../listing/quick-types';
 import type { PipelineStatus } from '../listing/pipeline';
 import { getMarketAccess } from '../market/gate';
 import { parseMarketGoals } from '../market/goals';
-import { BUDGET_CHOICES, BUDGET_LABELS } from '../market/filters';
 import { deepQuoteFor, runSearchSlice, searchStatusFor, startDeepSearch, type DeepQuoteView } from '../sourcing-demand/member-search';
 import { SEARCH_SLICE_MS } from '../intelligence/config';
 import { answerQuestion, matchCountFor, profileSummaryFor } from '../profile/server';
-import { applyAnswer, currentValue, questionById, questionsFor, type Answers } from '../profile/questions';
-import { minimumWrite } from './undo';
-import { cashBandFromBudget } from '../profile/buying-power';
-import { DEAL_TYPE_LABELS, typesShown } from '../profile/deal-types';
+import { applyAnswer, currentValue, questionById, questionsFor } from '../profile/questions';
+import { budgetRestoreOf, cashRestoreOf, minimumWrite } from './undo';
 import { activeProfileFor } from '../profiles/server';
-import { ACTIVITY_BY, CRITERIA_SAVED_AS, type CriteriaQuestion } from './config';
-import { areaCodes, dealTypeOf } from './validate';
+import { ACTIVITY_BY, CRITERIA_SAVED_AS, type CriteriaQuestion, type CriteriaSavedAs } from './config';
+import { nextValue } from './steps';
+import { analysisBonusBasePence } from './spend';
+import { dealListingFor } from '../marketplace/open';
+import { dealAnalysisInput, dealListingPrice } from '../analysis/deal-input';
+import { savedOnInputs } from '../analysis/reuse';
 import type { StageState } from './undo';
 
 export type Admin = ReturnType<typeof createAdminClient>;
@@ -79,7 +80,7 @@ export function byEye(instructionId: string, more: Record<string, string | numbe
  * Deep report), less what the team paid to open it, plus the open at its
  * ladder price when it isn't open yet. Null when the deal can't be read.
  */
-export async function quoteAnalysis(m: ActingMember, dealId: string, withPmi: boolean): Promise<{ basePence: number; opensDeal: boolean } | null> {
+export async function quoteAnalysis(m: ActingMember, dealId: string, withPmi: boolean, saved = false): Promise<{ basePence: number; opensDeal: boolean; bonusBasePence: number } | null> {
   const admin = createAdminClient();
   const deal = await loadDealById(admin, dealId);
   if (!deal) return null;
@@ -88,7 +89,46 @@ export async function quoteAnalysis(m: ActingMember, dealId: string, withPmi: bo
   const pricing = offered && offered.offer ? { ...settings.dealPricing, fullAnalysisPence: offered.fullPence, pmiAddonPence: offered.pmiPence } : settings.dealPricing;
   const ladder = openPricePence(await openBasisOf(admin, deal), settings.dealOpenLadder);
   const quote = analysisQuote({ admin: m.admin, pricing, opened: isOpen, openPaidBasePence: isOpen ? openCreditBase(open) : 0, openPricePence: ladder, withPmi });
-  return { basePence: quote.due.purchaseBasePence, opensDeal: !quote.opened };
+  // Review R4 (R4-06): the part a starter pack's restricted bonus may pay for (the open; a saved analysis with no PMI).
+  return { basePence: quote.due.purchaseBasePence, opensDeal: !quote.opened, bonusBasePence: analysisBonusBasePence(quote.due, saved) };
+}
+
+/**
+ * Review R4 (R4-09): the deals (of these few) a Full analysis would reuse a saved analysis for, judged as
+ * startDealAnalysis judges it: the same deal on the same inputs (the listing's own facts, deal-input.ts
+ * inputKeyFor), young enough to reuse. The card badge reads by deal only (saved-server.ts reportReadyDealIds);
+ * the planner, which promises what the pack's fresh-report cap allows, reads by the exact inputs. Empty when
+ * unreadable: every deal is then treated as fresh, the stricter reading.
+ */
+export async function savedOnOwnInputs(dealIds: readonly string[], now: Date = new Date()): Promise<Set<string>> {
+  const ids = [...new Set(dealIds.filter(Boolean))];
+  if (ids.length === 0) return new Set();
+  try {
+    const admin = createAdminClient();
+    const reuseDays = (await getBillingSettings()).dealPricing.analysisReuseDays;
+    const keys = new Map<string, string>();
+    await Promise.all(
+      ids.map(async (id) => {
+        const deal = await loadDealById(admin, id);
+        if (!deal) return;
+        const { listing, snapshot } = await dealListingFor(admin, deal);
+        if (!snapshot) return;
+        const inputs = dealAnalysisInput(
+          { ...snapshot, postcode: listing?.postcode ?? snapshot.postcode, displayAddress: listing?.address ?? snapshot.displayAddress },
+          { canonicalUrl: deal.canonical_url, kind: deal.kind, price: dealListingPrice(deal.price_amount, deal.price_period), withPmi: false, checkedListingId: null },
+        );
+        if (inputs.ok) keys.set(id, inputs.key);
+      }),
+    );
+    if (keys.size === 0) return new Set();
+    const since = new Date(now.getTime() - reuseDays * 86_400_000).toISOString();
+    const { data, error } = await admin.from('deal_analyses').select('deal_id, input_key, analysed_at, result').in('deal_id', [...keys.keys()]).gt('analysed_at', since);
+    if (error) throw new Error(error.message);
+    return savedOnInputs((data ?? []) as Parameters<typeof savedOnInputs>[0], keys, reuseDays, now);
+  } catch (err) {
+    console.warn('[si-actions] saved-analysis read failed:', err instanceof Error ? err.message : String(err));
+    return new Set();
+  }
 }
 
 /** The PMI second opinion added to a finished report: what addSecondOpinion checks. */
@@ -176,7 +216,7 @@ export async function restoreStage(m: ActingMember, instructionId: string, dealI
 // ── Profile changes ─────────────────────────────────────────────────────────
 
 export interface CriteriaPreview {
-  savedAs: 'bedrooms' | 'budget' | 'cash_available' | 'max_rent' | 'min_profit' | 'r2r_min_profit' | 'property_type' | 'deal_types' | 'where';
+  savedAs: CriteriaSavedAs;
   value: unknown;
   before: unknown;
   label: string;
@@ -187,85 +227,6 @@ export interface CriteriaPreview {
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
 
-/** Batch 30: the member answered Buying cash for real (a worked-out band from an old budget does not count). */
-function hasRealBuyingCash(s: { answers: Answers; quiz: { answered: Record<string, { notSure: boolean } | undefined> } }): boolean {
-  const m = s.quiz.answered.cash_available;
-  return Boolean(m) && !m!.notSure && s.answers.goals.buyer.cashAvailable !== null && !s.answers.goals.buyer.cashFromBudget;
-}
-
-/** "£30–60k" for a Buying cash band, from the question's own options. */
-function cashBandLabel(band: string): string {
-  const options = questionById('cash_available')?.options;
-  return (Array.isArray(options) ? (options as readonly { value: string; label: string }[]).find((o) => o.value === band)?.label : undefined) ?? band;
-}
-const asNumber = (v: string): number | null => {
-  const s = v.trim().toLowerCase().replace(/[£,\s]/g, '').replace(/pcm|amonth|pm$/g, '');
-  const m = /^(\d+(?:\.\d+)?)(k)?$/.exec(s);
-  if (!m) return null;
-  const n = Number(m[1]) * (m[2] ? 1000 : 1);
-  return Number.isFinite(n) ? n : null;
-};
-
-/** The new value a change makes from the member's answers, with its words; or why it can't. */
-function nextValue(q: CriteriaQuestion, raw: string, a: Answers, cash: boolean): { value: unknown; label: string } | { reason: 'bad_value' | 'already_there' | 'not_areas_mode'; message?: string } {
-  switch (q) {
-    case 'bedrooms': {
-      const n = asNumber(raw.replace(/\+|beds?|bedrooms?/gi, ''));
-      if (n !== 1 && n !== 2 && n !== 3 && n !== 4) return { reason: 'bad_value' };
-      return { value: n, label: `Bedrooms: ${n === 4 ? '4 or more' : `${n} bed`}` };
-    }
-    case 'budget': {
-      const v = raw.trim();
-      if (!(BUDGET_CHOICES as readonly string[]).includes(v)) return { reason: 'bad_value' };
-      // Batch 30: a member who answered Buying cash changes that, not the budget it worked out (the band a budget of this size needs).
-      if (cash) {
-        const band = cashBandFromBudget(v as Exclude<keyof typeof BUDGET_LABELS, 'any' | 'u200'>);
-        if (!band) return { reason: 'bad_value' };
-        if (band === a.goals.buyer.cashAvailable) return { reason: 'already_there' };
-        return { value: band, label: `Buying cash: ${cashBandLabel(band)}` };
-      }
-      return { value: v, label: `Budget: ${BUDGET_LABELS[v as keyof typeof BUDGET_LABELS]}` };
-    }
-    case 'max_rent': {
-      // Batch 30: R2R setup cash replaced the rent ceiling; only a member who has one stored can change it.
-      if (a.goals.maxRentPcm === null) return { reason: 'bad_value', message: 'You haven’t set a maximum rent.' };
-      const n = asNumber(raw);
-      if (n === null) return { reason: 'bad_value' };
-      return { value: Math.round(n), label: `Most rent: ${gbp(n)} a month` };
-    }
-    case 'min_profit':
-    case 'r2r_min_profit': {
-      const n = asNumber(raw);
-      if (n === null) return { reason: 'bad_value' };
-      return { value: Math.round(n), label: `${q === 'r2r_min_profit' ? 'Rent-to-rent minimum profit' : 'Minimum profit'}: ${gbp(n)} a month` };
-    }
-    case 'property_type': {
-      const v = raw.trim().toLowerCase();
-      if (v !== 'flat' && v !== 'house' && v !== 'either') return { reason: 'bad_value' };
-      return { value: v, label: `Property type: ${v === 'either' ? 'flat or house' : v}` };
-    }
-    case 'add_deal_type':
-    case 'remove_deal_type': {
-      const type = dealTypeOf(raw);
-      if (!type) return { reason: 'bad_value' };
-      const shown = typesShown({ goals: a.goals, about: a.about }) as string[];
-      const next = q === 'add_deal_type' ? (shown.includes(type) ? null : [...shown, type]) : shown.filter((t) => t !== type);
-      if (next === null) return { reason: 'already_there' };
-      if (next.length === 0 || next.length === shown.length) return { reason: q === 'remove_deal_type' && next.length === shown.length ? 'already_there' : 'bad_value' };
-      return { value: next, label: `Deal types: ${next.map((t) => DEAL_TYPE_LABELS[t as keyof typeof DEAL_TYPE_LABELS] ?? t).join(', ')}` };
-    }
-    case 'add_areas': {
-      const where = currentValue('where', a) as { mode?: string; areas?: string[] } | null;
-      if (!where || where.mode !== 'areas') return { reason: 'not_areas_mode' };
-      const current = Array.isArray(where.areas) ? where.areas : [];
-      const extra = areaCodes(raw).filter((x) => !current.includes(x));
-      if (extra.length === 0) return { reason: 'already_there' };
-      const areas = [...current, ...extra];
-      return { value: { ...where, mode: 'areas', areas }, label: `Areas: ${areas.join(', ')}` };
-    }
-  }
-}
-
 /**
  * What a profile change would do, worked out without saving it: the new
  * value, its words, and the match count before and after (matchCountFor,
@@ -275,13 +236,14 @@ function nextValue(q: CriteriaQuestion, raw: string, a: Answers, cash: boolean):
 export async function previewCriteria(m: ActingMember, q: CriteriaQuestion, raw: string): Promise<CriteriaPreview | { reason: 'bad_value' | 'already_there' | 'not_areas_mode' | 'failed'; message?: string }> {
   const s = await profileSummaryFor(m.userId);
   if (!s) return { reason: 'failed' };
-  const cash = q === 'budget' && hasRealBuyingCash(s);
-  const savedAs: CriteriaPreview['savedAs'] = cash ? 'cash_available' : CRITERIA_SAVED_AS[q];
+  // Review R4 (R4-07, Zac 19 Nov 2026): "budget" is a price ceiling only, saved as the budget; Buying cash is never
+  // touched by it (it used to be turned into a cash band priced on a mortgage, whatever the member's funding).
+  const savedAs: CriteriaPreview['savedAs'] = CRITERIA_SAVED_AS[q];
   // A question that is no longer asked but still saves (the maximum rent, bedrooms, property type) is allowed.
   if (!questionsFor(s.answers).some((x) => x.id === savedAs) && questionById(savedAs)?.retired !== 'editable') return { reason: 'bad_value', message: 'Your profile doesn’t ask that.' };
   // Review R4 (R4-05): the rent-to-rent minimum only for a profile that looks at rent-to-rent deals.
   if (savedAs === 'r2r_min_profit' && questionById('r2r_min_profit')?.applies?.(s.answers) === false) return { reason: 'bad_value', message: 'Your profile doesn’t look at rent-to-rent deals.' };
-  const next = nextValue(q, raw, s.answers, cash);
+  const next = nextValue(q, raw, s.answers);
   if ('reason' in next) return next;
   // Review R4 (R4-05): a minimum-profit change writes only the figure it is about, and keeps both figures for Undo.
   const minimum = (q === 'min_profit' || q === 'r2r_min_profit') && typeof next.value === 'number' ? minimumWrite(q, next.value, s.answers.goals) : null;
@@ -294,8 +256,10 @@ export async function previewCriteria(m: ActingMember, q: CriteriaQuestion, raw:
     matchCountFor({ userId: m.userId, email: m.email, answers: applied.answers, answered: s.quiz.answered }).catch(() => null),
     activeProfileFor(m.userId).catch(() => null),
   ]);
-  // Review R4 (R4-05): a minimum change keeps both figures, so Undo puts back exactly what was there.
-  const before = minimum ? minimum.before : currentValue(savedAs, s.answers);
+  // Review R4 (R4-05): a minimum change keeps both figures, so Undo puts back exactly what was there. Review R4
+  // (R4-07, R4-08): a price ceiling keeps the budget as it stood (none included), and a Buying cash change keeps
+  // everything that answer writes, so each is put back exactly.
+  const before = minimum ? minimum.before : savedAs === 'budget' ? budgetRestoreOf(s.answers.goals) : savedAs === 'cash_available' ? cashRestoreOf(s.answers.goals) : currentValue(savedAs, s.answers);
   return { savedAs, value, before, label, countBefore, countAfter, profileId: active?.id ?? null };
 }
 

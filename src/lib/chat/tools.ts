@@ -28,6 +28,7 @@ import { ACTION_KINDS } from './actions.ts';
 import { CRITERIA_QUESTIONS, DRAFT_KINDS, STEP_KINDS } from '../si-actions/config.ts';
 import type { ProposedStep } from '../si-actions/validate.ts';
 import { parseAmount } from '../pipeline/offer-amount.ts';
+import { adviceIn, allowedFigures, checkFigures } from './guard.ts';
 
 export const TOOL_NAMES = [
   'search_knowledge',
@@ -171,7 +172,7 @@ export const CHAT_TOOLS: Anthropic.Tool[] = [
               value: nullable({
                 type: 'string',
                 description:
-                  'For change_criteria: bedrooms "1" to "4" (4 = 4 or more); budget one of u100, 100-200, 200-350, 350-500, 500+ (pick the band their figure falls in); max_rent, min_profit, r2r_min_profit pounds a month like "900"; property_type flat, house or either; add_deal_type / remove_deal_type short-let, brrr or rent-to-rent (remove only when they asked to in plain words); add_areas postcode areas like "BD, LS".',
+                  'For change_criteria: bedrooms "1" to "4" (4 = 4 or more); budget is a price ceiling only, the figure they said in pounds when they ask for deals or a budget under a price (like "100000"; it never changes their Buying cash); cash_available is their Buying cash, the figure or band they said (like "45000" or "30-60"); setup_budget is their R2R setup cash, the figure they said (like "8000"); btl_priority income, growth or both (what they are after from buy to let); min_profit, r2r_min_profit pounds a month like "900"; property_type flat, house or either; add_deal_type / remove_deal_type short-let, buy-to-let, brrr or rent-to-rent (remove only when they asked to in plain words); add_areas postcode areas like "BD, LS".',
               }),
             },
             required: ['action', 'deal_id', 'stage', 'url', 'question', 'value'],
@@ -238,7 +239,8 @@ export type ToolInput =
   | { tool: 'offer_action'; kind: string; target: string | null }
   | { tool: 'propose_fact'; fact: string }
   | { tool: 'propose_actions'; steps: ProposedStep[] }
-  | { tool: 'draft_message'; dealId: string; message: (typeof DRAFT_KINDS)[number] | null; offerAmount: number | null }
+  /** offerText: the amount as the model passed it, kept so the figure guard can check it against the question (Review R4, R4-12). */
+  | { tool: 'draft_message'; dealId: string; message: (typeof DRAFT_KINDS)[number] | null; offerAmount: number | null; offerText: string | null }
   | { tool: 'report_issue'; kind: 'bug' | 'feature'; summary: string; theirWords: string }
   | { tool: 'ask_which'; options: string[] };
 
@@ -284,8 +286,9 @@ export function parseToolInput(name: unknown, input: unknown): ToolInput | null 
       if (!UUID.test(dealId)) return null;
       const message = o.message === null || o.message === undefined ? null : (DRAFT_KINDS as readonly unknown[]).includes(o.message) ? (o.message as (typeof DRAFT_KINDS)[number]) : undefined;
       if (message === undefined) return null;
-      const amount = typeof o.offer_amount === 'string' ? parseAmount(o.offer_amount.slice(0, 30)) : null;
-      return { tool: name, dealId, message, offerAmount: amount };
+      const offerText = typeof o.offer_amount === 'string' ? o.offer_amount.trim().slice(0, 30) || null : null;
+      const amount = offerText ? parseAmount(offerText) : null;
+      return { tool: name, dealId, message, offerAmount: amount, offerText: amount === null ? null : offerText };
     }
     case 'report_issue': {
       if (o.kind !== 'bug' && o.kind !== 'feature') return null;
@@ -300,4 +303,28 @@ export function parseToolInput(name: unknown, input: unknown): ToolInput | null 
     default:
       return { tool: name };
   }
+}
+
+/**
+ * Review R4 (R4-12): the offer amount a drafted message may carry. Only one the
+ * member said in this question: the model's text for it must pass the figure
+ * guard against the question (or its value appear there in another form,
+ * "£140,000" for "140k"). Anything else is dropped, and the draft goes out
+ * without an amount for the member to fill in.
+ */
+export function offerAmountFor(input: { offerAmount: number | null; offerText: string | null }, question: string): number | null {
+  if (input.offerAmount === null || !input.offerText) return null;
+  const allowed = allowedFigures([question]);
+  return checkFigures(input.offerText, allowed).ok || checkFigures(String(input.offerAmount), allowed).ok ? input.offerAmount : null;
+}
+
+/**
+ * Review R4 (R4-12): the feature request shown for the member to send: their
+ * words, and the model's one-line summary only when it carries no figure the
+ * member didn't give in this question and no advice.
+ */
+export function featureRequestText(words: string, summary: string, question: string): string {
+  const s = summary.trim();
+  const keep = Boolean(s) && s !== words && checkFigures(s, allowedFigures([question])).ok && adviceIn(s).length === 0;
+  return `${words}${keep ? `\n\n(${s})` : ''}`.slice(0, 1500);
 }

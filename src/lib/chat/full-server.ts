@@ -77,7 +77,7 @@ export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: Su
   const question = cleanQuestion(input.question, MAX_QUESTION_CHARS);
   if (!question) return { kind: 'reply', reply: stateReply('unknown') };
   if (member.seatPaused) return { kind: 'reply', reply: stateReply('seat_paused') };
-  const [pre, spendable] = await Promise.all([preflight(admin, member, input.clientTurnId, settings, now), spendableFor(member)]);
+  const [pre, spendable] = await Promise.all([preflight(admin, member, input.clientTurnId, settings, now), spendableFor(member, 'full')]);
   // Batch 27: a stored answer brings back its card (Stop, a confirm, Undo), so a page that came back can still use them.
   const acting = { userId: member.userId, email: user.email ?? null, payerId: member.payerId, admin: member.admin, teamMember: member.teamMember };
   if (pre.kind === 'existing') return { kind: 'reply', reply: await withStoredCard(await replyForStored(admin, pre.turn, member), acting) };

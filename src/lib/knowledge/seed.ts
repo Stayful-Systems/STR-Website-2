@@ -500,7 +500,19 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'What can you do for me?',
     variants: ['Can you do things for me?', 'Can you analyse my deals for me?', 'Can you pass deals for me?', 'Can you change my search for me?', 'Can you check a listing link?', 'Can you write to the agent for me?'],
-    answer: 'In the full view, tell me and I’ll do it: check a listing link, run Full analyses, deep reports or a deep search, Keep, Pass or move your deals, change your search, or draft a message to an agent for you to send. I never pay, top up, change your plan, cancel, delete, share or contact anyone: those stay as buttons for you.',
+    // Review R4 (R4-08, Zac 19 Nov 2026): what it may change in the search, each with Undo.
+    answer: 'In the full view, tell me and I’ll do it: check a listing link, run Full analyses, deep reports or a deep search, Keep, Pass or move your deals, change your search (including your Buying cash, your R2R setup cash, what you’re after from buy to let, or a price ceiling), or draft a message to an agent for you to send. I never pay, top up, change your plan, cancel, delete, share or contact anyone: those stay as buttons for you.',
+  },
+  {
+    // Review R4 (R4-07, R4-08, Zac 19 Nov 2026): a price ceiling only; Buying cash, setup cash and the buy-to-let priority with Undo.
+    slug: 'si_actions_criteria',
+    from: 'review r4',
+    category: 'deals',
+    channels: ['chat', 'view'],
+    showWhen: null,
+    question: 'Can you change my budget or my Buying cash?',
+    variants: ['Only show me deals under a price', 'Can you lower my budget?', 'My R2R setup cash has gone up', 'Can you change what I want from buy to let?', 'Will a budget change my Buying cash?'],
+    answer: 'Yes, in the full view. Ask for deals under a price and I set that as your price ceiling and nothing else: your Buying cash stays as it is. I can also change your Buying cash, your R2R setup cash and what you’re after from buy to let (money each month, value going up or a bit of both). Each change can be undone for {si_action_undo_hours} hours, and Undo puts back exactly what you had, even no ceiling at all.',
   },
   {
     slug: 'si_actions_cost',
@@ -520,7 +532,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Can I stop you once you’ve started?',
     variants: ['How do I stop an action?', 'Will you ask before spending my credit?', 'What if I didn’t mean it?', 'Why did you ask me to confirm?'],
-    answer: 'Yes: before anything paid starts I say what it will cost and you have {si_action_stop_seconds} seconds to tap Stop; after that, Stop the rest stops what hasn’t started. I ask first when an instruction would spend more than {si_action_cap} or leave you under {low_credit_mark}, and when you haven’t enough credit nothing runs.',
+    // Review R4 (R4-06, Zac 19 Nov 2026): a pack-only member is told up front when the bonus can't pay.
+    answer: 'Yes: before anything paid starts I say what it will cost and you have {si_action_stop_seconds} seconds to tap Stop; after that, Stop the rest stops what hasn’t started. I ask first when an instruction would spend more than {si_action_cap} or leave you under {low_credit_mark}, and when you haven’t enough credit nothing runs.{#pack_only} Your starter pack bonus only pays for opening deals, saved reports and daily picks, so for anything else I tell you up front when the credit you paid for isn’t enough, and offer a top-up.{/pack_only}',
   },
   {
     slug: 'si_actions_undo',
@@ -530,7 +543,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Can I undo what you did?',
     variants: ['You passed the wrong deal', 'Put my search back how it was', 'How do I undo a change you made?', 'Can I get my deals back?'],
-    answer: 'Keep, Pass, stage moves and changes to your search can be undone for {si_action_undo_hours} hours, from the chat or the top of My deals; anything you’ve changed since stays as you set it. Undo doesn’t refund analyses, reports, searches or listing checks.',
+    // Review R4 (R4-07, R4-08): Buying cash, setup cash, the buy-to-let priority and a price ceiling are undone exactly.
+    answer: 'Keep, Pass, stage moves and changes to your search (your Buying cash, R2R setup cash, what you’re after from buy to let and a price ceiling included) can be undone for {si_action_undo_hours} hours, from the chat or the top of My deals, and Undo puts back exactly what you had; anything you’ve changed since stays as you set it. Undo doesn’t refund analyses, reports, searches or listing checks.',
   },
   {
     slug: 'si_actions_report',

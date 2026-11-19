@@ -103,3 +103,17 @@ test('Batch 28: the buy-to-let figures read from their settings, and a malformed
   assert.equal(PLACEHOLDERS.btl_cash_bands.resolve(schemaSnapshot({ settings: { btl_bands: [50000, 25000] } }), null), null);
   assert.equal(PLACEHOLDERS.btl_report_cost.resolve(schemaSnapshot({ drop: ['btl_report_pence'] }), null), null);
 });
+
+// Review R4 (R4-08): the nightly drafter writes from SERVICE_FACTS; a retired question's figures (the old Buy to let
+// cash bands, replaced by Buying cash in Batch 30) must not be there for it to copy.
+test('no SERVICE_FACTS line uses a retired question’s placeholder (btl_cash_bands)', async () => {
+  const { SERVICE_FACTS } = await import('./service-facts.ts');
+  const { RETIRED } = await import('../profile/questions.ts');
+  const RETIRED_PLACEHOLDERS: Record<string, string> = { btl_cash_bands: 'btl_cash' };
+  for (const [name, question] of Object.entries(RETIRED_PLACEHOLDERS)) {
+    assert.ok(RETIRED[question as keyof typeof RETIRED], `${question} is retired`);
+    assert.ok(!SERVICE_FACTS.includes(`{${name}}`), `SERVICE_FACTS still uses {${name}}`);
+  }
+  assert.doesNotMatch(SERVICE_FACTS, /2–3-year/, 'no typed rate term');
+  assert.match(SERVICE_FACTS, /their Buying cash/);
+});

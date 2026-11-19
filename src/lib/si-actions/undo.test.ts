@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { minimumWrite, restoreFor, sameValue, stageRestore, stageUnchanged, undoLine, undoOpen, undoUntil, writtenValue, type StageState } from './undo.ts';
+import { cashRestoreOf, minimumWrite, restoreFor, sameValue, stageRestore, stageUnchanged, undoLine, undoOpen, undoUntil, writtenValue, type StageState } from './undo.ts';
 import { applyAnswer, currentValue, type Answers } from '../profile/questions.ts';
 import { DEFAULT_GOALS } from '../market/goals.ts';
 import { DEFAULT_ABOUT } from '../profile/about.ts';
@@ -92,4 +92,25 @@ test('undoing a rent-to-rent minimum change for a member with two minimums resto
   assert.equal(one.value, 400);
   // An older step that kept a single figure is put back as before.
   assert.deepEqual(restoreFor('bedrooms', '3'), { questionId: 'bedrooms', value: '3' });
+});
+
+// Review R4 (R4-08, Zac 19 Nov 2026): Stayful Intelligence may change Buying cash, with Undo.
+test('undoing a Buying cash change puts back the band, both budgets, the buy-to-let band and "worked out"', () => {
+  // An older member whose Buying cash was worked out from a budget they set themselves (Under £100k).
+  const a: Answers = { goals: { ...DEFAULT_GOALS, dealTypes: ['buy_str', 'btl'], budget: 'u100', brrr: { ...DEFAULT_GOALS.brrr, budget: 'u100' }, btl: { ...DEFAULT_GOALS.btl, cashBand: 'under_25k' }, buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '30-60', cashFromBudget: true, funding: 'btl' } }, about: DEFAULT_ABOUT, savedAreas: [] };
+  const before = cashRestoreOf(a.goals);
+  const changed = applyAnswer('cash_available', '100-200', a);
+  assert.ok(changed.ok);
+  assert.equal(changed.answers.goals.buyer.cashFromBudget, false);
+  assert.notEqual(changed.answers.goals.btl.cashBand, 'under_25k');
+  assert.equal(sameValue(currentValue('cash_available', changed.answers), writtenValue('100-200')), true);
+  const back = restoreFor('cash_available', before);
+  const undone = applyAnswer(back.questionId as never, back.value, changed.answers);
+  assert.ok(undone.ok);
+  assert.equal(undone.answers.goals.buyer.cashAvailable, '30-60');
+  assert.equal(undone.answers.goals.buyer.cashFromBudget, true);
+  assert.equal(undone.answers.goals.budget, 'u100');
+  assert.equal(undone.answers.goals.brrr.budget, 'u100');
+  assert.equal(undone.answers.goals.btl.cashBand, 'under_25k');
+  assert.equal(undoOpen({ kind: 'change_criteria', status: 'done', finishedAt: hoursAgo(1), undoneAt: null, before: { value: before } }, now, 24), true);
 });

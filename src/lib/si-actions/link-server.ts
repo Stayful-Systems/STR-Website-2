@@ -19,6 +19,7 @@ import { stateReply, type ChatReply } from '../chat/reply';
 import type { ChatSettings } from '../chat/settings';
 import { DROP_REASONS } from './config';
 import { proposeActions } from './plan-server';
+import { linkReplyText } from './link';
 import { finaliseInstruction, withStoredCard } from './run-server';
 import { actionsOn, readActionConfig } from './store-server';
 import type { ActingMember } from './steps-server';
@@ -52,9 +53,9 @@ export async function linkOnlyReply(input: { user: Pick<User, 'id' | 'email'>; s
     if (plan.ok === true) {
       const fin = await finaliseInstruction(acting, input.supabase, turn.id, { delivered: true, conversationId: null });
       card = fin.card;
-      text = typeof plan.spend_line === 'string' && plan.spend_line ? `${plan.spend_line}.` : typeof plan.not_enough_credit === 'string' ? plan.not_enough_credit : 'Here it is.';
-      if (Array.isArray(plan.dropped) && plan.dropped.length > 0) text = String((plan.dropped[0] as { why?: string }).why ?? text);
-    } else text = typeof plan.note === 'string' ? plan.note : 'I can’t check that just now.';
+    }
+    // Review R4 (R4-10): the member's own words for every case, never the plan's notes written for the model.
+    text = linkReplyText(plan);
   }
   const logged = conv ? await logExchange(conv, { question: input.question, answer: text, outcome: 'answered', knowledgeRef: null, surface: 'full', at: now }) : { questionId: null, agentSeq: null };
   // No model ran: nothing to charge for the question (the check itself is charged by its own code).

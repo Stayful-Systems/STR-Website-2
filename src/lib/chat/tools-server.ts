@@ -56,7 +56,7 @@ import { buildButton, type ChatButton } from './actions';
 import type { ChatContext } from './context-server';
 import type { ChatMember } from './turns-server';
 import { lookUpKnowledge } from './knowledge-server';
-import type { ToolInput } from './tools';
+import { featureRequestText, offerAmountFor, type ToolInput } from './tools';
 
 const AREA_WAIT_MS = 1_500;
 
@@ -352,11 +352,12 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
       return out;
     },
 
-    async draft_message(input: { dealId: string; message: 'enquiry' | 'follow_up' | 'offer' | null; offerAmount: number | null }, state) {
+    async draft_message(input: { dealId: string; message: 'enquiry' | 'follow_up' | 'offer' | null; offerAmount: number | null; offerText: string | null }, state) {
       if (!turn) return { ok: false, note: 'Not available here.' };
       if (!state.deals.has(input.dealId)) return { ok: false, note: 'Look the deal up first (my_deals or deal_facts), then use its deal_id.' };
       if (state.draft) return { ok: false, note: 'One message per answer.' };
-      const out = await draftMessage(acting, { dealId: input.dealId, kind: input.message, offerAmount: input.offerAmount });
+      // Review R4 (R4-12): an amount the member didn't say in this question is dropped, never drafted as their offer.
+      const out = await draftMessage(acting, { dealId: input.dealId, kind: input.message, offerAmount: offerAmountFor(input, turn.question) });
       if (!out.ok) return { ok: false, note: out.note };
       state.draft = out.draft;
       return out.forModel;
@@ -367,7 +368,8 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
       if (state.report || state.featureRequest) return { ok: false, note: 'Once per answer.' };
       const words = input.theirWords || turn.question;
       if (input.kind === 'feature') {
-        state.featureRequest = `${words}${input.summary && input.summary !== words ? `\n\n(${input.summary})` : ''}`.slice(0, 1500);
+        // Review R4 (R4-12): the summary passes the figure and advice guard, or only their words are shown.
+        state.featureRequest = featureRequestText(words, input.summary, turn.question);
         return { ok: true, note: "A feature request, filled in, shows under your answer for them to check and send. Say so in one sentence; don't say it has been sent." };
       }
       const r = await fileMemberBug({ userId: member.userId, email: turn.email, turnId: turn.turnId, memberWords: words, summary: input.summary, page: '/intelligence', userAgent: turn.userAgent });

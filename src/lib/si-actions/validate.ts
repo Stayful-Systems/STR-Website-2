@@ -92,8 +92,8 @@ export interface CheckedPlan {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The names a member uses for each deal type (Batch 17's three; Batch 28's Buy to let). */
-const TYPE_WORDS: Record<string, readonly string[]> = {
+/** The names a member uses for each deal type (Batch 17's three; Batch 28's Buy to let). The change_criteria tool text names every one (validate.test.ts). */
+export const TYPE_WORDS: Record<string, readonly string[]> = {
   buy_str: ['short-let', 'short let', 'shortlet', 'short-lets', 'short lets', 'holiday let', 'serviced accommodation'],
   brrr: ['brrr', 'brr'],
   r2r: ['rent-to-rent', 'rent to rent', 'r2r'],

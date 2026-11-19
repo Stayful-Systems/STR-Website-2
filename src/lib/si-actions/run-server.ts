@@ -25,9 +25,10 @@ import 'server-only';
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '../supabase/admin';
-import { getBalance } from '../credit/ledger';
+import { faceAvailableFor, spendableFor } from '../credit/ledger';
+import { bonusPaysFor } from '../credit/pack-rules';
 import { CHARGED_KINDS, RUNNING_STALE_MS } from './config';
-import { laterCheck, type PricedStep } from './spend';
+import { affordable, BONUS_OK_ACTION, laterCheck, stepLedgerAction, type PricedStep } from './spend';
 import { cardView, doneLines, type ActionCardView } from './view';
 import { actionsOn, claimStep, instructionFor, liveInstructionFor, logActionLine, moveInstruction, moveSteps, readActionConfig, stepPayload, stepsFor, updateStep, type InstructionRow, type StepRow } from './store-server';
 import { applyWhatIf } from '../intelligence/what-if-apply-server';
@@ -54,16 +55,54 @@ async function autoTopupOn(admin: Admin, payerId: string): Promise<boolean> {
   return Boolean((data as { auto_topup_amount_pence?: number | null } | null)?.auto_topup_amount_pence);
 }
 
-async function spendable(m: ActingMember): Promise<number> {
-  if (m.admin) return Number.POSITIVE_INFINITY;
-  return (await getBalance(m.payerId).catch(() => null))?.spendableBasePence ?? 0;
+/**
+ * Review R4 (R4-06, Zac 19 Nov 2026): what the paying account may spend, as the
+ * database scopes it (credit_spendable_for), never the whole balance: `all` for
+ * what the starter pack's restricted bonus may pay for (an open, a saved
+ * analysis), `other` for the steps' own actions it can't. For anyone without a
+ * restricted bonus the two are the same figure. 0 when unreadable (fail closed).
+ */
+export async function scopedSpendable(m: Pick<ActingMember, 'admin' | 'payerId'>, actions: readonly string[]): Promise<{ all: number; other: number }> {
+  if (m.admin) return { all: Number.POSITIVE_INFINITY, other: Number.POSITIVE_INFINITY };
+  const otherActions = [...new Set(actions.filter((a) => !bonusPaysFor(a)))];
+  const [all, ...others] = await Promise.all([spendableFor(m.payerId, BONUS_OK_ACTION).catch(() => 0), ...otherActions.map((a) => spendableFor(m.payerId, a).catch(() => 0))]);
+  return { all, other: others.length > 0 ? Math.min(...others) : all };
+}
+
+/** Review R4 (R4-06): the displayed pence these steps may take (credit_face_available_for), for the "balance after" a confirm shows. */
+export async function scopedFace(m: Pick<ActingMember, 'admin' | 'payerId'>, actions: readonly string[]): Promise<number | null> {
+  if (m.admin) return null;
+  const action = actions.find((a) => !bonusPaysFor(a)) ?? BONUS_OK_ACTION;
+  return faceAvailableFor(m.payerId, action).catch(() => null);
+}
+
+/** A stored step, as the spend rules price it: its quote, and the part the restricted bonus may pay for. */
+function pricedOf(s: Pick<StepRow, 'action' | 'quote_base_pence' | 'quote_face_pence' | 'params'>, index: number): PricedStep {
+  return { index, kind: s.action, basePence: s.quote_base_pence, facePence: s.quote_face_pence, opensDeal: s.params.opensDeal === true, bonusBasePence: Number(s.params.bonusBasePence ?? 0) || 0 };
+}
+
+const ledgerActionOf = (s: Pick<StepRow, 'action' | 'params'>) => stepLedgerAction(s.action, { addOn: s.params.addOn === true });
+
+/** Review R4 (R4-11): the purchases of handed-out analyses still waiting for their run (started, never run): the card may run them. */
+async function pendingRuns(admin: Admin, steps: readonly StepRow[]): Promise<Set<string>> {
+  const ids = steps.filter((s) => s.status === 'handed_out' && s.ledger_ref && (s.action === 'full_analysis' || (s.action === 'deep_report' && s.params.addOn !== true))).map((s) => String(s.ledger_ref));
+  if (ids.length === 0) return new Set();
+  const { data, error } = await admin.from('analysis_purchases').select('id, status, ready_at, run_started_at').in('id', ids);
+  if (error) return new Set();
+  return new Set(((data ?? []) as { id: string; status: string; ready_at: string | null; run_started_at: string | null }[]).filter((r) => r.status === 'pending' && r.ready_at && !r.run_started_at).map((r) => String(r.id)));
 }
 
 async function view(admin: Admin, m: ActingMember, i: InstructionRow, steps: readonly StepRow[], now: Date = new Date()): Promise<ActionCardView> {
   const config = await readActionConfig(admin);
   const needsCredit = i.status === 'blocked' || i.status === 'awaiting_confirm';
-  const [s, auto] = needsCredit ? await Promise.all([spendable(m), autoTopupOn(admin, m.payerId)]) : [null, false];
-  return cardView(i, steps, { now, undoHours: config.undoHours, spendableBasePence: s, autoTopupOn: auto });
+  const charged = steps.filter((s) => CHARGED_KINDS.has(s.action) && (s.status === 'queued' || s.status === 'deferred' || s.status === 'skipped'));
+  const [s, auto, runs] = await Promise.all([
+    // What the member could put towards the charged steps, as the database scopes it (Review R4, R4-06).
+    needsCredit ? scopedSpendable(m, charged.map(ledgerActionOf)).then((sc) => (charged.length > 0 ? (affordable(charged.map(pricedOf), sc) as { availableBasePence?: number }).availableBasePence ?? sc.all : sc.all)) : Promise.resolve(null),
+    needsCredit ? autoTopupOn(admin, m.payerId) : Promise.resolve(false),
+    pendingRuns(admin, steps),
+  ]);
+  return cardView(i, steps, { now, undoHours: config.undoHours, spendableBasePence: s, autoTopupOn: auto, pendingRuns: runs });
 }
 
 // ── After the answer ────────────────────────────────────────────────────────
@@ -207,10 +246,12 @@ async function settleIfIdle(admin: Admin, m: ActingMember, i: InstructionRow, st
   if (i.status !== 'running') return;
   if (steps.some((s) => s.status === 'queued' || s.status === 'running' || s.status === 'handed_out')) return;
   if (!i.stopped_at && steps.some((s) => s.status === 'deferred')) {
-    const laterFace = steps.filter((s) => s.status === 'deferred').reduce((a, s) => a + s.quote_face_pence, 0);
-    const balance = m.admin ? null : await getBalance(m.payerId).catch(() => null);
+    const deferred = steps.filter((s) => s.status === 'deferred');
+    const laterFace = deferred.reduce((a, s) => a + s.quote_face_pence, 0);
+    // Review R4 (R4-06): the balance these steps may use (a restricted pack bonus left out where it can't pay).
+    const face = await scopedFace(m, deferred.map(ledgerActionOf));
     // A new question: an earlier low-credit yes isn't this one's answer (the admin counts each confirm once).
-    await moveInstruction(admin, i.id, m.userId, ['running'], 'awaiting_confirm', { confirm_kind: 'over_cap', confirm_answer: null, confirmed_at: null, later_face_pence: laterFace, balance_before_pence: balance ? balance.totalPence : i.balance_before_pence });
+    await moveInstruction(admin, i.id, m.userId, ['running'], 'awaiting_confirm', { confirm_kind: 'over_cap', confirm_answer: null, confirmed_at: null, later_face_pence: laterFace, balance_before_pence: face ?? i.balance_before_pence });
     return;
   }
   await moveInstruction(admin, i.id, m.userId, ['running'], i.stopped_at ? 'stopped' : 'done');
@@ -327,9 +368,11 @@ export async function nextStep(m: ActingMember, supabase: SupabaseClient, id: un
     return { kind: 'card', card: (await instructionView(m, i.id, now))! };
   }
 
-  // The balance when its turn comes (another charge, or a run already holding credit, may have used it).
-  const have = await spendable(m);
-  if (have + 0.005 < step.quote_base_pence) {
+  // The balance when its turn comes (another charge, or a run already holding credit, may have used it), scoped as
+  // the database scopes it: a restricted pack bonus counts only for the part it may pay for (Review R4, R4-06).
+  const pay = affordable([pricedOf(step, 0)], await scopedSpendable(m, [ledgerActionOf(step)]));
+  const have = pay.ok ? step.quote_base_pence : pay.availableBasePence;
+  if (!pay.ok) {
     await updateStep(admin, step.id, { status: 'skipped', error_code: 'insufficient_credit', finished_at: iso(now) });
     await moveSteps(admin, i.id, ['queued', 'deferred'], 'skipped', { error_code: 'insufficient_credit' });
     return { kind: 'out_of_credit', card: (await instructionView(m, i.id, now))!, credit: { requiredPence: step.quote_base_pence, availablePence: Math.max(0, Math.round(have)) } };
@@ -458,9 +501,11 @@ export async function confirmWithCredit(m: ActingMember, id: unknown, yes: boole
   // confirm that is the part inside the cap (the rest past it still gets its own question); after the cap's, the rest.
   const overCap = i.confirm_kind === 'over_cap';
   const pending = loaded.steps.filter((s) => s.status === 'queued' || (overCap && s.status === 'deferred'));
-  const balance = m.admin ? null : await getBalance(m.payerId).catch(() => null);
-  const priced: PricedStep[] = pending.map((s, index) => ({ index, kind: s.action, basePence: s.quote_base_pence, facePence: s.quote_face_pence, opensDeal: s.params.opensDeal === true }));
-  const check = m.admin ? { ok: true as const } : laterCheck({ steps: priced, spendableBasePence: balance?.spendableBasePence ?? 0, balanceFacePence: balance?.totalPence ?? 0 });
+  const priced: PricedStep[] = pending.map((s, index) => pricedOf(s, index));
+  // Review R4 (R4-06): scoped as the database scopes it (credit_spendable_for), never the whole balance.
+  const actions = pending.map(ledgerActionOf);
+  const [scoped, face] = m.admin ? [null, null] : await Promise.all([scopedSpendable(m, actions), scopedFace(m, actions)]);
+  const check = m.admin || !scoped ? { ok: true as const } : laterCheck({ steps: priced, spendableBasePence: scoped.all, spendableOtherBasePence: scoped.other, balanceFacePence: face ?? 0 });
   if (!check.ok) {
     await moveInstruction(admin, i.id, m.userId, ['awaiting_confirm'], 'blocked', { confirm_answer: 'yes', confirmed_at: iso(now) });
     await moveSteps(admin, i.id, ['queued', 'deferred'], 'skipped', { error_code: 'insufficient_credit' });
@@ -516,13 +561,14 @@ export async function tidyInstructions(o: { apply: boolean; now?: Date }): Promi
   const now = o.now ?? new Date();
   const config = await readActionConfig(admin);
   const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
-  const count = async (q: PromiseLike<{ data: unknown[] | null }>) => ((await q).data ?? []).length;
+  // Review R4 (R4-13): exact counts (a head request), never capped at a page of rows: the dry run shows what the run would touch.
+  const count = async (q: PromiseLike<{ count: number | null }>) => (await q).count ?? 0;
   if (!o.apply) {
     const [cancelled, expired, closed, snapshots] = await Promise.all([
-      count(admin.from('si_instructions').select('id').eq('status', 'proposed').lt('updated_at', ago(10 * 60_000)).limit(1000)),
-      count(admin.from('si_instructions').select('id').in('status', ['ready', 'awaiting_confirm']).lt('updated_at', ago(config.confirmMinutes * 60_000)).limit(1000)),
-      count(admin.from('si_instructions').select('id').eq('status', 'running').lt('updated_at', ago(RUNNING_STALE_MS)).limit(1000)),
-      count(admin.from('si_action_steps').select('id').not('payload', 'is', null).lt('created_at', ago(config.undoHours * 3_600_000)).limit(1000)),
+      count(admin.from('si_instructions').select('id', { count: 'exact', head: true }).eq('status', 'proposed').lt('updated_at', ago(10 * 60_000))),
+      count(admin.from('si_instructions').select('id', { count: 'exact', head: true }).in('status', ['ready', 'awaiting_confirm']).lt('updated_at', ago(config.confirmMinutes * 60_000))),
+      count(admin.from('si_instructions').select('id', { count: 'exact', head: true }).eq('status', 'running').lt('updated_at', ago(RUNNING_STALE_MS))),
+      count(admin.from('si_action_steps').select('id', { count: 'exact', head: true }).not('payload', 'is', null).lt('created_at', ago(config.undoHours * 3_600_000))),
     ]);
     return { cancelled, expired, closed, snapshots };
   }

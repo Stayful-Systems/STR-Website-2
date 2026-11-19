@@ -44,7 +44,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
   if (!question) return stateReply('unknown');
 
   if (member.seatPaused) return stateReply('seat_paused');
-  const [pre, spendable] = await Promise.all([preflight(admin, member, input.clientTurnId, settings, now), spendableFor(member)]);
+  const [pre, spendable] = await Promise.all([preflight(admin, member, input.clientTurnId, settings, now), spendableFor(member, 'quick')]);
   if (pre.kind === 'existing') return replyForStored(admin, pre.turn, member);
   if (pre.kind !== 'ok') return stateReply(pre.kind);
 

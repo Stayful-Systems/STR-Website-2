@@ -46,7 +46,7 @@ import {
   type SourcerGoals,
   type ManagerGoals,
 } from '../market/goals.ts';
-import { BUDGET_CHOICES, BUDGET_LABELS, isBudget } from '../market/filters.ts';
+import { BUDGET_CHOICES, BUDGET_LABELS, isBudget, type Budget } from '../market/filters.ts';
 import { DEFAULT_FINANCE } from '../listing/deal.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import { ABOUT_OPTIONS, DEFAULT_ABOUT, RISK_TO_APPETITE, ROLE_OPTIONS, STAGE_TO_ABOUT, TIME_TO_MANAGEMENT, aboutOption, pathFor, roleList, stageOf, type AboutYou, type Role } from './about.ts';
@@ -1036,6 +1036,13 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
       return { ok: true, answers: { ...a, goals: { ...goals, where: mode, home: null, maxDistanceMiles: null }, savedAreas: [] } };
     }
     case 'budget': {
+      // Review R4 (R4-07): Stayful Intelligence's Undo of a price ceiling puts back exactly the budget there was,
+      // none included ({ restore: 'budget', budget }, si-actions/undo.ts budgetRestoreOf).
+      if (raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as { restore?: unknown }).restore === 'budget') {
+        const b = (raw as { budget?: unknown }).budget;
+        if (b !== null && (!isBudget(b) || b === 'any')) return fail('Choose a budget.');
+        return { ok: true, answers: { ...a, goals: { ...goals, budget: b as Exclude<Budget, 'any'> | null } } };
+      }
       if (!isBudget(raw) || raw === 'any') return fail('Choose a budget.');
       return { ok: true, answers: { ...a, goals: { ...goals, budget: raw } } };
     }
@@ -1091,6 +1098,17 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
       return { ok: true, answers: { ...a, about: { ...a.about, risk: v }, goals: { ...goals, riskAppetite: RISK_TO_APPETITE[v] } } };
     }
     case 'cash_available': {
+      // Review R4 (R4-08): Stayful Intelligence's Undo of a Buying cash change puts back exactly what the answer wrote
+      // (the band, whether it was worked out, both budgets and the Buy to let band: si-actions/undo.ts cashRestoreOf).
+      if (raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as { restore?: unknown }).restore === 'cash') {
+        const o = raw as Record<string, unknown>;
+        const band = o.cashAvailable === null ? null : goalOption('cashAvailable', o.cashAvailable);
+        const okBudget = (b: unknown) => b === null || (isBudget(b) && b !== 'any');
+        const btl = o.btlCash === null ? null : goalOption('btlCash', o.btlCash);
+        if ((o.cashAvailable !== null && !band) || !okBudget(o.budget) || !okBudget(o.brrrBudget) || (o.btlCash !== null && !btl) || typeof o.cashFromBudget !== 'boolean') return fail('Choose how much cash you can put in.');
+        const back = setBuyer(a, { cashAvailable: band, cashFromBudget: o.cashFromBudget });
+        return { ok: true, answers: { ...back, goals: { ...back.goals, budget: o.budget as Exclude<Budget, 'any'> | null, brrr: { ...back.goals.brrr, budget: o.brrrBudget as Exclude<Budget, 'any'> | null }, btl: { ...back.goals.btl, cashBand: btl } } } };
+      }
       const v = goalOption('cashAvailable', raw);
       if (!v) return fail('Choose how much cash you can put in.');
       // A real answer: it sets the older budget as a ceiling (so the readers that

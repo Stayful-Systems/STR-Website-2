@@ -143,3 +143,26 @@ export function writtenValue(v: unknown): unknown {
 export function restoreFor(savedAs: string, before: unknown): { questionId: string; value: unknown } {
   return isMinimums(before) ? { questionId: 'min_profit', value: { buy: before.buy, r2r: before.r2r } } : { questionId: savedAs, value: before };
 }
+
+// ── Review R4 (R4-07, R4-08, Zac 19 Nov 2026): a price ceiling and Buying cash, put back exactly ──
+
+/** What Undo saves back for a price ceiling: the budget as it stood, none included (applyAnswer('budget', …) takes it). */
+export function budgetRestoreOf(goals: { budget: string | null }): { restore: 'budget'; budget: string | null } {
+  return { restore: 'budget', budget: goals.budget };
+}
+
+/**
+ * What Undo saves back for a Buying cash change. The answer also writes the
+ * older budget ceilings and the Buy to let band, and clears "worked out", so
+ * all of those are kept and put back as they were (applyAnswer('cash_available', …)).
+ */
+export function cashRestoreOf(goals: { budget: string | null; buyer: { cashAvailable: string | null; cashFromBudget: boolean }; brrr: { budget: string | null }; btl: { cashBand: string | null } }): {
+  restore: 'cash';
+  cashAvailable: string | null;
+  cashFromBudget: boolean;
+  budget: string | null;
+  brrrBudget: string | null;
+  btlCash: string | null;
+} {
+  return { restore: 'cash', cashAvailable: goals.buyer.cashAvailable, cashFromBudget: Boolean(goals.buyer.cashFromBudget), budget: goals.budget, brrrBudget: goals.brrr.budget, btlCash: goals.btl.cashBand };
+}
