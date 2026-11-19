@@ -74,11 +74,11 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: `npm test` covers invite-only + plan-gate switches; self-submit free → held_self, charge on → runs and charged; charge OFF → no charge decision; charge ON + quality false → no charge; mode frozen across settings flip. Pin: nothing under `src/lib/websites` or `src/app/api/s` imports `funnels/charge-server` or `funnels/tiers`.
   Notes: types, slug, urls, sources, policy (+ tests, 75 pass); kinds.ts +2 (`website_approved`, recordOnly) and kinds.test.ts +6 (outside the file list). Pin test (no charge-server/tiers import under src/lib/websites, src/app/api/s, src/app/s) lives in policy.test.ts. Assumptions: held_credit shows the landlord will_contact (only held_cap shows the 24-hour message); free-mode price_pence is 0; over-long utm/ad values are truncated, not rejected; access takes plain booleans with purposes invite|go_live|keep_live.
 
-- [ ] **Phase 4 — Page model, checks, colours, summary** (needs 3)
+- [x] **Phase 4 — Page model, checks, colours, summary** (needs 3)
   Files: `src/lib/websites/{page-model,checks,colour,summary}.ts` + tests.
   page-model: page data per page from settings + copy; templates and checks both use it. checks: leftover placeholders (`{{`, `[Company]`, lorem, TODO); required fields per page; UK phone/email valid; banned claims (guaranteed income, no voids, "you will earn", income ranges); step-1 validator dry run. colour: pixel quantiser → dominant brand colour; contrast via `funnels/brand.ts` `readableOn`. summary: headline figures from `AnalysisResult`, labelled an estimate, caveat "early estimate, limited local data" when quality not OK. No address.
   Check: `npm test` incl. "checks block a site with placeholder text".
-  Notes:
+  Notes: page-model (`buildSitePages` → paths '', areas/<slug>, fees, about, faq, privacy; form on every page except privacy; consent text = `consentText` from funnels/brand.ts), checks (`checkSite`, `validateStepOne` = step-1 lead validator Phase 6 reuses; messages echo ≤40 chars), colour (`dominantColour`, `brandColour` → primary/onPrimary via `readableOn`), summary (`buildSummary(result, qualityOk)` → ReportSummary or null; allow-listed fields, no address; caveat only when quality false), sample-site.ts fixture. Tests: websites suite 92 pass. Assumption: step 1 needs name, email, UK phone, consent (no prior validator existed; composed from existing helpers).
 
 - [ ] **Phase 5 — Server store, report run, emails** (needs 2, 4)
   Files: `src/lib/websites/{store-server,report-server,notify-server}.ts`, `src/lib/email/website.ts` (+ test), `src/lib/leads/store.ts` (one optional `emailProspect` param, default true; list the lines).
