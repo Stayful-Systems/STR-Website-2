@@ -62,11 +62,11 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: `npm test` incl. re-run guards (follow `credit/pack-schema.test.ts`). Smoke SQL proves: 21st claim of a day refused; second claim same lead → `already`; next day's held claim succeeds once; live claim refused while backlog fills cap; `website_report_charge` charges once, second call `already_charged`, short balance records `unpaid`. `ACCESS_COLUMNS` unchanged.
   Notes: schema.sql +315 lines (Batch 31 section only); smoke SQL, schema.test.ts, settings.ts(+test). Ran locally on Postgres 16: schema x3 identical dump, websites-smoke passes, credit/pack smoke still pass; npm test 3356 pass. Added a CI step for websites-smoke.sql in .github/workflows/ci.yml (2 lines, outside the plan's file list). Assumptions: claim returns text; charge returns jsonb result charged|unpaid|already_charged; an existing unpaid row is not retried. ACCESS_COLUMNS untouched.
 
-- [ ] **Phase 2 — Keep website funnels out of funnel paths** (needs 1)
+- [x] **Phase 2 — Keep website funnels out of funnel paths** (needs 1)
   Files: `src/lib/funnels/index.ts`, `src/app/leads/page.tsx`, `src/lib/funnels/kind-isolation.test.ts`.
   `Funnel.kind`. Filter `kind='form'` in `listFunnels`, `getFunnel`, `funnelByToken`, `funnelPageByToken`, `ownPublicFunnelByToken`, `ownedFunnelByToken`, `updateFunnel`, `rotateFunnelToken`, `markFirstLive`. `/leads` redirect to funnel setup only when owner has no form funnel AND no website.
   Check: source-pin test lists every lookup with the kind filter; `npm test`; every changed line listed in notes.
-  Notes:
+  Notes: funnels/index.ts (+19/-5): FunnelKind type + `kind` on Funnel, in COLUMNS, parsed in toFunnel; `.eq('kind','form')` on listFunnels, getFunnel, updateFunnel, rotateFunnelToken, funnelByToken, funnelPageByToken, ownPublicFunnelByToken, ownedFunnelByToken, markFirstLive (createFunnel and notifyNewLeadOf untouched). leads/page.tsx (+9/-1): new `ownsWebsite(ownerId)` helper; `&& !(await ownsWebsite(scope.ownerId))` added to the SETUP_PATH redirect. kind-isolation.test.ts 12/12 pass.
 
 - [ ] **Phase 3 — Pure website core** (needs 1)
   Files: `src/lib/websites/{types,slug,urls,sources,policy}.ts` + tests; `src/lib/activity/kinds.ts` (add `website_approved`, recordOnly).

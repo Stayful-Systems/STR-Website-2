@@ -16,12 +16,15 @@ import { parseBrand, type FunnelBrand } from './brand';
 
 export type ReportDepth = 'standard' | 'enhanced';
 export type UnqualifiedPolicy = 'crm_flagged' | 'hold';
+/** Batch 31: 'website' rows belong to the customer-websites feature; every funnel lookup here is 'form' only. */
+export type FunnelKind = 'form' | 'website';
 
 export interface Funnel {
   id: string;
   userId: string;
   publicToken: string;
   name: string;
+  kind: FunnelKind;
   brand: FunnelBrand;
   leadRules: LeadRules;
   reportDepth: ReportDepth;
@@ -37,7 +40,7 @@ export interface Funnel {
 export type PublicFunnel = Pick<Funnel, 'id' | 'name' | 'brand' | 'reportDepth'>;
 
 const COLUMNS =
-  'id, user_id, public_token, name, brand, lead_rules, report_depth, unqualified_policy, active, daily_cap, daily_spend_cap_pence, rotated_at, created_at';
+  'id, user_id, public_token, name, kind, brand, lead_rules, report_depth, unqualified_policy, active, daily_cap, daily_spend_cap_pence, rotated_at, created_at';
 
 /** Same shape as the other public tokens in this codebase (picks, deal shares). */
 export function mintFunnelToken(): string {
@@ -54,6 +57,7 @@ function toFunnel(r: Record<string, unknown>): Funnel {
     userId: String(r.user_id),
     publicToken: String(r.public_token),
     name: typeof r.name === 'string' ? r.name : 'My funnel',
+    kind: r.kind === 'website' ? 'website' : 'form',
     brand: parseBrand(r.brand),
     leadRules: parseLeadRules(r.lead_rules),
     reportDepth: r.report_depth === 'enhanced' ? 'enhanced' : 'standard',
@@ -86,6 +90,7 @@ export async function listFunnels(userId: string): Promise<Funnel[]> {
     .from('funnels')
     .select(COLUMNS)
     .eq('user_id', userId)
+    .eq('kind', 'form')
     .order('created_at', { ascending: false });
   if (error) {
     console.error('[funnels] list failed:', error.message);
@@ -102,6 +107,7 @@ export async function getFunnel(userId: string, id: string): Promise<Funnel | nu
     .select(COLUMNS)
     .eq('id', id)
     .eq('user_id', userId)
+    .eq('kind', 'form')
     .maybeSingle();
   if (error) {
     console.error('[funnels] get failed:', error.message);
@@ -173,7 +179,7 @@ export async function updateFunnel(userId: string, id: string, patch: FunnelPatc
   if (patch.dailySpendCapPence !== undefined) row.daily_spend_cap_pence = clamp(patch.dailySpendCapPence, 100, 1_000_000);
   if (patch.notifyNewLead !== undefined) row.notify_new_lead = patch.notifyNewLead;
 
-  const { error } = await createAdminClient().from('funnels').update(row).eq('id', id).eq('user_id', userId);
+  const { error } = await createAdminClient().from('funnels').update(row).eq('id', id).eq('user_id', userId).eq('kind', 'form');
   if (error) console.error('[funnels] update failed:', error.message);
   return !error;
 }
@@ -194,7 +200,8 @@ export async function rotateFunnelToken(userId: string, id: string): Promise<str
     .from('funnels')
     .update({ public_token: token, rotated_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id)
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .eq('kind', 'form');
   if (error) {
     console.error('[funnels] rotate failed:', error.message);
     return null;
@@ -213,6 +220,7 @@ export async function funnelByToken(token: string): Promise<PublicFunnel | null>
     .from('funnels')
     .select('id, name, brand, report_depth, active')
     .eq('public_token', token)
+    .eq('kind', 'form')
     .maybeSingle();
   if (error) {
     console.error('[funnels] token lookup failed:', error.message);
@@ -243,6 +251,7 @@ export async function funnelPageByToken(token: string): Promise<FunnelLookup> {
     .from('funnels')
     .select('id, name, brand, report_depth, active')
     .eq('public_token', token)
+    .eq('kind', 'form')
     .maybeSingle();
   if (error) {
     console.error('[funnels] page token lookup failed:', error.message);
@@ -277,6 +286,7 @@ export async function ownPublicFunnelByToken(userId: string, token: string): Pro
     .select('id, name, brand, report_depth')
     .eq('public_token', token)
     .eq('user_id', userId)
+    .eq('kind', 'form')
     .maybeSingle();
   if (error) {
     console.error('[funnels] owner preview lookup failed:', error.message);
@@ -291,7 +301,7 @@ export async function ownPublicFunnelByToken(userId: string, token: string): Pro
  */
 export async function ownedFunnelByToken(token: string): Promise<Funnel | null> {
   if (!isFunnelToken(token) || !hasServiceRole()) return null;
-  const { data, error } = await createAdminClient().from('funnels').select(COLUMNS).eq('public_token', token).maybeSingle();
+  const { data, error } = await createAdminClient().from('funnels').select(COLUMNS).eq('public_token', token).eq('kind', 'form').maybeSingle();
   if (error) {
     console.error('[funnels] owned token lookup failed:', error.message);
     return null;
@@ -312,6 +322,7 @@ export async function markFirstLive(userId: string, id: string): Promise<boolean
     .update({ first_live_at: new Date().toISOString() })
     .eq('id', id)
     .eq('user_id', userId)
+    .eq('kind', 'form')
     .is('first_live_at', null)
     .select('id');
   if (error) {

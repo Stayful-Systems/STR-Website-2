@@ -81,6 +81,13 @@ async function inactiveArchives(ownerId: string): Promise<{ count: number; first
   return { count: count ?? 0, firstDeletion: first };
 }
 
+/** Batch 31: does this owner have a customer website (any state)? Fails closed to false. */
+async function ownsWebsite(ownerId: string): Promise<boolean> {
+  if (!hasServiceRole()) return false;
+  const { count } = await createAdminClient().from("websites").select("id", { count: "exact", head: true }).eq("user_id", ownerId);
+  return (count ?? 0) > 0;
+}
+
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const filters = parseLeadFilters(await searchParams);
 
@@ -99,7 +106,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     inactiveArchives(scope.ownerId),
   ]);
   // Batch 22f: a management company that lands here before its form exists carries on with the setup.
-  if (isOwner && funnels.length === 0 && (await isManagementAccount(user.id))) redirect(SETUP_PATH);
+  // Batch 31: a website counts as set up too, so that owner is not sent to funnel setup.
+  if (isOwner && funnels.length === 0 && (await isManagementAccount(user.id)) && !(await ownsWebsite(scope.ownerId))) redirect(SETUP_PATH);
   const countFor = (tab: LeadTab) => counts[LEAD_TABS.findIndex((t) => t.key === tab)] ?? 0;
   const now = new Date();
   const rows = page.leads.map((r) => toRow(r, now));
