@@ -22,6 +22,7 @@ const PACK_KEYS = [
   'packEarlyOfferPence',
   'packPicksPauseDays',
   'placesCacheDays',
+  'placesCacheEmptyDays',
   'packPayingHeadlineFloorPct',
   'packPayingHeadlineTargetPct',
   'packPayingRundownPaidFloorPct',

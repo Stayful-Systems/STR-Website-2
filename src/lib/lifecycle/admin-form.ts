@@ -67,6 +67,7 @@ export const PACK_FIELDS = [
   { name: 'pack_early_offer_pence', key: LIFECYCLE_KEYS.packEarlyOfferPence, label: 'The early offer balance', min: 0, max: null },
   { name: 'pack_picks_pause_days', key: LIFECYCLE_KEYS.packPicksPauseDays, label: 'Picks pause days', min: 1, max: null },
   { name: 'places_cache_days', key: LIFECYCLE_KEYS.placesCacheDays, label: 'Places cache days', min: 0, max: null },
+  { name: 'places_cache_empty_days', key: LIFECYCLE_KEYS.placesCacheEmptyDays, label: 'Places cache days for an empty answer', min: 0, max: null },
   { name: 'pack_paying_headline_floor_pct', key: LIFECYCLE_KEYS.packPayingHeadlineFloorPct, label: 'Headline amber line (%)', min: 0, max: 100 },
   { name: 'pack_paying_headline_target_pct', key: LIFECYCLE_KEYS.packPayingHeadlineTargetPct, label: 'Headline green line (%)', min: 0, max: 100 },
   { name: 'pack_paying_rundown_paid_floor_pct', key: LIFECYCLE_KEYS.packPayingRundownPaidFloorPct, label: 'Step 5 amber line (%)', min: 0, max: 100 },

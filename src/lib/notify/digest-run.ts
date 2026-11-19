@@ -63,7 +63,8 @@ import { profileNudgesFor } from '../profile/server';
 import { mandatoryIncompleteFor } from '../profile/mandatory-server';
 import { lowCreditNoticesFor, markLowCreditTold, sendLowCreditAlone } from '../credit/low-credit-server';
 import { lowCreditSection } from '../credit/low-credit';
-import { markPackOfferEmailed, packOfferSection, packOfferStates } from '../credit/pack-offer-server';
+import { markPackOfferEmailed, packOfferSection, packOfferStates, sendPackOfferAlone } from '../credit/pack-offer-server';
+import { aloneCreditEmail } from '../credit/pack-rules';
 import { inactivePausedIds } from '../inactivity/server';
 import { allProfilesFor } from '../profiles/server';
 import { labelFor, profileLinks, seatsFor, type Seat } from '../profiles/rules';
@@ -293,8 +294,10 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   // for themselves: at the top of their email, or alone when there is nothing else.
   // Batch 21 (D22): a dry run reads no card from Stripe for them.
   const lowNotices = await lowCreditNoticesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now, { preview: opts.dry });
-  // Batch 29: the starter pack's £15 offer, once, where the £5 decision sits. Only ever riding an email that
-  // was going anyway (never alone); lowCreditNoticesFor already left out anyone it is due for, so never both.
+  // Batch 29: the starter pack's £15 offer, once, where the £5 decision sits. Review R4 (R4-15): on a morning
+  // no daily email is built, it goes as its own email. lowCreditNoticesFor leaves out members held for it
+  // (daily emails on); a member with picks off or paused can be due both, and then only the offer goes
+  // (buildDaily's creditNote, R4-16), the £5 decision the next day.
   const packOffers = await packOfferStates(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now);
   // Batch 23b: the morning briefings the 06:40 pass stored, in one read (none: the emails go as they were).
   const briefings = await emailBriefingsFor(base, open.filter(wantsTeasers).map((p) => p.id), now);
@@ -379,6 +382,22 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     // A day of daily deals is charged only for a profile's Today's 5 itself, never for changes alone.
     const chargeFor = (i: number) => dayChargeDue({ mode, admin: isAdmin(p), teasers: built?.teasersByPart[i]?.length ?? 0, funded: !noCredit.has(parts[i]?.seat.key ?? ''), mandatoryDone: !incomplete.has(p.id) });
     if (!built) {
+      // Review R4 (R4-15): nothing else today, but the £15 offer is due: it goes as its own email, in the
+      // day's slot, and the £5 decision waits for the next day (never both on one day).
+      const offer = packOffers.get(p.id);
+      const alone = aloneCreditEmail({ offerDue: Boolean(offer?.due), lowDue: lowNotices.has(p.id) });
+      if (alone === 'pack_offer' && offer) {
+        if (opts.dry) {
+          wouldEmail.push({ user: p.id, email: p.email, kind: 'pack_offer' });
+          perUser.push({ user: p.id, sent: false, kind: 'pack_offer', reason: 'would_send' });
+          return;
+        }
+        const r = await sendPackOfferAlone(admin, { userId: p.id, email: p.email!, state: offer, now });
+        if (r === 'sent') summary.emails += 1;
+        else if (r === 'failed') summary.emailFailures += 1;
+        perUser.push({ user: p.id, sent: r === 'sent', kind: 'pack_offer', ...(r === 'sent' ? {} : { reason: r }) });
+        return;
+      }
       // Batch 20: nothing else today, but the low-credit decision is due: it goes alone, in the same slot.
       const notice = lowNotices.get(p.id);
       if (notice) {
@@ -450,10 +469,11 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     // Sent: close what it told, what it would not tell and what settling dismissed.
     await finishSend(admin, claim.id, true, sendSummary, closingIds(built, alertsOn.has(p.id) ? pending.get(p.id) : null));
     summary.emails += 1;
-    // Batch 20: the low-credit decision went with it: once a cycle.
-    if (lowNotices.has(p.id)) await markLowCreditTold(admin, p.id, now);
+    // Batch 20: the low-credit decision went with it: once a cycle. Review R4 (R4-16): only the note that
+    // is in the email is stamped; the offer takes the £5 decision's place, which then goes the next day.
+    if (built.creditNote === 'low_credit') await markLowCreditTold(admin, p.id, now);
     // Batch 29: the £15 offer went with it: never again.
-    if (packOffers.get(p.id)?.due) await markPackOfferEmailed(admin, p.id, now);
+    if (built.creditNote === 'pack_offer') await markPackOfferEmailed(admin, p.id, now);
     // Batch 25: the "Saved for you" deals in it are told.
     if (built.savedIds.length > 0) await markSavedEmailed(admin, p.id, built.savedIds, now);
     // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.

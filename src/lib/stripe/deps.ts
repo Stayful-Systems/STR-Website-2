@@ -12,7 +12,7 @@ import { getPlan } from '../credit/plans';
 import { recordSubscriptionEvent } from '../billing/subscription-events';
 import { recordActivity } from '../activity/log';
 import { recordConversion } from '../meta/conversions';
-import { recordPayment, recordRefund } from '../payments/server';
+import { recordDispute, recordPayment, recordRefund } from '../payments/server';
 import { clawbackStarterPack, grantStarterPack, settleStarterPack } from '../starter-pack/grant-server';
 import { monthlyPence } from '../billing/churn';
 import type { WebhookDeps } from './webhook';
@@ -159,6 +159,8 @@ export function liveWebhookDeps(): WebhookDeps {
     // Batch 20: the rows behind "Total paid" (src/lib/payments).
     recordPayment: (payment) => recordPayment(payment),
     recordRefund: (refund) => recordRefund(refund),
+    // Review R4 (R4-14): a charged-back further payment no longer counts as paying again.
+    recordDispute: (input) => recordDispute(input),
     invoicePaymentIntent: async (invoiceId) => {
       const list = await stripe.invoicePayments.list({ invoice: invoiceId, status: 'paid', limit: 5 });
       for (const p of list.data) {

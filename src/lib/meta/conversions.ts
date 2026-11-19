@@ -51,7 +51,7 @@ import { parseBrowserConversion, type BrowserConversion } from '../tracking/me';
 import { clientDetails } from '../tracking/request';
 import { buildCapiEvent, sendCapi, type ClientDetails } from './capi';
 import { deployment, metaDryRun, serverSendMode } from './env';
-import { dedupeKeyFor, eventSourceUrl, isMetaEvent, isPostLaunch, purchaseFromPack, repeatPurchaseDue, repeatValue, subscribeFromInvoice, type InvoiceFacts, type MetaEventName, type PackFacts, type RepeatFacts } from './events';
+import { dedupeKeyFor, earlierFurtherPayment, eventSourceUrl, isMetaEvent, isPostLaunch, purchaseFromPack, repeatPurchaseDue, repeatValue, subscribeFromInvoice, type InvoiceFacts, type MetaEventName, type PackFacts, type RepeatFacts } from './events';
 import { buildFbc } from './fbc';
 import { hashEmail, hashExternalId } from './hash';
 
@@ -311,10 +311,11 @@ export async function recordConversion(input: ConversionInput): Promise<void> {
 /**
  * Batch 29: what decides a RepeatPurchase. `packAt`: when the member's starter
  * pack was granted (null: never bought one). `earlier`: a further payment
- * other than this one since the pack: a top-up or plan payment row, or a
- * top-up grant (pi:…) that is not a pack's (the fallback member_paid_again_at
- * also uses, for a payment row that failed to write). Unreadable: throws, and
- * nothing is recorded.
+ * other than this one since the pack, paid before this one (Review R4, R4-21:
+ * the earliest wins, so two landing together still send one): a top-up or
+ * plan payment row (paid_at), or a top-up grant (pi:…, created_at) that is not
+ * a pack's (the fallback member_paid_again_at also uses, for a payment row
+ * that failed to write). Unreadable: throws, and nothing is recorded.
  */
 async function repeatFacts(userId: string, paymentId: string): Promise<{ packAt: string | null; earlier: boolean }> {
   const admin = createAdminClient();
@@ -324,16 +325,20 @@ async function repeatFacts(userId: string, paymentId: string): Promise<{ packAt:
   const packAt = rows.filter((r) => r.status === 'granted' && r.granted_at).map((r) => r.granted_at!).sort()[0] ?? null;
   if (!packAt) return { packAt: null, earlier: false };
   const [{ data: pays, error: payErr }, { data: grants, error: grantErr }] = await Promise.all([
-    admin.from('member_payments').select('id').eq('user_id', userId).in('kind', ['topup', 'auto_topup', 'subscription']).gt('amount_pence', 0).gt('paid_at', packAt).neq('id', paymentId).limit(1),
-    admin.from('credit_grants').select('source_ref').eq('user_id', userId).eq('kind', 'topup').gt('amount_pence', 0).gt('created_at', packAt).like('source_ref', 'pi:%').limit(50),
+    admin.from('member_payments').select('id, paid_at').eq('user_id', userId).in('kind', ['topup', 'auto_topup', 'subscription']).gt('amount_pence', 0).gt('paid_at', packAt).limit(50),
+    admin.from('credit_grants').select('source_ref, created_at').eq('user_id', userId).eq('kind', 'topup').gt('amount_pence', 0).gt('created_at', packAt).like('source_ref', 'pi:%').limit(50),
   ]);
   if (payErr) throw new Error(payErr.message);
   if (grantErr) throw new Error(grantErr.message);
-  if ((pays ?? []).length > 0) return { packAt, earlier: true };
   // Any pack's PaymentIntent (a blocked repeat charged anyway included) is not a further payment.
   const packRefs = new Set(rows.map((r) => `pi:${r.payment_intent_id}`));
-  const earlier = ((grants ?? []) as { source_ref: string | null }[]).some((g) => g.source_ref && g.source_ref !== paymentId && !packRefs.has(g.source_ref));
-  return { packAt, earlier };
+  // One entry per payment: a top-up by its grant's time (written before this check, so two top-ups are
+  // compared on the same clock), a plan payment by its row's time.
+  const at = new Map<string, string | null>();
+  for (const p of (pays ?? []) as { id: string; paid_at: string | null }[]) at.set(p.id, p.paid_at);
+  for (const g of (grants ?? []) as { source_ref: string | null; created_at: string | null }[]) if (g.source_ref && !packRefs.has(g.source_ref)) at.set(g.source_ref, g.created_at);
+  const others = [...at].map(([id, t]) => ({ id, at: t }));
+  return { packAt, earlier: earlierFurtherPayment(others, { id: paymentId, at: at.get(paymentId) ?? null }) };
 }
 
 /**

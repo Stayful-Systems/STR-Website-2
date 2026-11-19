@@ -8178,6 +8178,7 @@ notify pgrst, 'reload schema';
 --   pack_early_offer_pence       the one-off "start Starter or top up" offer at this total balance
 --   pack_picks_pause_days        a pack-only member's picks pause after this many days without a visit
 --   places_cache_days            Google Places nearby results are reused this long (about 100m grid)
+--   places_cache_empty_days      an EMPTY Places answer is reused only this long (Review R4, R4-20)
 --   pack_paying_headline_floor_pct / _target_pct         paid again within 60 days (/admin/weekly-active)
 --   pack_paying_rundown_paid_floor_pct / _target_pct     paid again within 14 days of running down
 --   pack_cost_target_pence / pack_cost_ceiling_pence     data cost per pack-only member
@@ -8187,6 +8188,7 @@ insert into public.billing_settings (key, value) values
   ('pack_early_offer_pence', '1500'),
   ('pack_picks_pause_days', '7'),
   ('places_cache_days', '90'),
+  ('places_cache_empty_days', '3'),
   ('pack_paying_headline_floor_pct', '10'),
   ('pack_paying_headline_target_pct', '22'),
   ('pack_paying_rundown_paid_floor_pct', '35'),
@@ -8195,20 +8197,49 @@ insert into public.billing_settings (key, value) values
   ('pack_cost_ceiling_pence', '250')
 on conflict (key) do nothing;
 
+-- Review R4 (R4-14, Zac 19 Nov 2026): a further payment that was refunded in
+-- full or charged back no longer counts as paying again.
+--   member_payments.disputed_at  the charge is under a dispute that has not
+--                                closed in our favour (member_payment_dispute)
+--   member_payment_void(pi, amount, disputed_at)  true for a disputed payment,
+--                                or one whose charge's refunds (member_refunds,
+--                                matched on the PaymentIntent) reach what was paid
+alter table public.member_payments add column if not exists disputed_at timestamptz;
+
+create or replace function public.member_payment_void(p_pi text, p_amount integer, p_disputed_at timestamptz)
+returns boolean language sql stable security definer set search_path = public as $$
+  select p_disputed_at is not null
+      or (p_pi is not null and p_amount > 0
+          and coalesce((select sum(r.amount_refunded_pence) from member_refunds r where r.payment_intent_id = p_pi), 0) >= p_amount);
+$$;
+revoke all on function public.member_payment_void(text, integer, timestamptz) from public, anon, authenticated;
+grant execute on function public.member_payment_void(text, integer, timestamptz) to service_role;
+
 -- member_paid_again_at(user): when the member first paid for anything other
 -- than the starter pack, ever (null: never). A top-up, an automatic top-up or a
 -- subscription invoice (member_payments rows exist only for amounts above 0,
 -- so a free trial is never a payment), or, should that row never have been
 -- written, a top-up grant whose PaymentIntent is not a starter pack's. A
 -- repeat pack charged anyway is the pack's kind, so it is not one.
+-- Review R4 (R4-14): a payment refunded in full or charged back is not one
+-- (member_payment_void). A top-up grant counts only when its payment row is
+-- missing, and not once its credit has been taken back in full (refunded or
+-- disputed, less any dispute won).
 create or replace function public.member_paid_again_at(p_user uuid)
 returns timestamptz language sql stable security definer set search_path = public as $$
   select least(
     (select min(m.paid_at) from member_payments m
-      where m.user_id = p_user and m.kind in ('topup', 'auto_topup', 'subscription')),
+      where m.user_id = p_user and m.kind in ('topup', 'auto_topup', 'subscription')
+        and not member_payment_void(m.payment_intent_id, m.amount_pence, m.disputed_at)),
     (select min(g.created_at) from credit_grants g
       where g.user_id = p_user and g.kind = 'topup' and left(g.source_ref, 3) = 'pi:'
-        and not exists (select 1 from starter_pack_purchases s where 'pi:' || s.payment_intent_id = g.source_ref))
+        and not exists (select 1 from starter_pack_purchases s where 'pi:' || s.payment_intent_id = g.source_ref)
+        and not exists (select 1 from member_payments m where m.id = g.source_ref)
+        and coalesce((select sum(a.amount_pence)
+                        from credit_grants a
+                       where a.user_id = g.user_id and a.kind = 'adjustment'
+                         and (a.source_ref in (g.source_ref || ':refunded', g.source_ref || ':disputed', g.source_ref || ':dispute_won')
+                              or a.source_ref like g.source_ref || ':refunded:%')), 0) > -g.amount_pence)
   );
 $$;
 revoke all on function public.member_paid_again_at(uuid) from public, anon, authenticated;
@@ -8267,11 +8298,20 @@ grant execute on function public.pack_bonus_unlock(uuid) to service_role;
 -- Every writer of member_payments (the one-click routes, the webhook, a
 -- redelivery) goes through this: a top-up, automatic top-up or plan payment
 -- lifts the bonus in the same transaction as the payment's row.
+-- Review R4 (R4-14): a payment already refunded in full or disputed when its
+-- row lands (an event out of order) lifts nothing. Review R4 (R4-18): paid_at
+-- is Stripe's payment time, so a payment made before the bonus expired but
+-- recorded just after it also lifts it at once, as long as the expiry sweep
+-- has not yet written it off.
 create or replace function private.member_payments_pack_unlock()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  if new.kind in ('topup', 'auto_topup', 'subscription') and new.amount_pence > 0 then
+  if new.kind in ('topup', 'auto_topup', 'subscription') and new.amount_pence > 0
+     and not public.member_payment_void(new.payment_intent_id, new.amount_pence, new.disputed_at) then
     perform public.pack_bonus_unlock(new.user_id);
+    update public.credit_grants set scope_lifted_at = now(), expires_at = null
+     where user_id = new.user_id and scope = 'pack_bonus' and scope_lifted_at is null
+       and remaining_pence > 0 and expires_at is not null and expires_at <= now() and expires_at > new.paid_at;
   end if;
   return new;
 end $$;
@@ -8280,6 +8320,76 @@ drop trigger if exists member_payments_pack_unlock on public.member_payments;
 create trigger member_payments_pack_unlock
   after insert on public.member_payments
   for each row execute function private.member_payments_pack_unlock();
+
+-- pack_bonus_restrict(user): Review R4 (R4-14, Zac 19 Nov 2026). When the
+-- member no longer counts as having paid again (their further payments were
+-- all refunded in full or charged back), every lifted pack bonus is
+-- restricted again with its original expiry (granted + pack_bonus_expiry_days;
+-- the lift cleared it). One whose date has passed is no longer spendable and
+-- the next credit_expire_due writes it off. They are pack-only again. Returns
+-- how many grants it restricted.
+create or replace function public.pack_bonus_restrict(p_user uuid)
+returns integer language plpgsql security definer set search_path = public as $$
+declare
+  v_days int := greatest(1, round(credit_setting_num('pack_bonus_expiry_days', 30))::int);
+  n integer := 0;
+begin
+  if p_user is null then return 0; end if;
+  perform 1 from profiles where id = p_user for update;
+  if member_paid_again_at(p_user) is not null then return 0; end if;
+  update credit_grants set scope_lifted_at = null, expires_at = created_at + make_interval(days => v_days)
+   where user_id = p_user and scope = 'pack_bonus' and scope_lifted_at is not null;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.pack_bonus_restrict(uuid) from public, anon, authenticated;
+grant execute on function public.pack_bonus_restrict(uuid) to service_role;
+
+-- A refund written (member_refund_set, from charge.refunded) re-restricts the
+-- bonus when it leaves the member with no further payment that counts.
+create or replace function private.member_refunds_pack_restrict()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  perform public.pack_bonus_restrict(new.user_id);
+  return new;
+end $$;
+revoke execute on function private.member_refunds_pack_restrict() from public;
+drop trigger if exists member_refunds_pack_restrict on public.member_refunds;
+create trigger member_refunds_pack_restrict
+  after insert or update on public.member_refunds
+  for each row execute function private.member_refunds_pack_restrict();
+
+-- member_payment_dispute(p): {pi, open}. A dispute opened on a charge
+-- (charge.dispute.created) marks its payment row disputed and re-restricts the
+-- bonus (pack_bonus_restrict); one closed in our favour (won, or an inquiry
+-- closed with nothing taken) clears the mark and, if the payment counts again
+-- and the bonus has not expired, lifts it again. A lost dispute changes
+-- nothing. Returns how many payment rows changed.
+create or replace function public.member_payment_dispute(p jsonb)
+returns integer language plpgsql security definer set search_path = public as $$
+declare
+  v_pi text := nullif(p->>'pi', '');
+  v_open boolean := coalesce((p->>'open')::boolean, true);
+  v_user uuid;
+  n integer := 0;
+begin
+  if v_pi is null then return 0; end if;
+  for v_user in
+    update member_payments set disputed_at = case when v_open then now() end
+     where payment_intent_id = v_pi and (disputed_at is null) = v_open
+    returning user_id
+  loop
+    n := n + 1;
+    if v_open then
+      perform pack_bonus_restrict(v_user);
+    elsif member_paid_again_at(v_user) is not null then
+      perform pack_bonus_unlock(v_user);
+    end if;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.member_payment_dispute(jsonb) from public, anon, authenticated;
+grant execute on function public.member_payment_dispute(jsonb) to service_role;
 
 -- ── pack_fresh_reports: the fresh full analyses a pack-only member has run ──
 -- One row per fresh analysis (the purchase id of a deal's Full analysis, or
@@ -8445,7 +8555,8 @@ do $$ begin perform public.pack_bonus_backfill(); end $$;
 --   ran_down_at   the first moment, within 45 days of the pack, that the running
 --                 ledger total (every grant, debit, refund, expiry and adjustment)
 --                 was at or below low_credit_pence
---   paid          further payments after the pack (top-up, automatic top-up, plan)
+--   paid          further payments after the pack (top-up, automatic top-up, plan);
+--                 one refunded in full or charged back is left out (Review R4, R4-14)
 --   raw_cost      what their own debits cost us (raw_cost_pence; a face debit's is in its metadata)
 create or replace function public.pack_paying_facts(p jsonb)
 returns jsonb language sql stable security definer set search_path = public as $$
@@ -8485,6 +8596,7 @@ returns jsonb language sql stable security definer set search_path = public as $
     select m.user_id, array_agg(m.paid_at order by m.paid_at) as paid
       from member_payments m join b on b.user_id = m.user_id
      where m.kind in ('topup', 'auto_topup', 'subscription') and m.paid_at > b.pack_at
+       and not member_payment_void(m.payment_intent_id, m.amount_pence, m.disputed_at)
      group by m.user_id
   ), cost as (
     select ct.user_id, sum(coalesce(ct.raw_cost_pence, safe_numeric(ct.metadata->>'raw_cost_pence'), 0)) as raw_cost

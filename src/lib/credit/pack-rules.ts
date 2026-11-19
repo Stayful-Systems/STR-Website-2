@@ -24,6 +24,10 @@
  *   - A further payment (a top-up, an automatic top-up or a plan invoice:
  *     member_payments kinds topup / auto_topup / subscription) lifts the
  *     restriction AND the expiry at once (trigger member_payments_pack_unlock).
+ *     Review R4 (R4-14, Zac 19 Nov 2026): one refunded in full or charged back
+ *     no longer counts (public.member_payment_void): when none is left, the
+ *     bonus is restricted again with its original expiry (pack_bonus_restrict,
+ *     on the refund or dispute) and the member is pack-only again.
  *   - Refunds go back to the grant they came from (credit_allocations), an
  *     expired bonus included.
  *
@@ -35,8 +39,10 @@
  * THE FRESH-REPORT CAP: a pack-only member may run pack_fresh_report_cap fresh
  * full analyses (welcome-price reveal reports included); saved analyses never
  * count. Claim a slot with claimFreshReport before anything is charged and
- * release it if the run ends with nothing charged or turns out to be a saved
- * one (./pack-server.ts; public.pack_fresh_report_claim is race-free). The
+ * release it if the report fails (Review R4, R4-17, Zac 19 Nov 2026: even if
+ * part of it was charged), if a run ends with nothing charged, or if it turns
+ * out to be a saved one (slotGoesBack; ./pack-server.ts;
+ * public.pack_fresh_report_claim is race-free). The
  * doors: startDealAnalysis (deal sheet, reveal, /intelligence, Batch 27) and
  * reserveAnalysis (the analyser, the API, MCP).
  *
@@ -116,6 +122,16 @@ export function freshLeft(s: Pick<PackState, 'packOnly' | 'freshUsed' | 'freshCa
   return Math.max(0, s.freshCap - s.freshUsed);
 }
 
+/**
+ * Review R4 (R4-17, Zac 19 Nov 2026): whether a report's fresh-report slot
+ * goes back when it ends. A report that did not complete always gives it back,
+ * even if part of it was charged; one that completed keeps it unless it
+ * charged nothing (an empty run).
+ */
+export function slotGoesBack(f: { completed: boolean; charged: boolean }): boolean {
+  return !f.completed || !f.charged;
+}
+
 /** The cap stops a fresh analysis now. */
 export function capReached(s: Pick<PackState, 'packOnly' | 'freshUsed' | 'freshCap'>): boolean {
   const left = freshLeft(s);
@@ -189,8 +205,10 @@ export function lowCreditWaitsForOffer(emailedAt: string | null, now: Date): boo
  * Who Batch 20's £5 decision (and Batch 25's nudge) waits for today:
  *   - the offer went in an email today, or its Home card was first shown today;
  *   - or its email section is due and a morning email can carry it (daily
- *     emails on, picks not paused). A member with no morning email is never
- *     held: their £5 notice goes as it always has, and the offer stays on Home.
+ *     emails on, picks not paused). When no daily email is built that morning,
+ *     the offer goes as its own email (aloneCreditEmail; Review R4, R4-15), so
+ *     the hold lasts one day. A member with no morning email is never held:
+ *     their £5 notice goes as it always has, and the offer stays on Home.
  * So the offer goes first and never shares a day with the £5 decision.
  */
 export function lowCreditHeldForOffer(f: { due: boolean; emailedAt: string | null; homeAt: string | null; dailyEmails: boolean }, now: Date): boolean {
@@ -198,6 +216,17 @@ export function lowCreditHeldForOffer(f: { due: boolean; emailedAt: string | nul
   const home = at(f.homeAt);
   if (home && sameUkDay(home, now)) return true;
   return f.due && f.dailyEmails;
+}
+
+/**
+ * Review R4 (R4-15, Zac 19 Nov 2026): when no daily email is built for a
+ * member, which credit email goes on its own in the day's slot. The £15 offer
+ * goes first, as its own email; the £5 decision then waits for the next UK day
+ * (lowCreditWaitsForOffer), so the two never share a day.
+ */
+export function aloneCreditEmail(f: { offerDue: boolean; lowDue: boolean }): 'pack_offer' | 'low_credit' | null {
+  if (f.offerDue) return 'pack_offer';
+  return f.lowDue ? 'low_credit' : null;
 }
 
 // ── The picks pause (section D) ──
@@ -230,10 +259,28 @@ export function ukDate(iso: string): string {
   return new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'long' }).format(new Date(t));
 }
 
-/** A pack-only member's own values for Stayful Intelligence's knowledge answers (null for everyone else). */
-export function packMemberValues(s: PackState): { packOnly: true; bonusPence: number; bonusExpires: string | null; freshLeft: number | null } | null {
-  if (!s.packOnly) return null;
-  return { packOnly: true, bonusPence: s.bonusPence, bonusExpires: s.bonusExpiresAt ? ukDate(s.bonusExpiresAt) || null : null, freshLeft: freshLeft(s) };
+/**
+ * Review R4 (R4-19): the restricted bonus is explained wherever it is held,
+ * not only to pack-only members: a pack buyer on a plan trial (no payment
+ * yet) keeps a restricted, expiring bonus too.
+ */
+export function holdsRestrictedBonus(s: Pick<PackState, 'bonusPence'>): boolean {
+  return s.bonusPence > 0;
+}
+
+/** The balance line for Billing, Usage and the low-credit email: whenever a restricted bonus is held (null: none). */
+export function bonusLineFor(s: Pick<PackState, 'bonusPence' | 'bonusExpiresAt'>): string | null {
+  return holdsRestrictedBonus(s) ? PACK_COPY.bonusLine(s.bonusPence, s.bonusExpiresAt) : null;
+}
+
+/**
+ * A pack member's own values for Stayful Intelligence's knowledge answers:
+ * a pack-only member, or (Review R4, R4-19) anyone still holding a restricted
+ * bonus, such as a pack buyer on a plan trial (null for everyone else).
+ */
+export function packMemberValues(s: PackState): { packOnly: boolean; bonusPence: number; bonusExpires: string | null; freshLeft: number | null } | null {
+  if (!s.packOnly && !holdsRestrictedBonus(s)) return null;
+  return { packOnly: s.packOnly, bonusPence: s.bonusPence, bonusExpires: s.bonusExpiresAt ? ukDate(s.bonusExpiresAt) || null : null, freshLeft: freshLeft(s) };
 }
 
 export const PACK_COPY = {

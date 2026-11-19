@@ -30,6 +30,12 @@ export interface PaymentRecord {
   currency: string;
   planCode: string | null;
   paymentIntentId: string | null;
+  /**
+   * Review R4 (R4-18): when Stripe took the payment (ISO), so a payment made
+   * just before the starter pack bonus expired still counts though its
+   * webhook lands after. Absent: the row's insert time.
+   */
+  paidAt?: string;
 }
 
 export interface RefundRecord {
@@ -47,16 +53,25 @@ export function paymentKindFor(metadata: { kind?: string | null; auto?: string |
   return null;
 }
 
-/** A succeeded PaymentIntent for a pack or a top-up, as a row. */
+/** A Stripe time (seconds since 1970) as ISO; nothing for a missing, odd or future one. */
+export function stripeTimeIso(seconds: number | null | undefined, now: Date = new Date()): string | undefined {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s <= 0) return undefined;
+  const ms = Math.min(s * 1000, now.getTime());
+  return new Date(ms).toISOString();
+}
+
+/** A succeeded PaymentIntent for a pack or a top-up, as a row (paid at Stripe's time for it). */
 export function paymentFromIntent(
-  pi: { id: string; amount_received?: number | null; amount?: number | null; currency?: string | null; metadata?: Record<string, string | null | undefined> | null },
+  pi: { id: string; amount_received?: number | null; amount?: number | null; currency?: string | null; metadata?: Record<string, string | null | undefined> | null; created?: number | null },
   userId: string,
 ): PaymentRecord | null {
   const kind = paymentKindFor(pi.metadata ?? null);
   if (!kind || !pi.id || !userId) return null;
   const amount = Math.round(Number(pi.amount_received ?? pi.amount ?? 0));
   if (!Number.isFinite(amount) || amount <= 0) return null;
-  return { id: `pi:${pi.id}`, userId, kind, amountPence: amount, currency: (pi.currency ?? 'gbp').toLowerCase(), planCode: null, paymentIntentId: pi.id };
+  const paidAt = stripeTimeIso(pi.created);
+  return { id: `pi:${pi.id}`, userId, kind, amountPence: amount, currency: (pi.currency ?? 'gbp').toLowerCase(), planCode: null, paymentIntentId: pi.id, ...(paidAt ? { paidAt } : {}) };
 }
 
 /**
@@ -65,14 +80,15 @@ export function paymentFromIntent(
  * payment, which is how a later refund of it is matched.
  */
 export function paymentFromInvoice(
-  invoice: { id?: string | null; amount_paid?: number | null; currency?: string | null },
+  invoice: { id?: string | null; amount_paid?: number | null; currency?: string | null; created?: number | null; status_transitions?: { paid_at?: number | null } | null },
   userId: string,
   planCode: string | null,
   paymentIntentId: string | null = null,
 ): PaymentRecord | null {
   const amount = Math.round(Number(invoice.amount_paid ?? 0));
   if (!invoice.id || !userId || !Number.isFinite(amount) || amount <= 0) return null;
-  return { id: `inv:${invoice.id}`, userId, kind: 'subscription', amountPence: amount, currency: (invoice.currency ?? 'gbp').toLowerCase(), planCode, paymentIntentId };
+  const paidAt = stripeTimeIso(invoice.status_transitions?.paid_at ?? invoice.created);
+  return { id: `inv:${invoice.id}`, userId, kind: 'subscription', amountPence: amount, currency: (invoice.currency ?? 'gbp').toLowerCase(), planCode, paymentIntentId, ...(paidAt ? { paidAt } : {}) };
 }
 
 /** The PaymentIntent an invoice was paid with, when the invoice carries its payments. */

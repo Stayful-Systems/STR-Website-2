@@ -14,7 +14,7 @@ import { isPackAccount } from "@/lib/lifecycle/settings";
 import { recordPackShown, starterPackStateFor } from "@/lib/starter-pack/server";
 import { BillingClient } from "./BillingClient";
 import { packStateForPayer } from "@/lib/credit/pack-server";
-import { PACK_COPY } from "@/lib/credit/pack-rules";
+import { bonusLineFor } from "@/lib/credit/pack-rules";
 
 export const metadata: Metadata = {
   title: "Billing & usage — Stayful Intelligence",
@@ -51,7 +51,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     packStateForPayer(user.id),
   ]);
   // Batch 29: how much of the balance is the starter pack's bonus, and when it expires.
-  const bonusLine = packState.packOnly && packState.bonusPence > 0 ? PACK_COPY.bonusLine(packState.bonusPence, packState.bonusExpiresAt) : null;
+  const bonusLine = bonusLineFor(packState);
   // Batch 21 (B24): a pack-era account was never due the welcome credit, so it
   // is not told that credit was withheld (its one claim is the pack's).
   const packAccount = isPackAccount(profile.created_at as string | null, settings.lifecycle);

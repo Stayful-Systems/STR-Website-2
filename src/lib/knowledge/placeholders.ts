@@ -471,6 +471,7 @@ export const CONDITIONS: Readonly<Record<string, ConditionDef>> = {
   pack_available: { label: 'The starter pack is on and not bought', scope: 'member', resolve: (_g, m) => (m ? m.packAvailable : null) },
   pack_only: { label: 'They bought the starter pack and have paid for nothing since (Batch 29)', scope: 'member', resolve: (_g, m) => (m ? Boolean(m.pack?.packOnly) : null) },
   pack_bonus_dated: { label: 'Their starter pack bonus has an expiry date', scope: 'member', resolve: (_g, m) => (m ? Boolean(m.pack?.bonusExpires) : null) },
+  pack_bonus_held: { label: 'They still hold a restricted starter pack bonus: pack-only, or on a plan trial with no payment yet (Review R4, R4-19)', scope: 'member', resolve: (_g, m) => (m ? (m.pack?.bonusPence ?? 0) > 0 : null) },
   free_delay_applies: {
     label: 'They are a free member and new deals wait for free members',
     scope: 'member',

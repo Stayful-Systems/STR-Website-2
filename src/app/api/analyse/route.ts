@@ -221,6 +221,8 @@ export async function POST(request: Request) {
           // it is neither saved nor linked to the deal, so it can be run again.
           if (!analysisComplete(result)) {
             if (userId) await refundAction(prepared.ctx.actionId, 'Report could not get short-let figures');
+            // Review R4 (R4-17): a failed report gives a pack-only member's fresh-report slot back.
+            await prepared.releaseSlot?.();
             send({ stage: 'error', progress: 0, message: 'We couldn’t get short-let figures for this property just now, so the report wasn’t saved and you haven’t been charged for it. Please try again later.' });
             return;
           }
@@ -286,6 +288,7 @@ export async function POST(request: Request) {
             // not charged either.
             if (!reportSaved) {
               await refundAction(prepared.ctx.actionId, 'Report could not be saved');
+              await prepared.releaseSlot?.();
               send({ stage: 'error', progress: 0, message: 'Your report couldn’t be saved, so you haven’t been charged for it. Please try again.' });
               return;
             }
@@ -343,6 +346,7 @@ export async function POST(request: Request) {
         } catch (err) {
           // Whatever a report that failed had already charged is refunded.
           if (userId) await refundAction(prepared.ctx.actionId, 'Report failed');
+          await prepared.releaseSlot?.();
           if (err instanceof GeocodeError) {
             send({ stage: 'error', progress: 0, message: err.message });
           } else {

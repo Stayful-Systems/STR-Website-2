@@ -47,7 +47,7 @@ import { openCreditBase } from '../credit/deal-pricing';
 import { quoterFor } from '../credit/quote-server';
 import { debit, release, reserve, spendableFor, InsufficientCreditError } from '../credit/ledger';
 import { claimFreshReport, packStateForPayer, releaseFreshReport } from '../credit/pack-server';
-import { NOT_PACK, PACK_COPY, SAVED_ANALYSIS_ACTION, analysisHoldAction, deepNeedsTopUp, type PackState } from '../credit/pack-rules';
+import { NOT_PACK, PACK_COPY, SAVED_ANALYSIS_ACTION, analysisHoldAction, deepNeedsTopUp, holdsRestrictedBonus, type PackState } from '../credit/pack-rules';
 import { isEnforcing } from '../credit/http';
 import { afterDebit } from '../credit/after-debit';
 import { startAction, SeatPausedError } from '../credit/action';
@@ -342,7 +342,8 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
     ]);
     const holdShort = forHold !== null && forHold < quote.due.totalBasePence;
     if (all < quote.due.purchaseBasePence || holdShort) {
-      const bonusOnly = pack.packOnly && all >= quote.due.purchaseBasePence;
+      // Review R4 (R4-19): told whenever a restricted bonus is held (a pack buyer on a plan trial too), not only pack-only.
+      const bonusOnly = holdsRestrictedBonus(pack) && all >= quote.due.purchaseBasePence;
       return fail('insufficient_credit', { requiredPence: quote.due.purchaseBasePence, availablePence: Math.max(0, Math.round(holdShort ? Math.min(all, forHold ?? all) : all)), ...(bonusOnly ? { message: PACK_COPY.bonusOnly } : {}) });
     }
   }

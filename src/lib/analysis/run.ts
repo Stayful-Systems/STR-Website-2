@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { startAction, actionSpend } from '../credit/action';
 import { actionAlreadyCharged } from '../credit/ledger';
 import { claimFreshReport, packStateForPayer, releaseFreshReport, PackLimitError } from '../credit/pack-server';
+import { slotGoesBack } from '../credit/pack-rules';
 import { payerFor } from '../team';
 import { runMetered, type MeterContext } from '../credit/context';
 import { estimateAction, reportAction, type CreditAction } from '../credit/estimate';
@@ -90,7 +91,10 @@ export interface AnalysisRunOptions {
  */
 export interface PreparedAnalysis {
   ctx: MeterContext;
-  finish: () => Promise<void>;
+  /** Ends the run. `completed` false: the report failed (Review R4, R4-17: a pack-only member's fresh-report slot goes back). */
+  finish: (outcome?: { completed: boolean }) => Promise<void>;
+  /** A report that failed after the run itself finished (not saved, no figures): its fresh-report slot goes back. Never throws. */
+  releaseSlot?: () => Promise<void>;
   /** 'report' or 'report_enhanced' — the action the reservation was priced as. */
   reportKind: CreditAction;
   /** Worst-case base pence held for this run. */
@@ -227,13 +231,17 @@ export async function reserveAnalysis(input: AnalysisInput, opts: AnalysisRunOpt
   }
   const started = action;
   const finish = slot
-    ? async () => {
+    ? async (outcome?: { completed: boolean }) => {
         await started.finish();
-        // Nothing charged (a failed or empty run): the slot goes back.
-        if (!(await actionAlreadyCharged(actionId).catch(() => true))) await releaseFreshReport(actionId);
+        // Review R4 (R4-17): a report that failed gives the slot back, even if part of it was
+        // charged; a completed one only when it charged nothing (an empty run).
+        const completed = outcome?.completed !== false;
+        const charged = completed ? await actionAlreadyCharged(actionId).catch(() => true) : true;
+        if (slotGoesBack({ completed, charged })) await releaseFreshReport(actionId);
       }
-    : started.finish;
-  return { ctx: started.ctx, finish, reportKind, maxBasePence };
+    : () => started.finish();
+  const releaseSlot = slot ? () => releaseFreshReport(actionId) : undefined;
+  return { ctx: started.ctx, finish, reportKind, maxBasePence, ...(releaseSlot ? { releaseSlot } : {}) };
 }
 
 export async function runAnalysis(
@@ -249,6 +257,8 @@ export async function runAnalysis(
   const priceLabs = priceLabsEnabled();
   const { ctx, finish } = prepared;
 
+  // Review R4 (R4-17): whether the report got to the end; a failed one gives its fresh-report slot back.
+  let completed = false;
   return runMetered(ctx, async (): Promise<AnalysisRun> => {
     try {
       // ── Group 1 (parallel): Geocoding + (Short-let + Long-let) ──
@@ -570,9 +580,10 @@ export async function runAnalysis(
         ? await actionSpend(ctx.actionId).catch(() => ({ basePence: 0, chargedPence: 0 }))
         : { basePence: 0, chargedPence: 0 };
 
+      completed = true;
       return { result, actionId: ctx.actionId, spend };
     } finally {
-      await finish().catch(() => {});
+      await finish({ completed }).catch(() => {});
     }
   });
 }
