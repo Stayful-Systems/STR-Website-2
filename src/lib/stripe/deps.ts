@@ -52,7 +52,7 @@ async function takenUnder(userId: string, base: string): Promise<number> {
 /**
  * Batch 31a: the Stayful Academy's webhook wiring. The purchase is written
  * once per payment intent (on conflict do nothing; a replay reads the existing
- * row); linking and refunds are src/lib/academy/deps.ts. Logs carry ids only.
+ * row and fills its card, customer and consent where they are empty); linking and refunds are src/lib/academy/deps.ts. Logs carry ids only.
  */
 function liveAcademyWebhookDeps(): AcademyWebhookDeps {
   const admin = createAdminClient();
@@ -72,6 +72,22 @@ function liveAcademyWebhookDeps(): AcademyWebhookDeps {
         { onConflict: 'stripe_payment_intent_id', ignoreDuplicates: true },
       );
       if (error) throw new Error(`academy purchase write failed: ${error.message}`);
+      // A row an earlier delivery wrote without some of these (e.g. Stripe could not be asked) gets them
+      // now; a value already there is never overwritten.
+      const fill: Array<[string, string | null]> = [
+        ['stripe_payment_method_id', p.paymentMethodId],
+        ['stripe_customer_id', p.customerId],
+        ['terms_accepted_at', p.termsAcceptedAt],
+      ];
+      for (const [col, value] of fill) {
+        if (!value) continue;
+        const { error: fillError } = await admin
+          .from('academy_purchases')
+          .update({ [col]: value, updated_at: new Date().toISOString() })
+          .eq('stripe_payment_intent_id', p.paymentIntentId)
+          .is(col, null);
+        if (fillError) throw new Error(`academy purchase write failed: ${fillError.message}`);
+      }
       const { data, error: readError } = await admin.from('academy_purchases').select('id').eq('stripe_payment_intent_id', p.paymentIntentId).maybeSingle();
       if (readError) throw new Error(`academy purchase read failed: ${readError.message}`);
       return data ? { id: String((data as { id: string }).id) } : null;

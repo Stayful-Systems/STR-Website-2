@@ -80,6 +80,7 @@ function fake(init: { purchases?: AcademyPurchaseRow[]; profiles?: AcademyProfil
     savedCards: [] as unknown[][],
     activity: [] as unknown[][],
     emails: [] as unknown[][],
+    grants: [] as AcademyPurchaseRow[],
   };
   let n = 0;
   const allSubs = () => [...world.subs.values()].flat();
@@ -144,6 +145,10 @@ function fake(init: { purchases?: AcademyPurchaseRow[]; profiles?: AcademyProfil
     },
     sendRefundEmail: async (...a) => {
       calls.emails.push(a);
+      return true;
+    },
+    grantTrialMonth: async (purchase) => {
+      calls.grants.push({ ...purchase });
       return true;
     },
   };
@@ -325,6 +330,53 @@ test('a dry run says what would happen and makes no writes or Stripe changes', a
   assert.equal(f2.calls.purchaseWrites.length, 0);
 });
 
+test('a successful link grants month 1 at once (once); a dry run, a refusal or a lost claim does not', async () => {
+  const { deps, world, calls } = fake();
+  const r = await linkAcademyPurchase(deps, 'p1', 'u1', 'auto');
+  assert.equal(r.outcome, 'start');
+  assert.equal(calls.grants.length, 1);
+  const g = calls.grants[0];
+  assert.equal(g.id, 'p1');
+  assert.equal(g.user_id, 'u1');
+  assert.equal(g.trial_subscription_id, r.subscriptionId);
+  assert.equal(g.trial_started_at, world.purchases.get('p1')!.trial_started_at);
+  assert.equal(g.trial_ends_at, world.purchases.get('p1')!.trial_ends_at);
+  assert.equal(world.profiles.get('u1')!.stripe_subscription_status, 'trialing', 'the profile is stamped before the grant');
+
+  // Linking again is "already": no second grant from here.
+  await linkAcademyPurchase(deps, 'p1', 'u1', 'auto');
+  assert.equal(calls.grants.length, 1);
+
+  const dry = fake();
+  await linkAcademyPurchase(dry.deps, 'p1', 'u1', 'auto', { dry: true });
+  assert.equal(dry.calls.grants.length, 0);
+
+  const refused = fake({ confirmed: [] });
+  assert.equal((await linkAcademyPurchase(refused.deps, 'p1', 'u1', 'auto')).outcome, 'refused');
+  assert.equal(refused.calls.grants.length, 0);
+});
+
+test('a failed month-1 grant is logged and swallowed; the link still succeeds', async () => {
+  const { deps, calls } = fake();
+  deps.grantTrialMonth = async () => {
+    throw new Error('ledger down');
+  };
+  const errors: unknown[][] = [];
+  const realError = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a);
+  try {
+    const r = await linkAcademyPurchase(deps, 'p1', 'u1', 'auto');
+    assert.equal(r.outcome, 'start');
+    assert.equal(r.done, true);
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(calls.activity.length, 1);
+  assert.equal(errors.length, 1);
+  assert.match(String(errors[0][0]), /month-1 grant for purchase p1/);
+  assert.doesNotMatch(errors.flat().join(' '), /@/, 'ids only, never an email');
+});
+
 test('when another run linked the purchase first, nothing more is created and a stray subscription is cancelled', async () => {
   const { deps, world, calls } = fake();
   const realUpdate = deps.updatePurchase;
@@ -341,6 +393,7 @@ test('when another run linked the purchase first, nothing more is created and a 
   assert.equal(r.subscriptionId, 'sub_winner');
   assert.deepEqual(calls.cancel, ['sub_new1']);
   assert.equal(calls.activity.length, 0);
+  assert.equal(calls.grants.length, 0, 'the losing run grants nothing');
   assert.equal(world.profiles.get('u1')!.stripe_subscription_id, null);
 });
 
@@ -435,4 +488,86 @@ test('the refund email has the agreed subject and body', () => {
   assert.ok(e.text.startsWith(body));
   assert.ok(e.html.includes('won&#39;t') || e.html.includes("won't"));
   assert.ok(e.html.includes('https://example.test/account/billing'));
+});
+
+test('after an admin Unlink the automatic paths skip the purchase; only an admin link takes it', async () => {
+  const { deps, world, calls } = fake();
+  await linkAcademyPurchase(deps, 'p1', 'u1', 'auto');
+  await unlinkAcademyPurchase(deps, 'p1');
+  assert.equal(world.purchases.get('p1')!.flag_reason, 'unlinked_admin');
+
+  const auto = await linkAcademyPurchase(deps, 'p1', 'u1', 'auto');
+  assert.equal(auto.outcome, 'refused');
+  assert.equal(auto.reason, 'unlinked_admin');
+  assert.deepEqual(await linkPendingForUser(deps, 'u1'), []);
+  assert.equal(calls.create.length, 1);
+  assert.equal(world.purchases.get('p1')!.trial_subscription_id, null);
+  assert.equal(world.purchases.get('p1')!.flag_reason, 'unlinked_admin');
+
+  // A refused admin relink keeps the flag, so the purchase never becomes auto-linkable.
+  world.confirmed.delete('u1');
+  const refused = await linkAcademyPurchase(deps, 'p1', 'u1', 'admin');
+  assert.equal(refused.decision, 'refuse_unconfirmed_email');
+  assert.equal(world.purchases.get('p1')!.flag_reason, 'unlinked_admin');
+});
+
+test('an admin relink after Unlink uses a fresh idempotency key and starts a new trial', async () => {
+  const { deps, world, calls } = fake();
+  await linkAcademyPurchase(deps, 'p1', 'u1', 'auto');
+  await unlinkAcademyPurchase(deps, 'p1');
+  const cancelledAt = world.purchases.get('p1')!.trial_cancelled_at!;
+  const r = await linkAcademyPurchase(deps, 'p1', 'u1', 'admin');
+  assert.equal(r.outcome, 'start');
+  assert.equal(r.done, true);
+  assert.equal(calls.create.length, 2);
+  assert.equal(calls.create[0].key, 'academy-trial:p1');
+  assert.equal(calls.create[1].key, `academy-trial:p1:${Date.parse(cancelledAt)}`);
+  assert.equal(trialIdempotencyKey('p1', cancelledAt), calls.create[1].key);
+  const row = world.purchases.get('p1')!;
+  assert.equal(row.trial_subscription_id, 'sub_new2');
+  assert.equal(row.flag_reason, null);
+  assert.equal(row.linked_by, 'admin');
+});
+
+test('a cancelled subscription handed back by Stripe is never recorded', async () => {
+  const { deps, world, calls } = fake();
+  const realCreate = deps.createSubscription;
+  deps.createSubscription = async (params, key) => ({ ...(await realCreate(params, key)), status: 'canceled' });
+  const r = await linkAcademyPurchase(deps, 'p1', 'u1', 'admin');
+  assert.equal(r.outcome, 'error');
+  assert.equal(r.reason, 'subscription_not_trialing');
+  assert.equal(world.purchases.get('p1')!.trial_subscription_id, null);
+  assert.equal(world.purchases.get('p1')!.user_id, null);
+  assert.equal(calls.profileWrites.length, 0);
+  assert.equal(calls.savedCards.length, 0);
+  assert.equal(calls.activity.length, 0);
+});
+
+test('when creating the subscription fails, the profile customer and card are untouched', async () => {
+  const { deps, world, calls } = fake({
+    profiles: [profileRow({ stripe_customer_id: 'cus_old' })],
+    subs: { cus_old: [{ id: 'sub_gone', status: 'canceled' }] },
+  });
+  deps.createSubscription = async () => {
+    throw new Error('stripe down');
+  };
+  await assert.rejects(linkAcademyPurchase(deps, 'p1', 'u1', 'auto'), /stripe down/);
+  assert.equal(world.profiles.get('u1')!.stripe_customer_id, 'cus_old');
+  assert.equal(calls.profileWrites.length, 0);
+  assert.equal(calls.savedCards.length, 0);
+  assert.equal(calls.purchaseWrites.length, 0);
+});
+
+test('a full refund of a trial already cancelled in Stripe still stamps it and sends the email once', async () => {
+  const { deps, world, calls } = fake();
+  await linkAcademyPurchase(deps, 'p1', 'u1', 'auto');
+  world.subs.get('cus_buy')![0].status = 'canceled';
+  const r = await cancelTrialForRefund(deps, 'pi_1', true);
+  assert.equal(r.outcome, 'trial_cancelled');
+  assert.equal(calls.cancel.length, 0);
+  assert.equal(world.purchases.get('p1')!.trial_cancelled_at, NOW.toISOString());
+  assert.deepEqual(calls.emails, [['Buyer@Example.com', 'p1']]);
+  const again = await cancelTrialForRefund(deps, 'pi_1', true);
+  assert.equal(again.outcome, 'already');
+  assert.equal(calls.emails.length, 1);
 });

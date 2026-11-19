@@ -41,7 +41,13 @@ export async function GET(request: Request) {
       customer,
       return_url: siteUrl('/account/billing'),
       ...(process.env.STRIPE_PORTAL_CONFIG_ID ? { configuration: process.env.STRIPE_PORTAL_CONFIG_ID } : {}),
-      flow_data: { type: 'subscription_cancel', subscription_cancel: { subscription: subId } },
+      // after_completion: back to Account → Billing once the cancel is confirmed (the portal itself can
+      // still offer other pages unless its configuration turns them off).
+      flow_data: {
+        type: 'subscription_cancel',
+        subscription_cancel: { subscription: subId },
+        after_completion: { type: 'redirect', redirect: { return_url: siteUrl('/account/billing') } },
+      },
     });
     return Response.redirect(portal.url, 303);
   } catch (err) {

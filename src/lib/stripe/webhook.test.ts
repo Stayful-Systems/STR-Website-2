@@ -1218,3 +1218,23 @@ test('Batch 31a: a refund that is not the Academy’s follows the existing path'
   assert.equal(deps.calls.recordRefund!.length, 1);
   assert.equal(deps.calls.refundTopup!.length, 1);
 });
+
+test('Batch 31a: a late Academy first invoice once the trial has ended (refund, unlink) grants nothing and leaves the profile alone', async () => {
+  const deps = fakeDeps();
+  const start = Date.UTC(2027, 0, 31, 10) / 1000;
+  deps.setSub({ ...academyTrialSub(start, start + 90 * 86400), status: 'canceled' } as Stripe.Subscription);
+  const r = await handleStripeEvent(ev('invoice.paid', zeroInvoice('in_late', 'sub_x')), deps);
+  assert.equal(r.handled, true);
+  assert.match(r.note ?? '', /nothing granted/);
+  assert.equal(deps.calls.grantPlanCycle, undefined);
+  assert.equal(deps.calls.updateProfile, undefined);
+});
+
+test('Batch 31a: an Academy checkout asks Stripe strictly: an outage throws (Stripe retries) instead of saving the purchase without its card', async () => {
+  const { deps, records } = academyDeps();
+  deps.retrievePaymentIntentStrict = async () => {
+    throw new Error('stripe down');
+  };
+  await assert.rejects(handleStripeEvent(ev('checkout.session.completed', academySession()), deps), /stripe down/);
+  assert.equal(records.length, 0);
+});

@@ -101,6 +101,12 @@ export interface AcademyLinkDeps {
   savePaymentMethod(userId: string, customerId: string | null, paymentMethodId: string): Promise<void>;
 
   logTrialStarted(userId: string, subscriptionId: string): Promise<void>;
+  /**
+   * Grant the trial month due now (month 1 right after a link), idempotent on
+   * its `trial:<sub>:<YYYY-MM>` source ref, so a webhook grant too is harmless.
+   * Optional; a failure is logged and swallowed (the daily sweep is the backstop).
+   */
+  grantTrialMonth?(purchase: AcademyPurchaseRow): Promise<boolean>;
   /** The refund email to the member (never throws; true when sent). */
   sendRefundEmail(to: string, purchaseId: string): Promise<boolean>;
 }
@@ -109,6 +115,15 @@ export interface AcademyLinkDeps {
 export const HOLDS_A_PLAN: ReadonlySet<string> = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused', 'incomplete']);
 
 const DEAD = new Set(['canceled', 'incomplete_expired']);
+
+/** A subscription in one of these may be recorded as the purchase's trial. */
+const RECORDABLE = new Set(['trialing', 'active']);
+
+/**
+ * The flag_reason an admin Unlink writes. Only an admin link may link the
+ * purchase again (it clears the flag); the automatic paths skip it.
+ */
+export const UNLINKED_ADMIN = 'unlinked_admin';
 
 export interface LinkResult {
   /** start: the trial starts (dry: would start); already: it had started; refused: no trial; error: could not tell. */
@@ -169,9 +184,15 @@ export function trialSubscriptionParams(input: {
   };
 }
 
-/** The Stripe idempotency key of a purchase's trial subscription. */
-export function trialIdempotencyKey(purchaseId: string): string {
-  return `academy-trial:${purchaseId}`;
+/**
+ * The Stripe idempotency key of a purchase's trial subscription: one per
+ * attempt. The first is `academy-trial:<purchaseId>`; once a trial of the
+ * purchase has been cancelled (admin Unlink), the cancel time is added, so a
+ * relink within Stripe's 24 hours does not get the cancelled one back.
+ */
+export function trialIdempotencyKey(purchaseId: string, trialCancelledAt: string | null = null): string {
+  const ms = trialCancelledAt ? Date.parse(trialCancelledAt) : NaN;
+  return Number.isNaN(ms) ? `academy-trial:${purchaseId}` : `academy-trial:${purchaseId}:${ms}`;
 }
 
 /** The flag_reason written for a refusal: the decision without its `refuse_` prefix. */
@@ -221,6 +242,10 @@ export async function linkAcademyPurchase(
 
   const already = () => ({ ...result, outcome: 'already' as const, decision: 'already', subscriptionId: purchase.trial_subscription_id, linkedUserId: purchase.user_id, trialStart: purchase.trial_started_at, trialEnd: purchase.trial_ends_at });
   if (purchase.trial_subscription_id) return already();
+  // An admin unlinked it: only an admin links it again.
+  if (purchase.flag_reason === UNLINKED_ADMIN && by !== 'admin') {
+    return { ...result, outcome: 'refused', decision: 'refuse_unlinked_admin', reason: UNLINKED_ADMIN };
+  }
 
   const [emailConfirmed, isTeamMember, emailHadEarlierTrial] = await Promise.all([
     deps.emailConfirmed(userId),
@@ -247,7 +272,8 @@ export async function linkAcademyPurchase(
   const refuse = async (decision: string): Promise<LinkResult> => {
     const reason = flagReasonFor(decision);
     let done = false;
-    if (!dry && purchase.flag_reason !== reason) {
+    // An admin-unlinked purchase keeps its flag, so a refused admin relink never makes it auto-linkable.
+    if (!dry && purchase.flag_reason !== reason && purchase.flag_reason !== UNLINKED_ADMIN) {
       done = await deps.updatePurchase(purchase.id, { flag_reason: reason }, { trial_subscription_id: null });
     }
     return { ...result, outcome: 'refused', decision, reason, done };
@@ -303,19 +329,19 @@ export async function linkAcademyPurchase(
   };
   if (dry) return plan;
 
-  // The customer first, so the subscription's own webhook finds the account by its customer.
-  if (decision.customer === 'switch_to_purchase_customer') {
-    await deps.updatePurchase(purchase.id, { previous_customer_id: decision.previousCustomerId }, { trial_subscription_id: null });
-  }
-  if (decision.customer !== 'same_customer') await deps.updateProfile(userId, { stripe_customer_id: purchaseCustomer });
-  await deps.savePaymentMethod(userId, purchaseCustomer, paymentMethod);
-
+  // The subscription runs on the purchase's customer with the purchase's card (both live there).
+  // Nothing on the profile changes until the purchase is claimed below.
   const sub =
     existing ??
     (await deps.createSubscription(
       trialSubscriptionParams({ customerId: purchaseCustomer, priceId, paymentMethodId: paymentMethod, userId, purchaseId: purchase.id, automaticTax: Boolean(deps.automaticTax) }),
-      trialIdempotencyKey(purchase.id),
+      trialIdempotencyKey(purchase.id, purchase.trial_cancelled_at),
     ));
+  if (!RECORDABLE.has(sub.status)) {
+    // E.g. a cancelled subscription handed back for a reused idempotency key: never recorded as a trial.
+    console.warn(`[academy] subscription ${sub.id} for purchase ${purchase.id} is ${sub.status}; not recorded`);
+    return { ...result, decision: 'error', reason: 'subscription_not_trialing', subscriptionId: sub.id };
+  }
   const trialStart = fromUnix(sub.trial_start) ?? now;
   const trialEnd = fromUnix(sub.trial_end) ?? academyTrialEnd(trialStart);
 
@@ -329,6 +355,7 @@ export async function linkAcademyPurchase(
       linked_at: now.toISOString(),
       linked_by: by,
       flag_reason: null,
+      ...(decision.customer === 'switch_to_purchase_customer' ? { previous_customer_id: decision.previousCustomerId } : {}),
     },
     { trial_subscription_id: null },
   );
@@ -343,10 +370,29 @@ export async function linkAcademyPurchase(
     return { ...result, outcome: 'already', decision: 'already', done: true, subscriptionId: now2?.trial_subscription_id ?? sub.id, linkedUserId: now2?.user_id ?? null };
   }
 
+  // Claimed: now the profile moves onto the purchase's customer and card.
+  if (decision.customer !== 'same_customer') await deps.updateProfile(userId, { stripe_customer_id: purchaseCustomer });
+  await deps.savePaymentMethod(userId, purchaseCustomer, paymentMethod);
+
   // As /api/billing/subscribe does: the id and status now, so a second run (or a tap on Upgrade) before
   // the webhook lands sees a live plan.
   await deps.updateProfile(userId, { stripe_subscription_id: sub.id, stripe_subscription_status: sub.status });
   await deps.logTrialStarted(userId, sub.id);
+  // Month 1 now, not when the £0 trial invoice's webhook (which may have arrived before the profile
+  // was stamped and found no one) or the nightly sweep gets to it.
+  if (deps.grantTrialMonth) {
+    const linked: AcademyPurchaseRow = {
+      ...purchase,
+      user_id: userId,
+      linked_at: now.toISOString(),
+      linked_by: by,
+      trial_subscription_id: sub.id,
+      trial_started_at: trialStart.toISOString(),
+      trial_ends_at: trialEnd.toISOString(),
+      flag_reason: null,
+    };
+    await deps.grantTrialMonth(linked).catch((err) => console.error(`[academy] month-1 grant for purchase ${purchase.id} (subscription ${sub.id}) failed:`, (err as Error).message));
+  }
   return { ...plan, done: true, subscriptionId: sub.id, trialStart: trialStart.toISOString(), trialEnd: trialEnd.toISOString() };
 }
 
@@ -356,7 +402,10 @@ export async function linkPendingForUser(deps: AcademyLinkDeps, userId: string):
   if (!profile?.email) return [];
   const purchases = await deps.listUnlinkedPurchases(emailKey(profile.email));
   const out: LinkResult[] = [];
-  for (const p of purchases) out.push(await linkAcademyPurchase(deps, p.id, userId, 'auto'));
+  for (const p of purchases) {
+    if (p.flag_reason === UNLINKED_ADMIN) continue; // only an admin links these again
+    out.push(await linkAcademyPurchase(deps, p.id, userId, 'auto'));
+  }
   return out;
 }
 
@@ -438,6 +487,7 @@ export async function unlinkAcademyPurchase(deps: AcademyLinkDeps, purchaseId: s
       reminder_sent_at: null,
       previous_customer_id: null,
       trial_cancelled_at: now,
+      flag_reason: UNLINKED_ADMIN,
     },
     { trial_subscription_id: subId },
   );
@@ -481,13 +531,17 @@ export async function cancelTrialForRefund(deps: AcademyLinkDeps, paymentIntentI
   if (!subId || purchase.trial_cancelled_at) return { ...base, outcome: markedNow ? 'refunded' : 'already' };
 
   const sub = await deps.retrieveSubscription(subId);
-  if (!sub || sub.status !== 'trialing') return { ...base, outcome: markedNow ? 'refunded' : 'already' };
-  try {
-    await deps.cancelSubscription(subId);
-  } catch (err) {
-    // Cancelled meanwhile (a concurrent delivery) is fine; anything else is retried by the caller.
-    const again = await deps.retrieveSubscription(subId);
-    if (!again || again.status !== 'canceled') throw err;
+  // Already cancelled in Stripe (the member cancelled, or an earlier delivery stopped before writing it
+  // down): still stamped and emailed once below. Anything else but a running trial is left alone.
+  if (!sub || (sub.status !== 'trialing' && sub.status !== 'canceled')) return { ...base, outcome: markedNow ? 'refunded' : 'already' };
+  if (sub.status === 'trialing') {
+    try {
+      await deps.cancelSubscription(subId);
+    } catch (err) {
+      // Cancelled meanwhile (a concurrent delivery) is fine; anything else is retried by the caller.
+      const again = await deps.retrieveSubscription(subId);
+      if (!again || again.status !== 'canceled') throw err;
+    }
   }
   const won = await deps.updatePurchase(purchase.id, { trial_cancelled_at: now }, { trial_cancelled_at: null });
   if (!won) return { ...base, outcome: 'already' };

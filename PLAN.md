@@ -44,8 +44,12 @@ Branch: batch-31a-academy-trial. Full detail for every phase is below the checkl
   Notes: tests 3408. Placeholders pro_plan_cost, academy_trial_months, academy_reminder_days. Draft slugs academy_includes,
   academy_trial_end, academy_cancel, academy_no_trial (word "free" left out of two questions so existing matching tests
   keep routing "is the service free" correctly). service-facts entry under CREDIT, PLANS AND PAYING.
-- [ ] Phase 9 — Final checks + review
-  Notes:
+- [x] Phase 9 — Final checks + review
+  Notes: tests 3417 pass, lint 0 errors (79 old warnings), tsc 0, build OK, schema twice OK; no ACCESS_COLUMNS / funnels /
+  price changes. Independent review found 6 bugs, all fixed: admin Unlink now sticks (flag unlinked_admin, per-attempt
+  Stripe key, never records a non-trialing sub); late first invoice after refund grants nothing; strict payment-intent
+  lookup + replay fills missing card; profile switched only after the trial is claimed (month 1 granted at link time);
+  cancel portal redirects back after cancelling; refund email sent once even after a partial failure.
 
 ---
 

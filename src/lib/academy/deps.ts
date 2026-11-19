@@ -129,6 +129,8 @@ export function liveAcademyDeps(): AcademyLinkDeps {
     savePaymentMethod,
 
     logTrialStarted: (userId, subId) => recordActivity(userId, 'academy_trial_started', { dedupeKey: `academy_trial_started:${subId}` }),
+    // Lazy: grants.ts pulls in the credit ledger and billing; importing it here eagerly risks a cycle.
+    grantTrialMonth: async (purchase) => (await import('../stripe/grants')).ensureAcademyTrialMonthlyGrant(purchase),
     sendRefundEmail: async (to, purchaseId) => {
       if (!isEmailConfigured()) return false;
       try {

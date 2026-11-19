@@ -55,6 +55,8 @@ const REFUSALS: Record<string, string> = {
   pro_price_missing: 'the Pro price (STRIPE_PRICE_PRO) is not set',
   not_linked: 'the purchase is not linked to an account',
   paid_invoice: 'an invoice on the trial has already been paid, so it can no longer be unlinked',
+  unlinked_admin: 'an admin unlinked this purchase, so only an admin link can link it again',
+  subscription_not_trialing: 'Stripe returned a subscription that is not trialing, so nothing was recorded',
 };
 
 function why(reason: string | null): string {

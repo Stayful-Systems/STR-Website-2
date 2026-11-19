@@ -467,7 +467,9 @@ async function handleAcademyCheckout(session: Stripe.Checkout.Session, prefetche
   const rawEmail = session.customer_details?.email ?? session.customer_email ?? null;
   if (!rawEmail) return { handled: false, note: 'academy checkout without email' };
   const email = rawEmail.trim().toLowerCase();
-  const pi = prefetchedPi ?? (await deps.retrievePaymentIntent(piId));
+  // Strict: a Stripe outage throws (the route answers 500 and Stripe retries) rather than saving the
+  // purchase without its card.
+  const pi = prefetchedPi ?? (deps.retrievePaymentIntentStrict ? await deps.retrievePaymentIntentStrict(piId) : await deps.retrievePaymentIntent(piId));
   const purchase = await deps.academy.recordPurchase({
     email,
     customerId: id(session.customer) ?? id(pi?.customer),
@@ -654,6 +656,14 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       if (!planCode) {
         log(`invoice ${invoice.id}: price ${priceId} is not a known plan`);
         return { handled: false, note: 'unknown price' };
+      }
+      // Batch 31a: an Academy trial's first invoice arriving once the trial is no longer running (refunded,
+      // unlinked or cancelled meanwhile) grants nothing and leaves the profile alone. Without this it
+      // fell through to the generic inv:<id> grant: 90 days of Pro for a trial that has ended.
+      const academyMeta = sub?.metadata ?? invoice.parent?.subscription_details?.metadata ?? null;
+      if (academyMeta?.source === 'academy' && invoice.billing_reason === 'subscription_create' && sub?.status !== 'trialing') {
+        log(`invoice ${invoice.id}: academy trial ${subId} is ${sub?.status ?? 'unknown'}; nothing granted`);
+        return { handled: true, note: `academy trial ${sub?.status ?? 'unknown'}: nothing granted` };
       }
       const lineEnd = invoice.lines?.data?.[0]?.period?.end;
       const periodEnd = periodEndOf(sub) ?? (lineEnd ? new Date(lineEnd * 1000) : null);
