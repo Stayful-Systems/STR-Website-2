@@ -5,9 +5,9 @@
 
 ## 1. One screen
 
-**The short version.** There is no Critical finding and, after a second reader re-walked every Medium and above, no High. The R3 fixes and Batches 27–30 are built: 148 of R3's 154 fixes are in place and none is missing, no member is charged wrongly (where the new code misjudges what a member can spend, the database still refuses), nothing leaks an address or breaks the 48-hour delay, and every new cron's dry run writes nothing. What is wrong is fifteen Medium findings, mostly rules that changed meaning as one batch landed on another: which end of the profit range counts, whether R2R setup cash hides deals, the two minimum-profit figures, which cash ceiling buy-to-let uses, and Stayful Intelligence (SI) counting the starter-pack bonus as money it can spend. Six of the fifteen are buy-to-let (BTL) card and list bugs that stay asleep until `BTL_SCREEN_ENABLED=true`: on live, no deal carries a BTL lens yet. One warning comes before everything else: `npm run build` now stops at a Next.js 16.4.1 security gate after compiling, CI never runs the build, and Vercel's last good deploy predates the advisory, so the next deploy of any fix will probably fail until `next` is bumped to 16.4.6 (**R4-32**, branch r4a). Finally, Facebook's Purchase event cannot fire today: Batch 29 made Purchase mean "bought the starter pack", and the pack is switched off on live.
+**The short version.** There is no Critical finding and, after a second reader re-walked every Medium and above, no High. The R3 fixes and Batches 27–30 are built: 148 of R3's 154 fixes are in place and none is missing, no member is charged wrongly (where the new code misjudges what a member can spend, the database still refuses), nothing leaks an address or breaks the 48-hour delay, and every new cron's dry run writes nothing. What is wrong is fourteen Medium findings, mostly rules that changed meaning as one batch landed on another: which end of the profit range counts, whether R2R setup cash hides deals, the two minimum-profit figures, which cash ceiling buy-to-let uses, and Stayful Intelligence (SI) counting the starter-pack bonus as money it can spend. Six of the fourteen are buy-to-let (BTL) card and list bugs that stay asleep until `BTL_SCREEN_ENABLED=true`: on live, no deal carries a BTL lens yet. A local `npm run build` stops at a Next.js 16.4.1 security gate after compiling, and CI never runs the build. Vercel still builds and deploys this PR's preview on the same version, so deploys are not blocked (**R4-32**, Low). Finally, Facebook's Purchase event cannot fire today: Batch 29 made Purchase mean "bought the starter pack", and the pack is switched off on live.
 
-**67 reader findings (8 readers and a mechanical pass), merged into 50; 49 stand after second reading: 0 Critical · 0 High · 15 Medium · 34 Low; 1 refuted (appendix D).**
+**67 reader findings (8 readers and a mechanical pass), merged into 50; 49 stand after second reading: 0 Critical · 0 High · 14 Medium · 35 Low; 1 refuted (appendix D).**
 
 ### Medium, in the order a brand-new member from a Facebook ad would meet them
 
@@ -25,7 +25,6 @@
 12. **R4-15** — The £5 "what next" decision is held day after day when no morning email is built (first month, pack members).
 13. **R4-14** — A refunded or charged-back further payment lifts the starter-pack bonus for good (later).
 14. **R4-27** — BTL standouts skip R3-52's "beats everything shown" bar (later).
-15. **R4-32** — `npm run build` stops at Next.js 16.4.1's security gate; CI never builds; the next deploy likely fails (no member meets it directly; fixed first).
 
 ### Low
 
@@ -46,6 +45,7 @@
 - **R4-29** The £2 BTL report can sell a second copy if the "already have one?" read fails.
 - **R4-30** The £2 BTL report can overdraw when its hold silently fails.
 - **R4-31** BTL settings and two cron previews have no admin control.
+- **R4-32** A local `npm run build` stops at Next.js 16.4.1's security gate; CI never builds (Vercel builds fine).
 - **R4-33** The rate sync could overwrite a member's chosen rate before the backfill (did not happen on live).
 - **R4-34** Seven Critical/High and 24 Medium R3 fixes have no test.
 - **R4-35** R3-111 deferred: a crash between the briefing's two meter calls leaves one part unpaid.
@@ -68,7 +68,7 @@
 
 **Verdict: GO once these four conditions are met.** Only the first needs a code change.
 
-1. Fix branch **r4a** is merged: `next` 16.4.6 so deploys build (**R4-32**), and the pixel tidy so day-one browser conversions are not lost (**R4-01**).
+1. Fix branch **r4a** is merged: the pixel tidy so day-one browser conversions are not lost (**R4-01**). It also bumps `next` to 16.4.6 (**R4-32**).
 2. **The Purchase event:** switch the starter pack on before ad spend, or point campaigns at another event (for example CompleteRegistration). No code change.
 3. **Zac approves the `chat_voice` draft in admin.** R3-1 (R3's one Critical) is fixed in code, but members keep hearing the old answer until the draft is approved (appendix B, R3-1 row).
 4. **Zac confirms Vercel accepts 45 crons.** R2 recorded the Pro limit as 40 (§8). Manual check.
@@ -88,10 +88,10 @@ Read-only throughout: no code, setting or row was changed, no API was called wit
 
 1. **Mechanical checks first** (appendix A). CI was replicated on a throwaway Postgres 16: `shim.sql`, `schema.sql` run twice with empty dump diffs, then `credit-smoke.sql`, `pack-smoke.sql` and `scan-days-smoke.sql`. Then `npm ci`, `lint`, `typecheck`, `npm test` (3,255 pass), `npm run build` (fails at the security gate, **R4-32**) and `npm audit`. Also a cron-by-cron dry-run check, a settings check and a TODO search.
 2. **Live reads, SELECT only**, on the Supabase project "ZacStayful's Project": every Batch 27–30 object (129 of 129 present), every new setting's value (all at their defaults), the Batch 30 backfill's progress, starter-pack grants and negative balances. Counts only (appendix E).
-3. **Vercel:** the production deploy of `8bdbf9d` is READY. It was built about five days before this review, which is before the Next.js advisory that now stops the build.
+3. **Vercel:** the production deploy of `8bdbf9d` is READY. The preview of this PR (`review-r4`, the same code plus this file) also built and deployed on Vercel on 19 Nov 2026, on the same Next.js 16.4.1: Vercel does not hit the security gate that stops a local build (**R4-32**).
 4. **Eight readers in parallel:** R1 the R3 fixes (all 154 ids), R2 Batch 27, R3 Batch 28, R4 Batch 29, R5 Batch 30, R6 conflicts between batches, R7 standing checks and loose ends, R8 forward conflicts for Batch 31/31a, the Facebook-ad first day, and the go / no-go. Each read the code at `8bdbf9d`, using the Graphify code graph (at the same commit) to find files.
 5. **Four second readers** (V-A to V-D) re-walked every Medium and above from its entry point (the route, page, cron or action), looking for a guard that stops it. They also re-checked the Lows.
-6. **Verification counts.** Of 67 reader findings: merged into 50; 2 raised (R3x-4 and R6-10, each Low to Medium as part of a merged finding); 5 lowered (R5-1/R7-1 on live facts, R5-2, R1-1/R1-9, R4-1, R6-3); 1 refuted outright (R6-9). Nineteen further sub-claims (an example, a figure, a fix or a severity) were corrected (appendix D).
+6. **Verification counts.** Of 67 reader findings: merged into 50; 2 raised (R3x-4 and R6-10, each Low to Medium as part of a merged finding); 6 lowered (R5-1/R7-1 on live facts, R5-2, R1-1/R1-9, R4-1, R6-3, and M-1 after the Vercel preview built); 1 refuted outright (R6-9). Nineteen further sub-claims (an example, a figure, a fix or a severity) were corrected (appendix D).
 7. **Coordinator.** One pass merged duplicates, set the final severities and ids, and put the business rules to Zac. His answers (19 Nov 2026) are written into each fix (§9).
 
 What was refuted: R6-9 ("BTL and short-let use different snapshots of the live rate"). Both copies follow the same daily figure (V-D). Zac's rule anyway: BTL keeps the live rate for everyone.
@@ -453,15 +453,15 @@ The worked member used here ("Member A"): new sign-up, ticks Buy to let, Buying 
 
 ### E. Build and code health
 
-#### R4-32 · Medium · `npm run build` stops at Next.js 16.4.1's security gate; CI never builds; the next deploy likely fails
+#### R4-32 · Low · A local `npm run build` stops at Next.js 16.4.1's security gate; CI never builds
 
 - **Where:** `package.json:28` (`"next": "16.4.1"`, set in R3n) and `:45` (eslint-config-next); `.github/workflows/ci.yml` (no build step); build log line 287.
 - **What is wrong:** after `✓ Compiled successfully` and `✓ Generating static pages (92/92)`, the build exits 1: `Error [SecurityFatalError]: Your version of Next.js is affected by a known security vulnerability.` A retry fails the same way. CI runs lint, typecheck and tests but not the build, so CI stays green.
-- **How a member or Zac hits it:** the next deploy of any fix branch. Vercel's last READY production deploy was built before the advisory, so the next build likely hits the same gate and fails, and the site stays on the old build (code-only, not tried on Vercel).
-- **Smallest fix:** bump `next` and `eslint-config-next` to 16.4.6 (non-major) and add `npm run build` to the CI checks job. This must be the first fix branch.
+- **How a member or Zac hits it:** Zac or a Claude session runs `npm run build` before a release and it fails. Vercel is not affected: this PR's preview built and deployed on 19 Nov 2026 on the same version (deployment `5EWeNn7RsWBXyKvkw4a8utvyYVQ5`, "Build Completed"). No member meets it.
+- **Smallest fix:** bump `next` and `eslint-config-next` to 16.4.6 (non-major) and add `npm run build` to the CI checks job. Rides in r4a.
 - **Test that would have caught it:** the CI build step itself.
 - **Merged from:** M-1.
-- **Verification:** mechanical pass, re-run once with the same failure; coordinator kept it at Medium.
+- **Verification:** mechanical pass, re-run once with the same failure. Lowered from Medium to Low after the Vercel preview build of this PR succeeded.
 
 #### R4-33 · Low · The rate sync could overwrite a member's chosen rate before the backfill (did not happen on live)
 
@@ -876,7 +876,7 @@ The starter pack is **off** on live (`starter_pack_from` is null), and Batch 29 
 
 ## 10. Fix plan: six branches, in the order a new member would need them
 
-**r4a must merge first:** without it the deploys of the other branches will probably fail (**R4-32**). After r4a, the order is r4b → r4c → r4d → r4e → r4f. r4b and r4e both edit `src/lib/tailoring/criteria.ts`, and r4d and r4e both edit `src/lib/analysis/run.ts`, so rebase the later branch on the earlier. Files marked "expected" are the likely place for the change but were not named in a finding's Where line.
+**r4a goes first** (the day-one pixel fix, before ad spend). After r4a, the order is r4b → r4c → r4d → r4e → r4f. r4b and r4e both edit `src/lib/tailoring/criteria.ts`, and r4d and r4e both edit `src/lib/analysis/run.ts`, so rebase the later branch on the earlier. Files marked "expected" are the likely place for the change but were not named in a finding's Where line.
 
 **The bug check every branch runs before handing back:**
 - `npm test`, `npm run lint`, `npm run typecheck` and `npm run build` all pass.
