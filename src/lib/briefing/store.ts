@@ -143,11 +143,6 @@ export interface Claim {
   reclaimed: boolean;
 }
 
-/** R3-11: the Batch 23b tables are not on this database (the deploy step not yet done). */
-export function schemaMissing(message: string | null | undefined): boolean {
-  return /does not exist|schema cache/i.test(message ?? '');
-}
-
 /**
  * Claim today's row for a member: a new row, or a stale 'generating' one
  * (keeping its action id). Null when another run holds it or it is done.

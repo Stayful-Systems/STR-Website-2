@@ -12,22 +12,24 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { getBillingSettings } from '../credit/unit-costs';
 import { getBalance } from '../credit/ledger';
-import { latestLanding, type GrantRow } from './low-credit';
+import { latestLanding, lowCreditRecheck, type GrantRow, type LowCreditRecheck } from './low-credit';
 
-export type LowCreditRecheck = { ok: true } | { ok: false; reason: 'topped_up' | 'nudged' };
+export type { LowCreditRecheck };
 
 export async function lowCreditStillDue(userId: string, triggerRef: string | null, now: Date): Promise<LowCreditRecheck> {
   const admin = createAdminClient();
   const settings = await getBillingSettings();
   const balance = await getBalance(userId).catch(() => null);
-  if (!balance || balance.totalPence > settings.lifecycle.lowCreditPence) return { ok: false, reason: 'topped_up' };
-  if (!triggerRef) return { ok: true };
+  // Review R4 (R4-34): the decision is low-credit.ts's lowCreditRecheck; this only reads its facts, and only those it needs.
+  const base = { balancePence: balance ? balance.totalPence : null, lowCreditPence: settings.lifecycle.lowCreditPence, triggerRef };
+  const first = lowCreditRecheck(base);
+  if (!first.ok || !triggerRef) return first;
   const since = new Date(now.getTime() - (settings.voice.lowCreditWindowDays + 31) * 86_400_000).toISOString();
   const { data: grants, error } = await admin.from('credit_grants').select('id, kind, amount_pence, source_ref, created_at').eq('user_id', userId).gt('amount_pence', 0).gte('created_at', since).order('created_at', { ascending: false }).limit(20);
   // The balance is the fact that matters; unreadable grants leave the queue-time landing standing.
   const landing = error ? null : latestLanding((grants ?? []) as GrantRow[]);
-  if (landing && landing.id !== triggerRef) return { ok: false, reason: 'topped_up' };
+  const withLanding = lowCreditRecheck({ ...base, latestLandingId: landing?.id ?? null });
+  if (!withLanding.ok) return withLanding;
   const { data: nudges } = await admin.from('credit_nudges').select('id').eq('user_id', userId).eq('landing_id', triggerRef).limit(1);
-  if ((nudges ?? []).length > 0) return { ok: false, reason: 'nudged' };
-  return { ok: true };
+  return lowCreditRecheck({ ...base, latestLandingId: landing?.id ?? null, nudged: (nudges ?? []).length > 0 });
 }

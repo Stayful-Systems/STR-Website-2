@@ -516,13 +516,13 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'si_actions_cost',
-    from: 'batch 27',
+    from: 'batch 27; Review R4 (R4-46, the listing check’s price)',
     category: 'credit_billing',
     channels: ['chat', 'view'],
     showWhen: null,
     question: 'What does it cost when you do something for me?',
     variants: ['Do you charge more than the button?', 'Why was I charged for an action?', 'Is it cheaper to press the button myself?', 'What does it cost to ask you to run an analysis?'],
-    answer: 'What the button would charge you, so your own prices apply: a Full analysis is {full_analysis_cost} (plus opening the deal if it isn’t open), a deep report {deep_report_cost} and a deep search up to {deep_search_max_cost}, with the question itself about {chat_full_cost} and top-up credit spent at {topup_rate} the plan rate. Keep, Pass, stage moves, search changes and drafts are free, and nothing that fails is charged.',
+    answer: 'What the button would charge you, so your own prices apply: a Full analysis is {full_analysis_cost} (plus opening the deal if it isn’t open), a deep report {deep_report_cost}, a deep search up to {deep_search_max_cost} and a listing check about {listing_check_cost}, with the question itself about {chat_full_cost} and top-up credit spent at {topup_rate} the plan rate. Keep, Pass, stage moves, search changes and drafts are free, and nothing that fails is charged.',
   },
   {
     slug: 'si_actions_stop',
@@ -555,6 +555,17 @@ export const SEED: readonly SeedEntry[] = [
     question: 'Can you report a problem for me?',
     variants: ['Something isn’t working', 'How do I report a bug?', 'Can I ask for a new feature?', 'That answer was wrong'],
     answer: 'Yes: tell me what went wrong and I’ll send it to the Stayful team with a reference you’ll see under Your feedback, and that question isn’t charged. For something you’d like us to add, I’ll fill in a request for you to check and send.',
+  },
+  {
+    // Review R4 (R4-45): Batch 27's limits, each a placeholder resolved from its billing_settings row.
+    slug: 'si_actions_limits',
+    from: 'Batch 27; Review R4 (R4-45)',
+    category: 'how_it_works',
+    channels: ['chat', 'view'],
+    showWhen: null,
+    question: 'Is there a limit on what you can do for me?',
+    variants: ['How many things can you do for me at once?', 'Why did you say I’ve reached the limit?', 'How many deals can you pass in one go?', 'Why did my request expire?', 'Can I ask you to analyse all my deals?'],
+    answer: 'Up to {si_action_rate_per_hour} instructions an hour and {si_action_rate_per_day} a day, each touching at most {si_action_max_targets} deals; past {si_action_cap} I ask before the rest. A confirm or countdown you don’t answer lapses after {si_action_confirm_minutes} minutes, and nothing runs.',
   },
   // ── Batch 28: buy-to-let deals (drafts for Zac; every figure a placeholder, the rules wording is legal copy to check) ──
   {
@@ -616,6 +627,18 @@ export const SEED: readonly SeedEntry[] = [
     question: 'What is the buy-to-let report?',
     variants: ['What do I get for the buy-to-let report?', 'How much is the buy-to-let report?', 'Is there a PDF of the buy-to-let report?', 'Was I charged for a buy-to-let report that failed?'],
     answer: 'For {btl_report_cost}: a rent valuation, a sale valuation, sold prices nearby, the EPC, flood and planning checks, and the buy-to-let figures with all of it in. You see the price first and it’s charged once, only when the report is made; a deal you revealed in your first days can have a welcome price. It’s on the web, saved in My deals.',
+  },
+
+  {
+    // Review R4 (R4-45): the Explorer's and the Full analysis's buy-to-let views (Batch 28, R4-24's saved settings).
+    slug: 'btl_explorer',
+    from: 'Batch 28; Review R4 (R4-24 the saved settings, R4-45)',
+    category: 'reports',
+    channels: ['chat', 'view'],
+    showWhen: null,
+    question: 'Can I see buy to let in the analyser or the Market Explorer?',
+    variants: ['What is Buy to let instead?', 'Does the Full analysis show buy to let?', 'What is the Buy to let view in the Market Explorer?', 'Does the Explorer show rental yields?', 'Is the buy-to-let section extra?'],
+    answer: 'Yes, at no extra charge: a Full analysis has a “Buy to let instead?” section on the same saved settings as the deal cards ({btl_ltv} interest-only, a flat’s service charge and ground rent included), and the Market Explorer has a Buy to let view of districts by yield, growth, price and cash in. Before tax, and an estimate, not advice.',
   },
 
   // ── Review R4 (R4-26): growth on a buy-to-let card is history (a draft for Zac; no figure) ──
@@ -705,6 +728,68 @@ export const SEED: readonly SeedEntry[] = [
     answer: 'It used to be part of the signup. From day {blocker_card_day} after you join I ask once on Home, so I can help with that first. Tap an answer, or Not now and I won’t ask again; you can change it on your profile.',
   },
 
+  // ── Review R4 (R4-45): every figure the service facts give has a draft answer (seed.test.ts checks it) ──
+  {
+    slug: 'profile_reward',
+    from: 'service facts; Review R4 (R4-45)',
+    category: 'account',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Do I get anything for finishing my profile?',
+    variants: ['Is there credit for completing my profile?', 'What is the profile bonus?', 'Why did I get credit for my profile?'],
+    answer: 'Yes: a complete profile with real answers earns a one-off {profile_credit} of credit. You can change your answers any time on your profile page.',
+  },
+  {
+    slug: 'saved_profiles',
+    from: 'service facts; Review R4 (R4-45)',
+    category: 'account',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Can I have more than one search profile?',
+    variants: ['Can I search for my clients separately?', 'How many profiles can I have?', 'Which profile are my daily picks for?'],
+    answer: 'Yes, up to {saved_profiles_max} saved profiles, for example one for each client you source for. The active one decides Today, Browse and the Explorer.',
+  },
+  {
+    slug: 'team_seats',
+    from: 'service facts; Review R4 (R4-45)',
+    category: 'account',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Can I add my team?',
+    variants: ['How do I invite a colleague?', 'What does a team seat cost?', 'Can my assistant use my account?'],
+    answer: 'Yes: invite colleagues and they use your credit. Each seat costs {team_seat_cost} of your credit every {team_seat_days} days, and team members can’t change anything to do with billing.',
+  },
+  {
+    slug: 'daily_picks_cost',
+    from: 'service facts; Review R4 (R4-45)',
+    category: 'deals',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What do my daily picks cost?',
+    variants: ['How much is Today’s 5?', 'Why am I charged every day?', 'Do the daily deals cost anything?'],
+    answer: 'Daily deals (Today’s 5) are {daily_deals_cost} a day from your credit, on Today and in your daily email.',
+  },
+  {
+    slug: 'pmi_second_opinion',
+    from: 'service facts; Review R4 (R4-45)',
+    category: 'reports',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What does PMI’s second opinion cost?',
+    variants: ['What is PMI’s second opinion?', 'How much is the PMI add-on?', 'Should I add the second opinion?'],
+    answer: 'You can add PMI’s second opinion to a Full analysis for {pmi_addon_cost}; with it the report is a deep report at {deep_report_cost}.',
+  },
+  {
+    slug: 'text_alerts',
+    from: 'service facts; Review R4 (R4-45)',
+    category: 'alerts',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Can I get alerts by text?',
+    variants: ['How do I get text alerts?', 'How many alert texts will I get?', 'When do alert texts come?', 'Do alert texts cost anything?'],
+    answer: 'Yes: verify a UK mobile in Account → Notifications and you get at most an alert text a day and {sms_monthly_cap} a month, between {sms_hours_start} and {sms_hours_end} UK time. Alert texts are free; reply STOP to any text to stop them.',
+  },
+
   // ── Batch 29: the starter pack's bonus, its fresh-report limit, the picks pause and Report ready ──
   {
     slug: 'pack_bonus',
@@ -728,13 +813,13 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'pack_early_offer',
-    from: 'Batch 29, section C; Review R4 (R4-15, the offer can come on its own), Zac 19 Nov 2026',
+    from: 'Batch 29, section C; Review R4 (R4-15 the offer can come on its own; R4-45 the Home offer), Zac 19 Nov 2026',
     category: 'credit_billing',
     channels: ['view', 'chat'],
     showWhen: 'pack_only',
     question: 'Why did I get a “Keep your bonus” offer?',
-    variants: ['What is the keep your bonus email?', 'Why did you email me about starting Starter?', 'Why did I get an email about my bonus?'],
-    answer: 'When your balance gets down to {pack_offer_at}, I offer you Starter or a top-up once, so your bonus stops expiring and works on everything. It comes in your morning email, or on its own when there’s no morning email that day; any low-credit email waits until the next day.',
+    variants: ['What is the keep your bonus email?', 'Why did you email me about starting Starter?', 'Why did I get an email about my bonus?', 'What’s this offer on Home?', 'What is the one-off offer?', 'Why am I being offered a plan?'],
+    answer: 'When your balance first gets down to {pack_offer_at}, Home shows you a one-off offer that day: Starter or a top-up, so your bonus stops expiring and works on everything. It also comes once in your morning email, or on its own when there’s no morning email that day; any low-credit email waits until the next day.',
   },
   {
     slug: 'report_ready',

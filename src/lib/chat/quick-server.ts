@@ -93,7 +93,8 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
         { status: 'answered', outcome: 'answered', rounds, knowledgeSlug: known.hidden, matchConfidence: known.topConfidence, conversationId: conv?.id ?? null, questionId: logged.questionId, logSeq: logged.agentSeq, buttons: [], capPence: budget },
         settings,
       );
-      logActivity(user.id, 'si_chat_quick', { extras: { outcome: 'answered' } });
+      // Review R4 (R4-37): keyed by the turn, so a second such answer inside a minute is not dropped as a repeat.
+      logActivity(user.id, 'si_chat_quick', { extras: { outcome: 'answered' }, dedupeKey: `si_chat_quick:${turn.id}` });
       console.log(`[chat] quick answer (not for this member) in ${Date.now() - started}ms`);
       return { state: 'answer', turnId: turn.id, text: NOT_APPLICABLE_LINE, buttons: [], charged: settled.chargedFacePence > 0 ? chargeLabel(settled.chargedFacePence) : null };
     }

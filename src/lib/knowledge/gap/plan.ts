@@ -95,6 +95,21 @@ export function coversChannels(entryChannels: readonly string[], questionChannel
   return { ok: missing.length === 0, missing };
 }
 
+/**
+ * Review R4 (R4-36): the gaps approving an entry closes as covered. Only a
+ * gap still waiting for an answer (open or drafted: never a rejected,
+ * failed, dismissed or already covered one), and only when the entry is on
+ * every channel the gap's questions came from (R3-57's coversChannels, on the
+ * gap's per-channel counts). The rest stay linked and open, for Zac to add
+ * the channel.
+ */
+export function gapsToClose(gaps: readonly { id: string; status: string; channels: Record<string, number> | null }[], entryChannels: readonly string[]): string[] {
+  return gaps
+    .filter((g) => g.status === 'open' || g.status === 'drafted')
+    .filter((g) => coversChannels(entryChannels, Object.entries(g.channels ?? {}).filter(([, n]) => Number(n) > 0).map(([c]) => c)).ok)
+    .map((g) => g.id);
+}
+
 export interface GapRow {
   id: string;
   label: string;

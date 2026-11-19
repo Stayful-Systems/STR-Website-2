@@ -65,8 +65,17 @@ jobs:
         run: |
           docker exec ${{ job.services.postgres.id }} pg_dump -U postgres -d postgres --schema-only --no-owner | grep -vE '^(-- Dumped|SET |SELECT pg_catalog|\\restrict |\\unrestrict )' > /tmp/schema1.sql
           docker exec ${{ job.services.postgres.id }} pg_dump -U postgres -d postgres --data-only --inserts --no-owner --exclude-schema=auth --exclude-schema=storage | grep -vE '^(-- Dumped|SET |SELECT pg_catalog|\\restrict |\\unrestrict )' > /tmp/data1.sql
+      # Review R4 (R4-47): a re-run must leave every index alone (a rebuild locks the table while crons write to
+      # it); si_calls_log_deal_uidx was rebuilt on every run before. The dump diff can't see a rebuild: the oid can.
+      - name: Note every index after the first run
+        run: psql -tAc "select string_agg(c.relname || ' ' || c.oid, E'\\n' order by c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'i'" > /tmp/index1.txt
       - name: schema.sql again (every statement must be idempotent)
         run: psql -v ON_ERROR_STOP=1 -f supabase/schema.sql
+      - name: The second run rebuilt no index
+        run: |
+          psql -tAc "select string_agg(c.relname || ' ' || c.oid, E'\\n' order by c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'i'" > /tmp/index2.txt
+          grep -q '^si_calls_log_deal_uidx ' /tmp/index1.txt
+          diff /tmp/index1.txt /tmp/index2.txt
       - name: The second run changed nothing
         run: |
           docker exec ${{ job.services.postgres.id }} pg_dump -U postgres -d postgres --schema-only --no-owner | grep -vE '^(-- Dumped|SET |SELECT pg_catalog|\\restrict |\\unrestrict )' > /tmp/schema2.sql
@@ -79,3 +88,5 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/scan-days-smoke.sql
       - name: Starter pack bonus, cap and unlock checks (Batch 29)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/pack-smoke.sql
+      - name: Buy-to-let screen writes and the daily rate sync (Review R4, R4-48)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/btl-smoke.sql

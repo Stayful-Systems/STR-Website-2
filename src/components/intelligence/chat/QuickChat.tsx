@@ -13,6 +13,7 @@ import { TopUpToAsk } from "./TopUpToAsk";
 import { setChatEye } from "./chat-state";
 import { newTurnId, sendQuick } from "./send";
 import { useVoice } from "./voice";
+import { spokenFor } from "@/lib/chat/voice-rules";
 
 interface Entry {
   key: string;
@@ -96,7 +97,8 @@ export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPe
       if (r.charged) notifyCreditChanged();
       // R3-7: only an answer is read aloud; a free outcome ("I don't know", top up, something went wrong) stays as text and ends the spoken turn.
       if (spokenKeys.current.has(key)) {
-        if (r.state === "answer" && r.text) spokenReply = r.text;
+        const spoken = spokenFor(r);
+        if (spoken) spokenReply = spoken;
         else voice.endConversation();
       }
     } catch (err) {

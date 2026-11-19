@@ -7,9 +7,10 @@
  *     "about" from the surface's word cap.
  *   - After a spoken answer the page listens again by itself at most
  *     VOICE_FOLLOW_ONS_MAX times per tap of the microphone, so a radio in
- *     the room can never run up a chain of paid questions (R3-9).
+ *     the room can never run up a chain of paid questions (R3-8).
  *   - Listening is charged for the seconds the transcriber heard, never
- *     more than the page declared (R3-69).
+ *     more than the page declared (R3-84).
+ *   - Only an answer is read aloud (R3-7, spokenFor).
  */
 
 /** A quick answer is clamped to this many words (quick-server.ts). */
@@ -51,4 +52,14 @@ export function listenSeconds(input: { declared: number; heard: number | null; m
   const bound = Math.min(input.max, Math.max(1, Math.ceil(declared)));
   if (input.heard === null || !Number.isFinite(input.heard) || input.heard <= 0) return bound;
   return Math.min(bound, Math.max(1, Math.ceil(input.heard)));
+}
+
+/**
+ * Review R3 (R3-7), made pure in Review R4 (R4-34) so it is tested: what a
+ * question asked out loud reads back. Only an answer with text is spoken; a
+ * free outcome ("I don't know", top up, ask in the full view, something went
+ * wrong) stays as text, and null tells the page to end the spoken turn.
+ */
+export function spokenFor(reply: { state: string; text?: string | null }): string | null {
+  return reply.state === 'answer' && reply.text ? reply.text : null;
 }

@@ -73,6 +73,33 @@ test('the service facts use only known placeholders, all resolving from the sche
   assert.doesNotMatch(SERVICE_FACTS, /£\s?\d|\d+p\b/);
 });
 
+// Review R4 (R4-46): the service facts pass the same blocking number check approval runs, once placeholders are taken out.
+test('every figure in the service facts is a placeholder (the approval number check finds nothing)', async () => {
+  const { SERVICE_FACTS } = await import('./service-facts.ts');
+  const { bareText, parseTemplate } = await import('./template.ts');
+  const { figureCheck } = await import('./figures.ts');
+  const p = parseTemplate(SERVICE_FACTS);
+  assert.ok(p.ok, p.ok ? '' : p.error);
+  assert.deepEqual(figureCheck(bareText(p.parts)).blocking, []);
+});
+
+// Review R4 (R4-45): a figure the nightly drafter may quote always has a draft answer for Zac to approve.
+test('every service-facts placeholder is used by at least one seed entry', async () => {
+  const { SERVICE_FACTS } = await import('./service-facts.ts');
+  const { parseTemplate } = await import('./template.ts');
+  const facts = parseTemplate(SERVICE_FACTS);
+  assert.ok(facts.ok);
+  const used = new Set<string>();
+  for (const e of SEED) {
+    for (const t of [e.question, e.answer]) {
+      const p = parseTemplate(t);
+      if (p.ok) for (const n of p.placeholders) used.add(n);
+    }
+  }
+  const missing = facts.placeholders.filter((n) => !used.has(n));
+  assert.deepEqual(missing, [], `no seed entry uses ${missing.map((n) => `{${n}}`).join(', ')}`);
+});
+
 // Review R3 (R3-146): a retired entry is left alone, whatever its seed text does.
 test('the seed plan skips a retired entry whose seed text changed', async () => {
   const { planSeed } = await import('./seed.ts');

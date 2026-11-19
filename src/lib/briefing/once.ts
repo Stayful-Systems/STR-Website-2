@@ -35,3 +35,15 @@ export function claimDecision(existing: ExistingRow | null, now: Date): ClaimDec
 export function shouldCharge(alreadyBasePence: number): boolean {
   return !(alreadyBasePence > 0);
 }
+
+/**
+ * Review R3 (R3-16), made pure in Review R4 (R4-34) so it is tested: a
+ * claimed row goes back (deleted, for the next run to take afresh) only when
+ * nothing can be on the ledger under its action id: never once the charge
+ * has started, never for a row reclaimed from a dead run (its charge may
+ * already stand), and never on a dry run (which claimed nothing).
+ */
+export function mayRelease(o: { charged: boolean; reclaimed: boolean; dry: boolean }): boolean {
+  return !o.dry && !o.charged && !o.reclaimed;
+}
+

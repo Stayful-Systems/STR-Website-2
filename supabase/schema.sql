@@ -6758,13 +6758,26 @@ create index if not exists profiles_signup_path_idx on public.profiles (signup_p
 -- member never sent a pick and never opted out is enrolled, unless they are a
 -- management-only account (src/lib/management/stamp-server.ts switches their
 -- picks off when it stamps them; before this guard every schema run switched
--- them back on). Safe to re-run.
-update public.profiles
-   set sourcing_alerts = true
- where sourcing_alerts = false
-   and sourcing_opted_out_at is null
-   and sourcing_last_sent_at is null
-   and signup_path is null;
+-- them back on). Safe to re-run. Review R4 (R4-34): the same update, in a
+-- function so supabase/tests/credit-smoke.sql can prove the guard holds;
+-- every schema run still calls it once. Returns how many members it enrolled.
+create or replace function public.daily_picks_backfill()
+returns integer language plpgsql security definer set search_path = '' as $$
+declare
+  n integer;
+begin
+  update public.profiles
+     set sourcing_alerts = true
+   where sourcing_alerts = false
+     and sourcing_opted_out_at is null
+     and sourcing_last_sent_at is null
+     and signup_path is null;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.daily_picks_backfill() from public, anon, authenticated;
+grant execute on function public.daily_picks_backfill() to service_role;
+do $$ begin perform public.daily_picks_backfill(); end $$;
 -- The funnel-price email (NOT the members' pricing_notice_sent_at, which is for
 -- the investor prices): stamped per owner after a successful send. A legacy
 -- owner moves to tier pricing funnel_notice_days after this.
@@ -7595,7 +7608,14 @@ revoke all on public.credit_nudges from anon, authenticated;
 -- deal by the next pass. trigger_ref is the deal id.
 -- Review R3 (R3-104): a deal call that failed at the provider is not the deal's one call; it may be queued once more
 -- (the standout plan allows one retry, then tells the member by email).
-drop index if exists public.si_calls_log_deal_uidx;
+-- Review R4 (R4-47): the older index (without the failed-row exception) is dropped once; a re-run finds the new
+-- one and leaves it untouched, so the calls cron's inserts never wait on a rebuild.
+do $$
+begin
+  if exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'si_calls_log_deal_uidx' and indexdef not like '%failed%') then
+    drop index public.si_calls_log_deal_uidx;
+  end if;
+end $$;
 create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log (user_id, trigger_ref) where call_type = 'deal' and status <> 'failed';
 
 -- ── A face debit never takes credit an open reservation holds (R2-13) ──

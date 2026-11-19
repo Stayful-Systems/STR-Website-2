@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { UNIT_COST_SEED } from '../../credit/costs.ts';
 import { GAP_DRAFT_MODEL, GAP_GROUP_MODEL } from '../config.ts';
-import { catalogueForDrafting, draftCandidates, fitsCap, MODEL_UNITS, uniqueSlug, usagePence, worstCasePence, type GapRow } from './plan.ts';
+import { catalogueForDrafting, draftCandidates, fitsCap, gapsToClose, MODEL_UNITS, uniqueSlug, usagePence, worstCasePence, type GapRow } from './plan.ts';
 import { schemaSnapshot } from '../test-fixtures.ts';
 
 const price = (unit: string) => UNIT_COST_SEED.find((r) => r.provider === 'anthropic' && r.unit === unit)?.unitCostPence ?? Number.NaN;
@@ -78,4 +78,33 @@ test('an approved entry covers a group only on the channels its questions came f
   assert.deepEqual(coversChannels(['view', 'chat'], ['call', 'chat']), { ok: false, missing: ['call'] });
   assert.deepEqual(coversChannels(['call'], ['sms']), { ok: true, missing: [] }, 'a text is an auto-reply template, outside the knowledge base');
   assert.deepEqual(coversChannels(['call', 'chat'], ['call', 'sms', 'chat']), { ok: true, missing: [] });
+});
+
+// Review R4 (R4-36): approving an entry closes only the gaps it really answers.
+test('gapsToClose: only waiting gaps asked on channels the entry is on', () => {
+  const gaps: { id: string; status: string; channels: Record<string, number> | null }[] = [
+    { id: 'chat-open', status: 'open', channels: { chat: 3 } },
+    { id: 'call-open', status: 'open', channels: { call: 2 } },
+    { id: 'both-drafted', status: 'drafted', channels: { call: 1, chat: 1 } },
+    { id: 'view-open', status: 'open', channels: { view: 4 } },
+    { id: 'no-counts', status: 'drafted', channels: null },
+    { id: 'zero-call', status: 'open', channels: { chat: 2, call: 0 } },
+    { id: 'rejected', status: 'rejected', channels: { chat: 1 } },
+    { id: 'failed', status: 'failed', channels: { chat: 1 } },
+    { id: 'dismissed', status: 'dismissed', channels: { chat: 1 } },
+    { id: 'covered', status: 'covered', channels: { chat: 1 } },
+  ];
+  // A chat-only entry: the call question's gap stays open for Zac to add the channel.
+  assert.deepEqual(gapsToClose(gaps, ['chat', 'view']), ['chat-open', 'view-open', 'no-counts', 'zero-call']);
+  assert.deepEqual(gapsToClose(gaps, ['call', 'chat', 'view']), ['chat-open', 'call-open', 'both-drafted', 'view-open', 'no-counts', 'zero-call']);
+  assert.deepEqual(gapsToClose([], ['chat']), []);
+});
+
+test('approving an entry closes gaps through gapsToClose, never every linked gap', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../store-server.ts', import.meta.url), 'utf8');
+  const approve = src.slice(src.indexOf('export async function approveEntry'), src.indexOf('export async function rejectDraft'));
+  assert.match(approve, /gapsToClose\(/);
+  assert.doesNotMatch(approve, /\.eq\('entry_id', o\.id\)\.neq\('status', 'dismissed'\)/);
+  assert.match(approve, /\.update\(\{ status: 'covered'[^)]*\)\.in\('id', close\)/);
 });

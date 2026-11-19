@@ -589,4 +589,31 @@ begin
   raise notice 'batch 27 actions ok';
 end $$;
 
+-- ── Review R4 (R4-34): Review R3's R3-18. The daily-picks backfill every schema run makes leaves a ──
+-- management-only account's picks off (stamp-server.ts switches them off), and still enrols an ordinary member.
+do $$
+declare
+  mgmt uuid := gen_random_uuid();
+  member uuid := gen_random_uuid();
+  n integer;
+begin
+  insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
+  select i, 'credit-smoke-' || i::text || '@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now()
+    from unnest(array[mgmt, member]) as i;
+  insert into profiles (id, email) select i, 'credit-smoke-' || i::text || '@example.test' from unnest(array[mgmt, member]) as i on conflict (id) do nothing;
+  update profiles set sourcing_alerts = false, sourcing_opted_out_at = null, sourcing_last_sent_at = null, signup_path = 'management' where id = mgmt;
+  update profiles set sourcing_alerts = false, sourcing_opted_out_at = null, sourcing_last_sent_at = null, signup_path = null where id = member;
+  n := public.daily_picks_backfill();
+  if (select sourcing_alerts from profiles where id = mgmt) then
+    raise exception 'the daily-picks backfill switched a management account''s picks back on (R3-18)';
+  end if;
+  if not (select sourcing_alerts from profiles where id = member) or n < 1 then
+    raise exception 'the daily-picks backfill should still enrol a member never sent a pick (enrolled %)', n;
+  end if;
+  if has_function_privilege('authenticated', 'public.daily_picks_backfill()', 'execute') then
+    raise exception 'daily_picks_backfill is service-role only';
+  end if;
+  raise notice 'daily picks backfill leaves management accounts off (R3-18) ok';
+end $$;
+
 rollback;

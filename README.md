@@ -1203,6 +1203,13 @@ of a balance that covers it) is counted by the hourly seat cron, not
 reported as an error (r3n). Sections 19 and 23, Member emails and Text
 alerts above were corrected for r3c, r3d, r3e and r3h.
 
+Ids corrected later (Review R4, R4-39): the r3a commit (4d2c199) says R3-61
+where it means R3-73 (the reveal's `addRevealShown` removal); the r3b commit
+(4bf68be) says R3-28 and R3-69 where it means R3-31 and R3-84 (the heard
+seconds). The code comments that said R3-9 for the voice follow-on cap now
+say R3-8, and the listen route's R3-69 now says R3-84; R3-9 is the privacy
+policy and R3-69 the post-call webhook secret.
+
 ### 27. Stayful Intelligence acts for the member (Batch 27)
 
 In the full Stayful Intelligence view the member can tell the eye what to do,

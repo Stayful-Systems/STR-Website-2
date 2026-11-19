@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { latestLanding, lowCreditTriggered, spentFromLedger, toldSinceLanding, type GrantRow } from './low-credit.ts';
+import { latestLanding, lowCreditRecheck, lowCreditTriggered, spentFromLedger, toldSinceLanding, type GrantRow } from './low-credit.ts';
 import { DEFAULT_VOICE } from './settings.ts';
 
 const g = (id: string, kind: string, amount: number, ref: string | null, at: string): GrantRow => ({ id, kind, amount_pence: amount, source_ref: ref, created_at: at });
@@ -49,4 +49,32 @@ test('R3-12: a notice stamped told at or after the landing means this credit was
   assert.equal(toldSinceLanding(null, landing), false);
   assert.equal(toldSinceLanding('not a date', landing), false);
   assert.equal(toldSinceLanding('2026-10-05T07:10:00Z', null), false);
+});
+
+// Review R4 (R4-34): the guard for Review R3's R3-14 (and R3-45). A queued low-credit call is tested again just before it rings.
+test('R3-14: the low-credit call is dropped when the member topped up, a newer credit landed, or a nudge went instead', () => {
+  const due = { balancePence: 450, lowCreditPence: 500, triggerRef: 'a' };
+  assert.deepEqual(lowCreditRecheck(due), { ok: true });
+  assert.deepEqual(lowCreditRecheck({ ...due, balancePence: 501 }), { ok: false, reason: 'topped_up' }, 'balance back above the mark');
+  assert.deepEqual(lowCreditRecheck({ ...due, balancePence: null }), { ok: false, reason: 'topped_up' }, 'an unread balance never rings');
+  assert.deepEqual(lowCreditRecheck({ ...due, balancePence: 500 }), { ok: true }, 'at the mark still rings');
+  assert.deepEqual(lowCreditRecheck({ ...due, latestLandingId: 'b' }), { ok: false, reason: 'topped_up' }, 'a newer landing: the call is about credit that is gone');
+  assert.deepEqual(lowCreditRecheck({ ...due, latestLandingId: 'a', nudged: true }), { ok: false, reason: 'nudged' });
+  assert.deepEqual(lowCreditRecheck({ ...due, latestLandingId: 'a', nudged: false }), { ok: true });
+  assert.deepEqual(lowCreditRecheck({ ...due, latestLandingId: null }), { ok: true }, 'unreadable grants leave the queue-time landing standing');
+  assert.deepEqual(lowCreditRecheck({ ...due, triggerRef: null, latestLandingId: 'b', nudged: true }), { ok: true }, 'an older row with no landing rings on the balance alone');
+});
+
+test('R3-14: the queue re-checks a low-credit call just before it dials, and blocks it when it is no longer due', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const queue = read('./queue-server.ts');
+  const check = queue.indexOf("if (type === 'low_credit') {");
+  const recheck = queue.indexOf('await lowCreditStillDue(m.userId, call.trigger_ref, now)', check);
+  const dial = queue.indexOf('const config = voiceConfig();');
+  assert.ok(check > 0 && recheck > check && dial > recheck, 'the re-check runs before the call is placed');
+  assert.match(queue.slice(recheck, dial), /if \(!still\.ok\) \{\s*if \(o\.apply\) await dropOrBlock\(call, still\.reason\);\s*return \{ outcome: 'blocked', reason: still\.reason \};/);
+  const server = read('./low-credit-recheck-server.ts');
+  assert.ok((server.match(/lowCreditRecheck\(/g) ?? []).length >= 3, 'every answer the re-check gives is lowCreditRecheck\'s');
+  assert.doesNotMatch(server, /return \{ ok: (true|false)/, 'the server never decides on its own');
 });

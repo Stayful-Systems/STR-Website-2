@@ -21,6 +21,7 @@ import { TopUpToAsk } from "./TopUpToAsk";
 import { setChatEye } from "./chat-state";
 import { newTurnId, sendFull } from "./send";
 import { useVoice } from "./voice";
+import { spokenFor } from "@/lib/chat/voice-rules";
 
 /** What the page tells the full view's chat (src/app/intelligence/page.tsx). */
 export interface FullChatConfig {
@@ -152,7 +153,8 @@ export function FullChat(p: {
       if (!later) publishThinking({ answerSeq: readThinking().answerSeq + 1 });
       // R3-7: only an answer is read aloud; a free outcome stays as text and ends the spoken turn.
       if (!later && spokenKeys.current.has(key)) {
-        if (reply.state === "answer" && reply.text) spokenReply = reply.text;
+        const spoken = spokenFor(reply);
+        if (spoken) spokenReply = spoken;
         else voice.endConversation();
       }
     } catch {

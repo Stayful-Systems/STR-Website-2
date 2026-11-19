@@ -48,10 +48,10 @@ import { buildAiInput, briefingSystemPrompt, briefingUserMessage, nudgeForms } f
 import { nudgeLinks, type NudgeLink } from './nudges';
 import { allowedFor, validateBriefing, type Verdict } from './validator';
 import { greetingLine } from './greeting';
-import { afterWriting, cappedTokens, ceilingPence, dayChargeEstimate, decide, type Plan } from './decide';
+import { afterWriting, cappedTokens, ceilingPence, dayChargeEstimate, decide, schemaProbe, type Plan } from './decide';
 import { BRIEFING_MAX_TOKENS, BRIEFING_MODEL, WRITER_TIMEOUT_MS, unitsFor, writeBriefing, writerConfigured, type WriterResult } from './writer';
-import { shouldCharge } from './once';
-import { claimBriefing, finishBriefing, recentAnglesFor, releaseClaim, saveProvisional, schemaMissing, settledToday, type Finished } from './store';
+import { mayRelease, shouldCharge } from './once';
+import { claimBriefing, finishBriefing, recentAnglesFor, releaseClaim, saveProvisional, settledToday, type Finished } from './store';
 import { dayCounts, loadRunContext, loadSheet, type RunContext } from './sheet-server';
 
 const PAGE = 1000;
@@ -124,9 +124,10 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
   const admin = createAdminClient();
   // R3-11: the Batch 23b tables missing is a deploy step, not a crash: a 200 that says so, and nothing else runs.
   const probe = await admin.from('member_briefings').select('id').limit(1);
-  if (probe.error && schemaMissing(probe.error.message)) {
+  const missing = schemaProbe(probe.error?.message, opts.dry);
+  if (missing) {
     console.warn('[briefing] member_briefings is not on this database; run the Batch 23b section of supabase/schema.sql');
-    return { status: 200, body: { dry: opts.dry, schemaMissing: true, error: 'member_briefings is not on this database: run the "Batch 23b: the morning briefing" section of supabase/schema.sql, then check ?dry=1 again' } };
+    return missing;
   }
   const [settings, table] = await Promise.all([getBillingSettings(), getUnitCostTable()]);
   const model = opts.dry && opts.model ? opts.model : BRIEFING_MODEL;
@@ -238,7 +239,7 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
           : decide({ spendable, heldThisRun: (held.get(payer.payerId) ?? 0) - provisional, dayCharge, ceiling, ceilingMax, enabled: settings.briefingsEnabled, writerReady, admin: adminUser });
       if (plan.kind === 'none') {
         holdNow(0);
-        if (!opts.dry && !claim.reclaimed) await releaseClaim(admin, claim.id);
+        if (mayRelease({ charged, reclaimed: claim.reclaimed, dry: opts.dry })) await releaseClaim(admin, claim.id);
         return { user: m.id, outcome: 'none', reason: plan.reason };
       }
       // The hold becomes what this member really takes: the day's charge, plus the ceiling while an AI briefing is written.
@@ -313,7 +314,7 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
       // The claim goes back only when nothing can be on the ledger under it (R3-16): after a charge, or on a
       // reclaimed row, it stays 'generating' so the next run reclaims it with its action id and finds the debit.
       if (!charged) holdNow(dayCharge);
-      if (!opts.dry && !charged && !claim.reclaimed) await releaseClaim(admin, claim.id).catch(() => {});
+      if (mayRelease({ charged, reclaimed: claim.reclaimed, dry: opts.dry })) await releaseClaim(admin, claim.id).catch(() => {});
       throw err;
     }
   }
