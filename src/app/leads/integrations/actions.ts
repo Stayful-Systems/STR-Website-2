@@ -12,6 +12,7 @@ import { listMondayBoards, listMondayGroups, mondayProvider } from '@/lib/crm/pr
 import { checkWebhookUrl } from '@/lib/crm/providers/webhook';
 import { enqueueDelivery } from '@/lib/crm/deliver';
 import { touchLeads } from '@/lib/leads/activity';
+import { websitePushRefusal } from '@/lib/websites/lead-panel';
 import type { CrmField } from '@/lib/crm/types';
 
 /**
@@ -255,6 +256,11 @@ export async function pushLeadAction(_prev: CrmState, formData: FormData): Promi
     .maybeSingle();
   if (!data) return { error: 'That lead no longer exists.' };
   if ((data as { archived_at: string | null }).archived_at) return { error: 'Restore this lead before sending it.' };
+
+  // Batch 31: a website lead reaches the CRM only through completeLead, after its report.
+  const { data: siteReport } = await createAdminClient().from('website_reports').select('state').eq('lead_id', leadId).maybeSingle();
+  const refusal = websitePushRefusal((siteReport as { state: string } | null)?.state);
+  if (refusal) return { error: refusal };
 
   await touchLeads(scope.ownerId, [leadId]);
 

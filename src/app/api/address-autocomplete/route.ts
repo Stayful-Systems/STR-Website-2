@@ -16,6 +16,7 @@ import { meter } from '@/lib/credit/meter';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { INSUFFICIENT_CREDIT_CODE } from '@/lib/credit/http';
 import { ownedFunnelByToken } from '@/lib/funnels';
+import { liveSiteBySlug } from '@/lib/websites/store-server';
 import { countAutocomplete, reserveSpend, settleSpend } from '@/lib/funnels/caps';
 import { actionSpend } from '@/lib/credit/action';
 import { estimateAction } from '@/lib/credit/estimate';
@@ -121,6 +122,7 @@ export async function GET(request: Request) {
   // raw cost is still logged against the owner; nothing is charged.
   let fixedPrice = false;
   const funnelToken = searchParams.get('f');
+  const siteSlug = searchParams.get('s');
   if (funnelToken) {
     const funnel = await ownedFunnelByToken(funnelToken);
     // An unknown or paused token bills nobody rather than falling back to
@@ -161,6 +163,15 @@ export async function GET(request: Request) {
       userId = funnel.userId;
       funnelId = funnel.id;
     }
+  } else if (siteSlug) {
+    // Batch 31: step 2 of a LIVE customer website. The site is house-paid like a
+    // signed-out caller (userId stays null: nothing debits the member), counted
+    // per IP against the website's own funnel row, and an unknown, paused or
+    // preview slug gets no suggestions, as a dead funnel token does.
+    const site = await liveSiteBySlug(siteSlug);
+    if (!site) return Response.json({ suggestions: [] });
+    if (!(await countAutocomplete(site.funnelId, ip))) return Response.json({ suggestions: [] });
+    funnelId = site.funnelId;
   } else {
     try {
       const supabase = await createSupabaseServerClient();

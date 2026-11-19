@@ -121,6 +121,12 @@ const whole = (g: GlobalSnapshot, key: string, min: number): number | null => {
   return n !== null && Number.isInteger(n) && n >= min ? n : null;
 };
 
+/** A true/false setting, stored as a JSON boolean (or the string of one); anything else is null. */
+const flag = (g: GlobalSnapshot, key: string): boolean | null => {
+  const v = raw(g, key);
+  return v === true || v === 'true' ? true : v === false || v === 'false' ? false : null;
+};
+
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 /** Small counts in words ("five"), larger ones in figures ("1,284"). */
 export function countWords(n: number): string {
@@ -494,6 +500,12 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const d = whole(g, 'slower_spender_max_days', 1);
     return d === null ? null : String(d);
   }),
+  // Batch 31: customer websites (each read strictly from its billing_settings row, seeded at the end of schema.sql)
+  website_report_cost: g_('What one income report run from a customer website costs the member, when charging is on', 'billing_settings.website_report_pence', (g) => money(pence(g, 'website_report_pence'))),
+  website_free_reports_per_site: g_('Free income reports one customer website may run in a UK day, in words (inside the limit across all websites)', 'billing_settings.website_free_reports_per_site_per_day', (g) => {
+    const n = whole(g, 'website_free_reports_per_site_per_day', 1);
+    return n === null ? null : countWords(n);
+  }),
   // Teams (src/lib/team/rules.ts: a code constant, so a change is a reviewed code change)
   team_seat_cost: g_("A team member's seat, from the owner's credit", 'code SEAT_PRICE_PENCE (src/lib/team/rules.ts)', () => formatPence(SEAT_PRICE_PENCE)),
   team_seat_days: g_('Days a seat lasts before it renews', 'code SEAT_PERIOD_DAYS (src/lib/team/rules.ts)', () => String(SEAT_PERIOD_DAYS)),
@@ -533,6 +545,9 @@ export const CONDITIONS: Readonly<Record<string, ConditionDef>> = {
       return v === true || v === 'true' ? true : v === false || v === 'false' ? false : null;
     },
   },
+  // Batch 31: customer websites. Strict like briefings_on: anything but a true or false setting resolves to null (the answer goes stale).
+  website_report_charge_on: { label: 'Income reports from customer websites are charged (billing_settings.website_report_charge_on)', scope: 'global', resolve: (g) => flag(g, 'website_report_charge_on') },
+  website_plan_gate_on: { label: 'A plan is needed to invite a customer website and go live (billing_settings.website_plan_gate_on)', scope: 'global', resolve: (g) => flag(g, 'website_plan_gate_on') },
   welcome_offer: { label: 'They have a welcome price running', scope: 'member', resolve: (_g, m) => (m ? m.welcome !== null : null) },
   first_deep_offer: { label: 'Their first deep report is discounted', scope: 'member', resolve: (_g, m) => (m ? m.firstDeepPence !== null : null) },
   alerts_by_text: { label: 'Their alerts also come by text', scope: 'member', resolve: (_g, m) => (m ? m.alertsByText : null) },

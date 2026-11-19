@@ -171,6 +171,8 @@ export async function completeLead(input: {
   result: AnalysisResult;
   rules: LeadRules;
   unqualifiedPolicy: 'crm_flagged' | 'hold';
+  /** Batch 31: false for a customer website's lead (its landlord gets a summary email with no /r link or address instead). Default true. */
+  emailProspect?: boolean;
 }): Promise<LeadVerdict | null> {
   if (!hasServiceRole()) return null;
   const verdict = evaluateLead(input.result, input.rules);
@@ -265,7 +267,7 @@ export async function completeLead(input: {
   // nothing wrong and cannot see the filter; withholding the report they
   // asked for would be a strange way to treat them, and the customer is
   // paying either way.
-  await emailReportToProspect(input.leadId).catch((err) => {
+  if (input.emailProspect !== false) await emailReportToProspect(input.leadId).catch((err) => {
     // Never fails the lead. The report is saved and the customer has it.
     console.error('[leads] could not email the report:', err);
   });
