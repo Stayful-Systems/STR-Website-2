@@ -13,8 +13,13 @@ Branch: batch-31a-academy-trial. Full detail for every phase is below the checkl
   previousCustomerId} | already{userId} | refuse_* (incl. extra refuse_no_card: no customer/saved card on the purchase),
   daysBeforeTrialEnd(end,now), reminderDecision(end,now,{slotFree,sentAt,trialing,cancelling,refunded}) →
   skip|not_yet|wait|send|send_anyway. annual.ts adds monthSlots/monthSlotAt (annual = count 12). Extra index on user_id.
-- [ ] Phase 2 — Linking + starting the trial
-  Notes:
+- [x] Phase 2 — Linking + starting the trial
+  Notes: tests 3380 pass, tsc 0 errors. deps.ts (server-only) exports linkAcademyPurchase(purchaseId,userId,by,{dry}),
+  linkPendingForUser(userId), unlinkAcademyPurchase(purchaseId,{dry}), cancelTrialForRefund(piId,fullyRefunded),
+  liveAcademyDeps(), academyCustomerFor(userId,email). link.ts = same core with (deps, ...) + HOLDS_A_PLAN,
+  trialSubscriptionParams, trialIdempotencyKey, flagReasonFor. emails.ts has the refund email only (Phase 5 adds the
+  reminder). Activity via recordActivity (awaitable). Unlink also restores the profile's previous customer and clears
+  the buyer's card. customer.ts +6 lines, kinds.ts +2 lines.
 - [ ] Phase 3 — Webhook + monthly trial credit
   Notes:
 - [ ] Phase 4 — Checkout + pages

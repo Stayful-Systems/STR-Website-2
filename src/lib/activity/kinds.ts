@@ -101,6 +101,8 @@ export const ACTIVITY_KINDS = {
   plan_resume: inApp('Resumed their plan'),
   plan_cancel: inApp('Cancelled their plan'),
   plan_cancel_undone: inApp('Kept their plan after cancelling'),
+  // Batch 31a: an Academy purchase linked to the account started its free Pro months (src/lib/academy/link.ts).
+  academy_trial_started: inApp('Academy trial started'),
 
   // Batch 10 (registered here so it never has to edit this folder)
   full_analysis: inApp('Bought a full analysis'),
