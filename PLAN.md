@@ -33,8 +33,9 @@ Branch: batch-31a-academy-trial. Full detail for every phase is below the checkl
   Notes: tests 3408 pass. runAcademyReminders({dry, now?}) → {status, body} in src/lib/academy/reminders-run.ts.
   Cron 06:47 UTC (picks emails start 07:00). Email builders: academyReminderEmail, academyRefundEmail. cap.ts +4 lines;
   cap.test.ts +5 lines (its test required every kind to have an unsubscribe switch; academy_reminder must have none).
-- [ ] Phase 6 — Admin panel
-  Notes:
+- [x] Phase 6 — Admin panel
+  Notes: tests 3408, build OK. academy-actions.ts (link/unlink/reminders, each requireAdmin + dry run first),
+  AcademyPanel.tsx + AcademyPanelClient.tsx; page.tsx +2 lines. Unlink hidden for refunded/cancelled trials too.
 - [ ] Phase 7 — Account line + sign-in linking
   Notes:
 - [ ] Phase 8 — Stayful Intelligence knowledge drafts
