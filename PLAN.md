@@ -1,0 +1,147 @@
+# Batch 31 — Customer websites, Phase 1 (branch `batch-31-websites-p1`)
+
+Planned against origin/main `a0fa9c2`. Baseline (Phase 0): `npm test` 3343 pass / 0 fail, `npm run lint` 0 errors (79 pre-existing warnings), `npm run build` passes.
+
+Batch 31a is NOT on main (no `src/app/academy`, `src/lib/academy`). The decisions file `claude/spec-customer-websites.md` is not in the repo, so this document is the spec. Rebase when 31a lands.
+
+## Rules for every phase
+
+- Read `CLAUDE.md` and `AGENTS.md`. Use Graphify (`mcp__graphify__*`) first for code search.
+- Read the relevant `node_modules/next/dist/docs/` page before writing a route, proxy, metadata or server action (this is not the Next.js you know).
+- **Never change:** `ACCESS_COLUMNS` (`src/lib/access.ts`), `src/lib/tracking/**`, academy files (and academy parts of `stripe/webhook.ts` and grants), analysis pricing settings, `src/lib/funnels/charge-server.ts`, `src/lib/funnels/tiers*.ts`, `src/lib/management/report.ts`, `src/proxy.ts`, `src/app/f/**`.
+- Any change to a feature/price/limit/rule needs draft knowledge entries in `src/lib/knowledge/seed.ts` (placeholders only, never typed figures) — Phase 13 owns this.
+- Do not change the plan. Reply to the coordinator in 150 words or fewer. Report every changed line in files marked "touched minimally".
+- Website code never imports `src/lib/funnels/charge-server.ts` or `tiers*.ts` (pin test enforces it).
+
+## Design summary (what recon found)
+
+- Income report = `reserveAnalysis`/`runAnalysis` (`src/lib/analysis/run.ts`). `src/lib/management/report.ts` is admin analytics: not touched.
+- `quality_ok = analysisComplete(result)` (`src/lib/analysis/reuse.ts`) AND `isTrustworthyReport(...)` (`src/lib/market/quality.ts`).
+- A website's funnel row has `kind='website'`, `active=false` forever. Live/paused lives on `websites.status`. Every funnel lookup filters `kind='form'`. Website leads are never `status='queued'`.
+- Billing: charge OFF runs with `billedUserId: null` (house spend, never debits: `credit/action.ts:42-58`, `credit/meter.ts:119`). Charge ON runs `fixedPrice` (logs costs, debits nothing per call); after the run a new SQL function `website_report_charge` charges once (modelled on `funnel_lead_charge`: lock profile, guard row, `credit_debit_face`, records "unpaid" instead of raising). It never uses the run's `action_id`.
+- `completeLead` would email `/r/<token>` (full report + address). Website leads pass new `emailProspect:false` and get their own summary email (no link, no address). Report route returns headline figures only, never the result object.
+- Operator's new-lead email: website notifier reusing the same `owner_notified_at` once-only claim.
+- `/leads/page.tsx` redirect to funnel setup must not trap a website-only member.
+- TrackingRoot is deny-by-default, so `/s/` already gets no banner/pixel. `/s` layout overrides title, icons, robots (as `/f` does).
+- Autocomplete only works for active funnels: add a small website path.
+- Rendering checks run on a pure page model (no react-dom/server in app code).
+- Go-live: flip to live, fetch every public page (200, no placeholder text, form present), roll back to preview on any failure.
+- Copy model: `claude-sonnet-5-5` via `callModel()` (`src/lib/knowledge/gap/models-server.ts`), house-paid. ~10p per site, ~2p per regeneration, 10 regenerations max.
+
+## Zac's answers (19 Nov 2026)
+
+- Temporary address = path `/s/<slug>`. Sites are `noindex` while on it.
+- Free-report leak: self-submits don't run free. Per-site limit setting `website_free_reports_per_site_per_day` default 5, inside the global 20.
+- Self-submit = matches owner profile email/phone, site contact email/phone, or signed-in owner/team session. Free mode: lead saved + flagged, report NOT run (state `held_self`), landlord sees "{Company} will be in touch". Charge ON (later): flagged but runs and is charged.
+- Low-quality report: landlord sees figures labelled "early estimate, limited local data"; operator sees low-confidence flag; never charged. Failed report (no figures) → "{Company} will be in touch".
+- Defaults: one site per member; Sonnet 5.5 copy, 10 regenerations; small "Powered by Stayful Intelligence" footer; `?ad=<code>` 40 chars max; the 24-hour message; website leads go to the member's own CRM only after the report completes; plan gate (when on) blocks invite and going live, not already-live sites; build without waiting for 31a.
+
+## Issue register (built into the phases)
+
+1 per-site daily limit (5) inside global 20, self-submit doesn't run free · 2 Turnstile + per-IP limit step 1 + per-site share · 3 UK day computed in SQL (Europe/London) · 4 live claim succeeds only if used + due backlog < cap, held always fit first · 5 admin shows held count, one admin email/day when backlog > cap · 6 billing mode + price frozen on report row at step 2 · 7 conditional awaiting_address→running with lease, cron takes stale leases, 3 attempts then failed · 8 idempotent step-1 inserts, step token only in awaiting_address, result never echoed · 9 abandoned step 2 stays New, report row expires 14 days · 10 countAttempt step 1 only · 11 step token via `sign/verifyExpiring` (`src/lib/crypto/sign.ts`), `website-step:` purpose prefix, 30 min, POST body only · 12 no address leaks (no result in responses, landing page as path only, no address in logs/emails, privacy URL at render time, owner-scoped reads) · 13 website leads reach CRM only via `completeLead` after report; manual push of a no-report website lead refused · 14 only account owners get sites (`ownerIdOrNull`), setup finds site by session owner · 15 child tables cascade with lead; `website_report_charges` has no FK · 16 schema re-run safe (constraints in DO/drop-if-exists, policies drop-if-exists, seeds on conflict do nothing, functions revoked+granted) · 17 slugs lowercase a–z0–9-, 3–40, reserved list, unique, fixed once live · 18 websites log activity only (no `logConversion`) · 19 low quality caveat · 20 charge ON with starter-pack credit only: not live this batch.
+
+## Seams for later batches
+
+32 hook after `completeLead` in report-server.ts · 33 `websites.domain`, `siteHref/siteBase`, host rewrite in proxy · 34–35 `lead_sources` (generic, `ad_code`) · 36 `websites.status` + plan gate, edits after live · 37 `websites.user_id`.
+
+## Build rules
+
+Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, given its files and the must-not-touch list. After each phase: `git diff --stat`, rerun the phase check (failures only), tick it here, commit `Phase N: <name>`. Phases 2, 3, 13 (after 1) may run in parallel; so may 6, 7, 8. Stop and ask on any blocker.
+
+---
+
+## Phases
+
+- [x] **Phase 0 — Prep** (coordinator). Branch from origin/main, `npm ci`, baseline checks, this file committed.
+  Notes: Branch `batch-31-websites-p1` created from `a0fa9c2`. Baseline recorded above.
+
+- [ ] **Phase 1 — Schema and settings** (needs 0)
+  Files: `supabase/schema.sql` (new Batch 31 section at end), `supabase/tests/websites-smoke.sql`, `src/lib/websites/schema.test.ts`, `src/lib/websites/settings.ts` (+ test).
+  Schema, all idempotent: `funnels.kind` (form|website, default form). `websites`: user_id unique; funnel_id unique, on delete restrict; slug unique + regex; status invited|setup|preview|live|paused; settings jsonb; pages jsonb; regen_count; checks jsonb; invited_by/at, approved_at, live_at, paused_at; domain null (Batch 33 seam). RLS select-own; writes service-role only. `lead_sources`: lead_id pk FK cascade; utm_source/medium/campaign/content/term; fbclid; landing_page; ad_code varchar(40); captured_at; service-role only; generic. `website_reports`: lead_id pk FK cascade; website_id; state awaiting_address|held_cap|held_credit|held_self|running|done|failed|expired; billing_mode free|charged; price_pence; due_day; lease_until; attempts; quality_ok; self_submit; timestamps. `website_report_slots(lead_id pk, website_id, day)`. `website_report_charges`: lead_id pk, no FK; owner_id, txn_id, pence, status charged|unpaid, refunded_at. SQL `website_uk_day()`. `website_free_report_claim(p_lead, p_website, p_held)` reads caps from billing_settings, advisory lock on the day, returns claimed|already|site_full|day_full; live claim needs used + due backlog < cap; held claim needs used < cap. `website_report_charge(p jsonb)`. Seeds: `website_report_charge_on` false, `website_report_pence` 300, `website_plan_gate_on` false, `website_free_reports_per_day` 20, `website_free_reports_per_site_per_day` 5. `notify pgrst`.
+  `settings.ts` reads those 5 keys with its own boolean parser, following `src/lib/voice/settings.ts`; register them wherever `intelligence/settings.test.ts` expects seeded keys parsed.
+  Check: `npm test` incl. re-run guards (follow `credit/pack-schema.test.ts`). Smoke SQL proves: 21st claim of a day refused; second claim same lead → `already`; next day's held claim succeeds once; live claim refused while backlog fills cap; `website_report_charge` charges once, second call `already_charged`, short balance records `unpaid`. `ACCESS_COLUMNS` unchanged.
+  Notes:
+
+- [ ] **Phase 2 — Keep website funnels out of funnel paths** (needs 1)
+  Files: `src/lib/funnels/index.ts`, `src/app/leads/page.tsx`, `src/lib/funnels/kind-isolation.test.ts`.
+  `Funnel.kind`. Filter `kind='form'` in `listFunnels`, `getFunnel`, `funnelByToken`, `funnelPageByToken`, `ownPublicFunnelByToken`, `ownedFunnelByToken`, `updateFunnel`, `rotateFunnelToken`, `markFirstLive`. `/leads` redirect to funnel setup only when owner has no form funnel AND no website.
+  Check: source-pin test lists every lookup with the kind filter; `npm test`; every changed line listed in notes.
+  Notes:
+
+- [ ] **Phase 3 — Pure website core** (needs 1)
+  Files: `src/lib/websites/{types,slug,urls,sources,policy}.ts` + tests; `src/lib/activity/kinds.ts` (add `website_approved`, recordOnly).
+  slug: make/validate/reserve. urls: `siteHref(site, path)`, `siteBase(site)`. sources: parse utm_*, fbclid, ad (trimmed, 40 max), landing path (no query). policy: access (management + owner + invited, + paid when gate on); step-2 decision (free → claim; charged → balance check); mode freeze; `qualityOk`; `isSelfSubmit`; free-mode self-submit → `held_self` (no run), charge on → runs and charged; landlord outcome `summary|summary_caveat|held|will_contact`; state machine transitions.
+  Check: `npm test` covers invite-only + plan-gate switches; self-submit free → held_self, charge on → runs and charged; charge OFF → no charge decision; charge ON + quality false → no charge; mode frozen across settings flip. Pin: nothing under `src/lib/websites` or `src/app/api/s` imports `funnels/charge-server` or `funnels/tiers`.
+  Notes:
+
+- [ ] **Phase 4 — Page model, checks, colours, summary** (needs 3)
+  Files: `src/lib/websites/{page-model,checks,colour,summary}.ts` + tests.
+  page-model: page data per page from settings + copy; templates and checks both use it. checks: leftover placeholders (`{{`, `[Company]`, lorem, TODO); required fields per page; UK phone/email valid; banned claims (guaranteed income, no voids, "you will earn", income ranges); step-1 validator dry run. colour: pixel quantiser → dominant brand colour; contrast via `funnels/brand.ts` `readableOn`. summary: headline figures from `AnalysisResult`, labelled an estimate, caveat "early estimate, limited local data" when quality not OK. No address.
+  Check: `npm test` incl. "checks block a site with placeholder text".
+  Notes:
+
+- [ ] **Phase 5 — Server store, report run, emails** (needs 2, 4)
+  Files: `src/lib/websites/{store-server,report-server,notify-server}.ts`, `src/lib/email/website.ts` (+ test), `src/lib/leads/store.ts` (one optional `emailProspect` param, default true; list the lines).
+  store-server: `liveSiteBySlug`, `ownSite(ownerId)`, `invite` (kind=website funnel active=false + site row), save settings/pages/status. report-server: `runWebsiteReport(leadId)`: lease, then claim or balance check. Free: `reserveAnalysis/runAnalysis` with `billedUserId: null` + funnelId tag. Charged: `fixedPrice` + `reserveBasePence`, `finish()`, then if quality OK call `website_report_charge` RPC. Then `completeLead(…, emailProspect:false)`, then landlord email. Failure: 3 attempts then failed + "will be in touch" email + operator notice. Held: state + due_day. notify-server: "New landlord lead" to operator (once-only `owner_notified_at` claim, link to `/leads/<id>`, no address); landlord summary/held/will-contact emails via `brandedFrom/safeReplyTo/sendEmail`, idempotency key `website-summary:<lead>`.
+  Check: `npm test`; pins: free path passes `billedUserId: null` and never calls `website_report_charge`; `emailProspect:false` skips the /r link email; existing store tests unchanged.
+  Notes:
+
+- [ ] **Phase 6 — Public form API** (needs 5)
+  Files: `src/lib/websites/step-token.ts` (+ test), `src/app/api/s/[slug]/lead/route.ts`, `src/app/api/s/[slug]/report/route.ts`, `src/app/api/address-autocomplete/route.ts` (small website branch).
+  Step 1: live site only; Turnstile + `countAttempt` against the website funnel; validate, consent required; `captureLead` status new, address null; idempotent `lead_sources` + `website_reports(awaiting_address)` + self-submit flag; operator email; returns step token only. Step 2: verify token; only in awaiting_address: save address/input, then `runWebsiteReport`; streams progress text only; last event is headline summary, held or will_contact; resubmit returns current state.
+  Check: `npm test` ("step 1 saves a lead even when step 2 never happens": source pin + policy test). Manual curl on dev server: step 1 twice → one lead; step 2 twice → one run; no address in any response or log line.
+  Notes:
+
+- [ ] **Phase 7 — Held-report cron** (needs 5)
+  Files: `src/app/api/internal/website-reports/route.ts` (+ pin test), `vercel.json` (hourly cron).
+  `authoriseInternal`, `?dry=1` (lists what would run, no lease, no spend). Runs due `held_cap` first, then `held_credit` retries (while balance allows), then stale running leases. Expires after 14 days. Backlog > cap → one admin email per day.
+  Check: `npm test`; smoke + pin prove "21st report is held and runs next day exactly once".
+  Notes:
+
+- [ ] **Phase 8 — Templates and AI copy** (needs 4)
+  Files: `src/lib/websites/templates/SiteShell.tsx`, `templates/pages.tsx`, `copy-prompt.ts` (+ test), `copy-server.ts`.
+  Pure components fed by the page model, operator branding, footer "Powered by Stayful Intelligence". Privacy & Terms: operator = data controller, Stayful = processor; retention from the leads retention constant; matches `consentText` wording. Copy: Sonnet 5.5, JSON schema per page; guardrails (no income ranges, never "you will earn", "you stay the owner", no guarantees); every output passes `checks.ts`; regen cap 10 (config constant); house-paid.
+  Check: `npm test` (prompt contains guardrails; sample JSON passes checks).
+  Notes:
+
+- [ ] **Phase 9 — Public site** (needs 6, 8)
+  Files: `src/app/s/[slug]/layout.tsx`, `page.tsx`, `[page]/page.tsx` (fees, about, faq, privacy), `areas/[area]/page.tsx`, `src/lib/websites/LeadForm.tsx` (client, two steps, attribution in layout-level context, no storage).
+  Neutral metadata, noindex, operator title/icon, `brandCssVars`. Paused/unpublished → 404. All links via `siteHref`.
+  Check: `npm run build`; dev server renders with no Stayful header/favicon/banner; Playwright smoke submits step 1.
+  Notes:
+
+- [ ] **Phase 10 — Setup flow inside /leads** (needs 5, 8, 9)
+  Files: `src/app/leads/setup/website/page.tsx`, `[step]/page.tsx` (reuses SetupFrame), `actions.ts`, `WebsiteSetup.tsx`, `src/lib/websites/golive-server.ts`.
+  Steps: company & logo → areas & fee → contact → photo & about (optional) → generate, preview, edit, approve. Each step logs `funnel_setup_step` (dedupe `website_setup_step:N`). Approve: checks, status live, fetch every public page (200, no placeholders, form present), rollback to preview on failure; logs `website_approved` and `funnel_live` (dedupe `website_live`, no conversion). Owner-only, invited-only, plan gate.
+  Check: `npm run build`; Playwright: Approve blocked when copy contains `{{`; colour override updates preview.
+  Notes:
+
+- [ ] **Phase 11 — Admin panel** (needs 5, 7)
+  Files: `src/app/admin/management/page.tsx`, `WebsitesPanel.tsx`, `website-actions.ts`, `src/lib/websites/invite-run.ts` (+ test).
+  "Give a website": email + slug → Dry run (member found, management, owner, no site, slug free, gate state); Run creates. Site list: status, leads this week, free reports used today, held backlog. Pause/unpause with dry run first. The 5 settings.
+  Check: `npm test` and `npm run build`; dry run writes nothing (pin).
+  Notes:
+
+- [ ] **Phase 12 — Lead view** (needs 5)
+  Files: `src/app/leads/[id]/page.tsx` (2 lines), `src/app/leads/website/LeadPanel.tsx`, `src/app/leads/page.tsx` (entry card for invited members; no new nav item), `src/app/leads/lead-actions.ts` (refuse manual CRM push of a website lead with no report).
+  Panel shows source values, report state (awaiting address, held until, not run because self-submit, done, low confidence), self-submit flag.
+  Check: `npm run build`; another member's lead id → 404 (existing scope check).
+  Notes:
+
+- [ ] **Phase 13 — Knowledge drafts** (needs 1)
+  Files: `src/lib/knowledge/{seed,placeholders,service-facts}.ts`.
+  Drafts: what a website is; who can get one (invite-only); the two-step form; what reports cost `{#website_report_charge_on}{website_report_price}{/…}{^…}free for now`; privacy (operator is data controller). Placeholders `website_report_price`, `website_free_reports_per_site`. Conditions `website_report_charge_on`, `website_plan_gate_on`.
+  Check: `npm test`; every placeholder resolves against schema seeds; no answer types a figure.
+  Notes:
+
+- [ ] **Phase 14 — Final checks** (coordinator)
+  `npm test`, `npm run lint`, `npm run build`. Review: credit charged wrongly; free/paid leaks; address leaks (responses, emails, logs); dry runs on admin actions and cron; schema idempotent; `git diff` on `access.ts` empty; cross-member access. Then push and open a draft PR.
+  Notes:
+
+## Remaining risks
+
+Report run time on Vercel (step-2 route sets `maxDuration`; cron takes over the lease; rollback: set `website_free_reports_per_day` to 0) · AI copy quality (member edits before approving, checks block banned claims) · charge ON untested live (stays OFF) · 31a merge conflict in schema.sql (keep both sections in order).
+
+## Verification (Zac's click-through, after merge)
+
+Run `supabase/schema.sql` twice; admin: give test management account a website (Dry run, then Run); as that member set up the website, upload a logo, change a colour, watch the preview; Approve; open `/s/<slug>` in a private window (6 pages, your branding, no Stayful header); step 1 only then close the tab → lead shows as New; both steps with a real postcode → summary on screen, email arrives, full report on the lead; `?utm_source=facebook&utm_content=test&ad=SI-TEST-1` → lead shows those values; set daily cap to 1, submit twice → second held, landlord sees the 24-hour message; confirm no credit charged anywhere.
