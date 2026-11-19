@@ -36,8 +36,10 @@ Branch: batch-31a-academy-trial. Full detail for every phase is below the checkl
 - [x] Phase 6 — Admin panel
   Notes: tests 3408, build OK. academy-actions.ts (link/unlink/reminders, each requireAdmin + dry run first),
   AcademyPanel.tsx + AcademyPanelClient.tsx; page.tsx +2 lines. Unlink hidden for refunded/cancelled trials too.
-- [ ] Phase 7 — Account line + sign-in linking
-  Notes:
+- [x] Phase 7 — Account line + sign-in linking
+  Notes: tests 3408, build OK. account-view.ts (new); ManagePlan +8/−4, account/page.tsx +4/−2 (PROFILE_COLUMNS gains
+  stripe_default_payment_method_id; not ACCESS_COLUMNS), sign-in-hooks +8. "Manage or cancel" links to /account/billing
+  (the portal button lives there; no portal button on /account to reuse).
 - [ ] Phase 8 — Stayful Intelligence knowledge drafts
   Notes:
 - [ ] Phase 9 — Final checks + review
