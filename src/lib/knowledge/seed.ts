@@ -622,8 +622,9 @@ export const SEED: readonly SeedEntry[] = [
     channels: ['chat', 'view'],
     showWhen: null,
     question: 'How is my minimum profit judged?',
-    variants: ['Why do some deals miss my minimum?', 'What does play it safe mean?', 'Which end of the profit range do you use?', 'Why does a card say low end used?'],
-    answer: 'A deal’s profit is shown as a range, a low end and a top end each month. You choose whether the low end (play it safe), the middle or the top end has to reach your minimum, and I judge every deal’s range that way. The card says which end I used, as you asked, and nothing else about its figures changes.',
+    variants: ['Why do some deals miss my minimum?', 'What does play it safe mean?', 'Which end of the profit range do you use?', 'Why does a card say low end used?', 'Why are my deals judged on the low end?'],
+    // Review R4 (R4-03, R4-04; Zac 19 Nov 2026): older and unanswered members are judged on the low end; new members who haven't answered, the middle.
+    answer: 'A deal’s profit is shown as a range, a low end and a top end each month. You choose whether the low end (play it safe), the middle or the top end has to reach your minimum, and I judge every deal’s range that way, including Most you can pay and standout deals. If you joined before the shorter signup questions, or answered the older question about risk, I use the low end until you answer the new one; if you joined since and haven’t answered, I use the middle. The card says which end I used.',
   },
   {
     slug: 'mortgage_rate',
@@ -652,8 +653,20 @@ export const SEED: readonly SeedEntry[] = [
     channels: ['chat', 'view'],
     showWhen: null,
     question: 'What does R2R setup cash cover?',
-    variants: ['What is the rent-to-rent setup budget?', 'Does the setup figure include the landlord’s deposit?', 'Why was a rent-to-rent deal left out for setup?', 'How is the setup cost worked out?'],
-    answer: 'Furniture and getting a rent-to-rent property guest-ready. My setup figure doesn’t include the landlord’s deposit or the first month’s rent. Deals that need more setup than you chose are left out, unless you make setup a nice-to-have on your profile.',
+    variants: ['What is the rent-to-rent setup budget?', 'Does the setup figure include the landlord’s deposit?', 'Why is a rent-to-rent deal over my setup budget still shown?', 'How is the setup cost worked out?'],
+    // Review R4 (R4-02, Zac 19 Nov 2026): setup cash is a nice-to-have for everyone: it ranks, never hides.
+    answer: 'Furniture and getting a rent-to-rent property guest-ready. My setup figure doesn’t include the landlord’s deposit or the first month’s rent. Deals that need more setup than you chose are shown lower down, never left out, unless you make setup a must-have on your profile.',
+  },
+  {
+    // Review R4 (R4-05, Zac 19 Nov 2026): an older member's two minimum profits stay separate.
+    slug: 'min_profit_two_figures',
+    from: 'review r4',
+    category: 'deals',
+    channels: ['chat', 'view'],
+    showWhen: null,
+    question: 'Why do I have two minimum profits?',
+    variants: ['Will changing my rent-to-rent minimum change my other minimum?', 'Why did my buying minimum not change?', 'What does Undo put back on my minimum profit?', 'Can I have a different minimum for rent-to-rent?'],
+    answer: 'If you joined before the shorter signup questions you may have one minimum for deals you buy and one for rent-to-rent, and they stay separate. When I change one for you, or you use a what-if suggestion, only that one changes, and Undo puts both back exactly as they were. New members give one minimum, used for both.',
   },
   {
     slug: 'home_blocker_card',

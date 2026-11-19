@@ -163,3 +163,23 @@ test('quiz rows and marks are read tolerantly', () => {
   assert.equal(minutesLeftLabel(1), 'about 1 minute left');
   assert.equal(minutesLeftLabel(4), 'about 4 minutes left');
 });
+
+// Review R4 (R4-41): questions Batch 30 began asking of everyone don't reopen a quiz finished before it.
+test('an R2R-only member complete before Batch 30 stays complete', () => {
+  const a = answer(fresh(), 'deal_types', ['r2r']);
+  const old = '2026-10-01T09:00:00Z';
+  // Everything the old quiz asked them, answered; the property question (new to everyone in Batch 30) never asked.
+  const marks: AnsweredMap = {};
+  for (const q of questionsFor(a)) if (q.id !== 'property') marks[q.id] = { at: old, notSure: false };
+  assert.ok(questionsFor(a).some((q) => q.id === 'property'), 'the shorter quiz asks them the property now');
+  const before = progress(a, quiz(marks, { completedAt: old }));
+  assert.equal(before.complete, true, 'finished before Batch 30: still finished');
+  assert.equal(before.percent, 100);
+  assert.equal(before.real, questionsFor(a).length - 1, 'the property is counted, never as a real answer');
+  // A quiz finished since Batch 30 was asked the property, so a missing one is still asked.
+  const since = progress(a, quiz(marks, { completedAt: '2026-11-16T09:00:00Z' }));
+  assert.equal(since.complete, false);
+  assert.equal(since.next, 'property');
+  // Never finished: asked as before.
+  assert.equal(progress(a, quiz(marks)).next, 'property');
+});

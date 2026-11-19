@@ -6,11 +6,13 @@
  * old ceiling (the price that hits a 10% gross yield), which could tell a
  * member to pay a price that loses them money every month.
  *
- * Worked on the same income as the card's profit range, and on its LOW end:
- * the figure is the price at which the card's range would START at the
- * member's minimum. So "within what you can pay" and "clears your minimum
- * profit" (the must-have, criteria.ts) can never disagree. On a Full
- * analysis the income is the report's own, and the figure is exact.
+ * Worked on the same income as the card's profit range, and on the END of it
+ * the member's minimum is judged on (Review R4, R4-03: criteria.ts
+ * profitEndChoice, passed in as `end`; the low end when no end is given, as
+ * before): the figure is the price at which that end of the card's range
+ * would sit at the member's minimum. So "within what you can pay" and "clears
+ * your minimum profit" (the must-have, criteria.ts) can never disagree. On a
+ * Full analysis the income is the report's own, and the figure is exact.
  *
  *   purchase      listing/deal.ts maxPriceForProfit, rounded down to £1,000
  *   rent-to-rent  listing/deal.ts maxRentForMargin, rounded down to £10
@@ -39,7 +41,12 @@ export interface PayInput {
   widthPct: number;
   /** Batch 16: the income is the deal's own comparables check, not the area's average. */
   checked?: boolean;
+  /** Review R4 (R4-03): the end of the range the member's minimum is judged on (wantsFor(...).profitEnd); the low end when absent. */
+  end?: PayEnd;
 }
+
+/** Which end of the profit range has to reach the minimum (criteria.ts ProfitEnd). */
+export type PayEnd = 'low' | 'mid' | 'high';
 
 export interface PayCeiling {
   kind: 'sale' | 'rent';
@@ -67,12 +74,16 @@ const num = (v: number | string | null | undefined): number | null => {
 };
 
 /**
- * The monthly profit the model must show for the card's range to start at
- * the minimum: the range is ±width% of it, and at least £10 either side.
+ * The monthly profit the model (the middle of the range) must show for the
+ * member's end of the card's range to reach the minimum: the range is
+ * ±width% of it, and at least £10 either side. The low end (the default):
+ * the range must START at the minimum; the middle: the model itself; the top
+ * end: the range must END at it.
  */
-export function profitNeeded(minProfitPcm: number, widthPct: number): number {
-  if (widthPct <= 0) return minProfitPcm;
+export function profitNeeded(minProfitPcm: number, widthPct: number, end: PayEnd = 'low'): number {
+  if (widthPct <= 0 || end === 'mid') return minProfitPcm;
   const p = Math.min(0.99, widthPct / 100);
+  if (end === 'high') return Math.min(minProfitPcm - 10, minProfitPcm / (1 + p));
   return Math.max(minProfitPcm + 10, minProfitPcm / (1 - p));
 }
 
@@ -85,7 +96,7 @@ export function mostYouCanPay(input: PayInput): PayCeiling | null {
   const minProfit = Number.isFinite(fin.targetMarginPcm) ? fin.targetMarginPcm : TAILORING.fallbackMinProfitPcm;
   const depositPct = input.cashBuyer ? 100 : fin.depositPct;
   const base = { kind: input.kind, minProfitPcm: minProfit, depositPct, mortgageRatePct: fin.mortgageRatePct, termYears: fin.termYears, mortgageType: fin.mortgageType, basis: input.widthPct <= 0 ? ('exact' as const) : input.checked ? ('checked' as const) : ('area' as const), house };
-  const need = profitNeeded(minProfit, input.widthPct);
+  const need = profitNeeded(minProfit, input.widthPct, input.end ?? 'low');
   const model = { grossRevenue: gross, adr: 0, bedrooms: input.bedrooms ?? 2, finance: fin };
   if (input.kind === 'rent') {
     const rent = maxRentForMargin(rentToRentDeal(0, model).monthlyNetBeforeRent, need);

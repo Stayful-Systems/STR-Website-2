@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { bandBelow, cashBandBelow, KEEP_MY_ANSWER, mayAsk, promptsFor, promptToShow, roundUpToFifty, type PassAnswer, type PromptState } from './behaviour.ts';
 import { plainProfile, type Signal } from './profile.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
+import { judgeDeal, saleCashRequired } from './criteria.ts';
+import { cashNeededFor } from '../profile/buying-power.ts';
 
 const WIDTHS = { high: 10, medium: 15, low: 25 };
 const NOW = new Date('2026-09-28T10:00:00Z');
@@ -206,4 +208,18 @@ test('Batch 30: the lower-rent prompt only fires for a member who has a maximum 
   const stored = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', maxRentPcm: 2_000 }, signals);
   assert.ok(promptsFor(stored, passes).some((x) => x.question === 'max_rent'));
   for (const p of [without, stored]) assert.ok(!promptsFor(p, passes).some((x) => /break-even|payback/i.test(x.text)), 'never break-even or payback');
+});
+
+// Review R4 (R4-44): the nudge and the filter cost a deal the same way (the member's deposit, the deal's bedrooms).
+test('the cash nudge counts the same cash as the filter', () => {
+  const finance = { ...DEFAULT_GOALS.finance, depositPct: 25 };
+  const p = profile({ budget: 'u200', finance, buyer: { ...DEFAULT_GOALS.buyer, funding: 'btl', cashAvailable: '30-60' } }, [...times(9, () => keep({ amount: 150_000, bedrooms: 4 })), ...times(11, () => keep({ propertyKind: 'flat', amount: 40_000, bedrooms: 1 }))], { answered: { cash_available: real } });
+  // A £150k 4-bed: the filter costs a 4-bed's furnishing; the old nudge sum costed a 2-bed's and stayed under £60k.
+  const filter = saleCashRequired(150_000, 4, p)!;
+  assert.ok(filter > 60_000, `the filter says £${filter}`);
+  assert.ok(cashNeededFor(150_000, false) <= 60_000, 'the 2-bed sum the nudge used to count is under the band');
+  assert.equal(judgeDeal({ kind: 'sale', area: 'NG', bedrooms: 4, amount: 150_000, propertyKind: 'house', tenure: 'freehold', licensing: 'confirmed-unrestricted', grossRevenue: null, confidence: null, deal: null, motivationQualifies: undefined, motivationScore: 0, needsWork: false }, p).judgement.mustFails.includes('cash'), true, 'the filter hides them');
+  const nudge = promptsFor(p).find((x) => x.question === 'budget');
+  assert.ok(nudge, 'so the nudge offers to show them');
+  assert.equal(nudge.accept, 'Make Buying cash a nice-to-have');
 });

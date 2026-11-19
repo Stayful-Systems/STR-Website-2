@@ -12,6 +12,13 @@
  *
  * Skipped when the cache has no rate: yesterday's figure stays.
  *
+ * Review R4 (R4-33): skipped, with a logged reason, until the Batch 30
+ * backfill has stamped billing_settings.quiz_v2_backfill_done_at. The backfill
+ * marks a rate a member chose as theirs only while no average has been
+ * synced yet, so a sync that ran first would have overwritten it for good.
+ * schema.sql seeds the stamp as done (live's backfill finished on
+ * 14-15 Nov 2026, before the stamp existed).
+ *
  * This file is the pure part (which rate, which day, what to say); the write
  * is live-rate-sync-server.ts.
  */
@@ -37,6 +44,24 @@ export function rateToSync(rates: MortgageRates | null | undefined, now: Date): 
   const live = liveMortgageRate(rates);
   if (!live || !Number.isFinite(live.ratePct) || live.ratePct <= 0 || live.ratePct > 25) return null;
   return { ratePct: Math.round(live.ratePct * 100) / 100, asOf: ukDay(now) };
+}
+
+/** The billing_settings row a finished quiz v2 backfill writes (when it ran, an ISO time) and the rate sync waits for. */
+export const QUIZ_V2_BACKFILL_DONE_KEY = 'quiz_v2_backfill_done_at';
+
+/** The stamp is there: any stored time (the backfill writes its own run time; schema.sql seeds one). */
+export function backfillStamped(raw: unknown): boolean {
+  return typeof raw === 'string' && Number.isFinite(Date.parse(raw));
+}
+
+/** Why the sync is skipped while the stamp is missing (the run's log line and the dry run say this). */
+export const WAITING_FOR_BACKFILL = `skipped: waiting for the quiz v2 backfill (billing_settings.${QUIZ_V2_BACKFILL_DONE_KEY} is not set), so no member's chosen rate can be overwritten; run the backfill on /admin/profiles`;
+
+/** Whether today's run writes the average: a rate to write, and the backfill's stamp. */
+export function syncPlan(rate: RateToSync | null, stamp: unknown): { sync: boolean; line: string | null } {
+  if (!rate) return { sync: false, line: syncSummary(null) };
+  if (!backfillStamped(stamp)) return { sync: false, line: WAITING_FOR_BACKFILL };
+  return { sync: true, line: null };
 }
 
 /** What a run says it did. */

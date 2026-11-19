@@ -21,7 +21,8 @@ import { areaRevenueFor } from '../listing/sourcing';
 import type { PipelineStatus } from '../listing/pipeline';
 import { askingAmount, reductionCount, stepKindOf, timeOnMarket, type DealFacts } from './facts';
 import { computeOfferRange, type OfferRange } from './offer-range';
-import { cashBuyerOf, mostYouCanPay } from '../marketplace/most-you-can-pay';
+import { cashBuyerOf, mostYouCanPay, type PayEnd } from '../marketplace/most-you-can-pay';
+import { profitEndForMember } from '../tailoring/profit-end-server';
 import { widthFor } from '../marketplace/profit-range';
 import { getBillingSettings } from '../credit/unit-costs';
 import { getOfferRules } from './rules-server';
@@ -51,6 +52,8 @@ interface MemberContext {
   finance: FinanceDefaults;
   /** They buy with cash (Batch 14): no mortgage, so no price is too high for the profit. */
   cashBuyer: boolean;
+  /** Review R4 (R4-03): the end of the profit range the member is judged on, so the offer's "most you can pay" matches the card. */
+  profitEnd: PayEnd;
   /** item key → ticked checklist item ids */
   ticks: Map<string, Set<string>>;
 }
@@ -62,6 +65,7 @@ const memberContext = cache(async (userId: string, email: string | null): Promis
   if (error) console.warn('[next-step] profile read failed:', error.message);
   const goals = parseMarketGoals((profile as { market_goals?: unknown } | null)?.market_goals);
   const ticks = new Map<string, Set<string>>();
+  const profitEnd = await profitEndForMember(hasServiceRole() ? createAdminClient() : null, userId);
   if (hasServiceRole()) {
     const { data, error: tickErr } = await createAdminClient().from(TICKS_TABLE).select('item_key, item_id').eq('user_id', userId).limit(5000);
     // A database the schema has not caught up with reads as no ticks.
@@ -77,6 +81,7 @@ const memberContext = cache(async (userId: string, email: string | null): Promis
     email,
     finance: { ...DEFAULT_FINANCE, ...(goals?.finance ?? {}) },
     cashBuyer: cashBuyerOf(goals),
+    profitEnd,
     ticks,
   };
 });
@@ -90,7 +95,7 @@ const areaCards = cache(async () => getAreaCards().catch(() => []));
  * three can never disagree; the area's figure for the size only when the
  * deal has no screening income.
  */
-async function offerFor(facts: DealFacts, kind: StepKind, ctx: Pick<MemberContext, 'finance' | 'cashBuyer'>, now: Date): Promise<OfferRange> {
+async function offerFor(facts: DealFacts, kind: StepKind, ctx: Pick<MemberContext, 'finance' | 'cashBuyer'> & Partial<Pick<MemberContext, 'profitEnd'>>, now: Date): Promise<OfferRange> {
   const asking = askingAmount(facts, kind);
   let target: number | null = null;
   let targetMissing: 'noRevenue' | 'studio' | 'noPrice' | null = null;
@@ -110,7 +115,7 @@ async function offerFor(facts: DealFacts, kind: StepKind, ctx: Pick<MemberContex
         confidence = null;
       }
       const { dealPricing } = await getBillingSettings();
-      const pay = mostYouCanPay({ kind: kind === 'purchase' ? 'sale' : 'rent', grossRevenue: gross, bedrooms: facts.bedrooms, finance: ctx.finance, cashBuyer: ctx.cashBuyer, widthPct: widthFor(confidence, dealPricing.profitRangePct) });
+      const pay = mostYouCanPay({ kind: kind === 'purchase' ? 'sale' : 'rent', grossRevenue: gross, bedrooms: facts.bedrooms, finance: ctx.finance, cashBuyer: ctx.cashBuyer, widthPct: widthFor(confidence, dealPricing.profitRangePct), end: ctx.profitEnd ?? 'low' });
       if (!pay) targetMissing = 'noRevenue';
       else if (pay.state === 'price') target = pay.amount;
       else if (pay.state === 'any') target = asking;

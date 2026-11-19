@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { backfillQuizV2, beforeOf, summarise } from './quiz-v2-backfill.ts';
+import { backfillDone, backfillQuizV2, beforeOf, summarise } from './quiz-v2-backfill.ts';
 import { DEFAULT_GOALS, parseMarketGoals, type MarketGoals } from '../market/goals.ts';
 import { DEFAULT_ABOUT } from './about.ts';
 
@@ -87,4 +87,29 @@ test('the dry run reads before and after as option keys only', () => {
   assert.deepEqual(summarise(['map', 'map', 'already', 'no_goals']), { toMap: 2, already: 1, noGoals: 1 });
   assert.equal(backfillQuizV2(null, null, {}, {}).status, 'no_goals');
   for (const s of JSON.stringify(before)) assert.ok(s !== '@', 'no email');
+});
+
+// Review R4 (R4-43): an older Buy to let member's Buying cash row was "Not answered yet" for good.
+test('a BTL-only member with a BTL band gets a worked-out Buying cash', () => {
+  const btl = stored({ dealTypes: ['btl'] }, { btl: { ...DEFAULT_GOALS.btl, cashBand: '25k_50k' } });
+  const r = backfillQuizV2(btl, DEFAULT_ABOUT, { btl_cash: real }, {});
+  assert.equal(r.status, 'map');
+  if (r.status !== 'map') return;
+  assert.equal(r.goals.buyer.cashAvailable, '30-60', 'the band that covers £25–50k');
+  assert.equal(r.goals.buyer.cashFromBudget, true, 'worked out, never a filter');
+  assert.equal(r.after.cash, '30-60');
+  assert.equal(r.goals.btl.cashBand, '25k_50k', 'their Buy to let band is untouched');
+  // Idempotent: a second run changes nothing.
+  assert.equal(backfillQuizV2(r.goals, DEFAULT_ABOUT, { btl_cash: real }, {}).status, 'already');
+  // A budget, when they have one, still decides.
+  const both = backfillQuizV2(stored({ dealTypes: ['btl'], budget: 'u100' }, { btl: { ...DEFAULT_GOALS.btl, cashBand: '100k_plus' } }), DEFAULT_ABOUT, {}, {});
+  assert.ok(both.status === 'map' && both.goals.buyer.cashAvailable !== '100-200');
+});
+
+// Review R4 (R4-33): what counts as done, for the stamp the rate sync waits for.
+test('a real run stamps "done" only when nothing is left', () => {
+  assert.equal(backfillDone({ profilesReadable: true, left: 0, outOfTime: false }), true);
+  assert.equal(backfillDone({ profilesReadable: true, left: 1, outOfTime: false }), false);
+  assert.equal(backfillDone({ profilesReadable: true, left: 0, outOfTime: true }), false);
+  assert.equal(backfillDone({ profilesReadable: false, left: 0, outOfTime: false }), false);
 });

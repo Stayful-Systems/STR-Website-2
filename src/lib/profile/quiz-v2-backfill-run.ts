@@ -4,7 +4,9 @@ import 'server-only';
  * The one-off move of existing profiles onto the shorter quiz (Batch 30), by
  * quiz-v2-backfill.ts (the rules are there). Shared by
  * /api/internal/quiz-v2-backfill. Run it straight after the release, before the
- * 07:00 sourcing run and before the first rate sync.
+ * first rate sync (04:45 UK) and the 07:00 sourcing run. Review R4 (R4-33): a
+ * real run that leaves nothing behind stamps billing_settings.quiz_v2_backfill_done_at,
+ * which the rate sync waits for; the dry run writes nothing.
  *
  *   dry   every profile's before and after (short ids, option keys); writes nothing
  *   run   writes each profile that moves: the active one (or a member with no
@@ -23,6 +25,8 @@ import { parseAnswered, type AnsweredMap } from './state';
 import { parseFilterModes, type FilterModes } from '../tailoring/profile';
 import { backfillQuizV2, beforeOf, summarise, type QuizV2After, type QuizV2Before, type QuizV2Outcome } from './quiz-v2-backfill';
 import { shortId } from './deal-types-backfill';
+import { QUIZ_V2_BACKFILL_DONE_KEY, backfillDone } from './quiz-v2-backfill';
+import { readBackfillStamp } from '../listing/live-rate-sync-server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -87,15 +91,20 @@ interface Seat {
 
 async function writeSeat(admin: Admin, seat: Seat, outcome: Extract<QuizV2Outcome, { status: 'map' }>, nowIso: string): Promise<{ ok: boolean; reason?: string }> {
   if (seat.live) {
+    // Review R4 (R4-40): the switch first, so a failed switch leaves the old answer in place and the next run finds
+    // the member again (written after the goals, a failed switch was never retried).
+    if (outcome.modes && seat.profile) {
+      const { error: modeErr } = await admin.from('search_profiles').update({ filter_modes: outcome.modes }).eq('id', seat.profile.id).eq('user_id', seat.member.id);
+      if (modeErr) {
+        console.warn('[quiz-v2 backfill] filter mode not written:', modeErr.message);
+        return { ok: false, reason: 'write_failed' };
+      }
+    }
     let q = admin.from('profiles').update({ market_goals: outcome.goals, market_goals_updated_at: nowIso }).eq('id', seat.member.id);
     q = seat.member.market_goals_updated_at ? q.eq('market_goals_updated_at', seat.member.market_goals_updated_at) : q.is('market_goals_updated_at', null);
     const { data, error } = await q.select('id');
     if (error) return { ok: false, reason: 'write_failed' };
     if ((data ?? []).length === 0) return { ok: false, reason: 'changed_meanwhile' };
-    if (outcome.modes && seat.profile) {
-      const { error: modeErr } = await admin.from('search_profiles').update({ filter_modes: outcome.modes }).eq('id', seat.profile.id).eq('user_id', seat.member.id);
-      if (modeErr) console.warn('[quiz-v2 backfill] filter mode not written:', modeErr.message);
-    }
     return { ok: true };
   }
   const row = seat.profile!;
@@ -175,6 +184,16 @@ export async function runQuizV2Backfill(opts: { dry: boolean; triggeredBy: strin
   const totals = summarise(lines.map((l) => l.status));
 
   if (!opts.dry) console.info(`[quiz-v2 backfill] by ${opts.triggeredBy}: ${counts.written} written, ${counts.left} left, ${totals.already} already moved`);
+  // Review R4 (R4-33): a real run that leaves nothing behind stamps "done", which the daily rate sync waits for.
+  // The dry run writes nothing (it only says whether the stamp is there).
+  let stamp: string | null = null;
+  if (!opts.dry && backfillDone({ profilesReadable, left: counts.left, outOfTime })) {
+    const { error } = await admin.from('billing_settings').upsert({ key: QUIZ_V2_BACKFILL_DONE_KEY, value: nowIso, updated_at: nowIso }, { onConflict: 'key' });
+    if (error) console.warn('[quiz-v2 backfill] done stamp not written:', error.message);
+    else stamp = nowIso;
+  } else {
+    stamp = await readBackfillStamp(admin);
+  }
   return {
     status: 200,
     body: {
@@ -187,6 +206,7 @@ export async function runQuizV2Backfill(opts: { dry: boolean; triggeredBy: strin
       alreadyMoved: totals.already,
       noGoals: totals.noGoals,
       ...(opts.dry ? {} : { written: counts.written, leftForNextRun: counts.left, outOfTime }),
+      doneStamp: stamp,
       lines,
     },
   };

@@ -53,10 +53,9 @@ import type { MarketGoals } from '../market/goals.ts';
 import { BUDGET_CHOICES, BUDGET_LABELS } from '../market/filters.ts';
 import { budgetBounds } from '../listing/sourcing.ts';
 import { DEAL_TYPES, DEAL_TYPE_LABELS, availableTypes, kindsFor, typesShown, withAddedType, type DealType } from '../profile/deal-types.ts';
-import { cashNeededFor } from '../profile/buying-power.ts';
 import { applyAnswer, questionById } from '../profile/questions.ts';
 import { TAILORING } from './config.ts';
-import { wantsFor } from './criteria.ts';
+import { saleCashRequired, wantsFor } from './criteria.ts';
 import { asked, type CriterionKey, type Mode, type Signal, type TailoringProfile } from './profile.ts';
 
 export const PROMPT_QUESTIONS = ['type', 'bedrooms', 'location', 'budget', 'kind', 'kind_drop', 'budget_band', 'max_rent', 'type_pass', 'location_pass'] as const;
@@ -182,9 +181,12 @@ export function promptsFor(p: TailoringProfile, passes: readonly PassAnswer[] = 
 
   // Batch 30: a member with Buying cash answered is asked about the cash, not the budget the cash worked out.
   const cashTop = wants.cashTop;
-  const cashFunding = g.buyer.funding === 'cash';
+  // Review R4 (R4-44): the cash a kept or passed deal needs, worked out exactly as the cash check does (the member's
+  // deposit, the deal's bedrooms; saleCashRequired), so a nudge and the filter never disagree.
+  const cashFor = (s: { amount: number | null; bedrooms: number | null }) => (s.amount === null ? null : saleCashRequired(s.amount, s.bedrooms, p));
+  const needsOver = (s: { amount: number | null; bedrooms: number | null }, top: number) => (cashFor(s) ?? -Infinity) > top;
   if (cashTop !== null && modeOf('cash') === 'must') {
-    const a = agrees(sales.filter((s) => s.amount !== null && typeOf(s) !== 'brrr' && cashNeededFor(s.amount, cashFunding) > cashTop), 'keep');
+    const a = agrees(sales.filter((s) => s.amount !== null && typeOf(s) !== 'brrr' && needsOver(s, cashTop)), 'keep');
     if (a) out.push({ question: 'budget', count: a.agreeing, text: `I’ve noticed you’ve kept ${a.agreeing} deals that need more cash than your Buying cash. Want me to show those too?`, accept: 'Make Buying cash a nice-to-have', keep: KEEP_MY_ANSWER, change: { kind: 'mode', criterion: 'cash', to: 'nice' } });
   } else if (cashTop === null && wants.budget && modeOf('budget') === 'must') {
     const b = wants.budget;
@@ -235,8 +237,8 @@ export function promptsFor(p: TailoringProfile, passes: readonly PassAnswer[] = 
   if (cashTop !== null && lowerCash) {
     const lowerTop = TAILORING.cashAvailableTop[lowerCash] as number;
     const priced = sales.filter((s) => s.amount !== null && typeOf(s) !== 'brrr');
-    const a = agrees(priced.filter((s) => cashNeededFor(s.amount!, cashFunding) > lowerTop), 'pass');
-    if (a && priced.some((s) => cashNeededFor(s.amount!, cashFunding) <= lowerTop && s.verdict === 'keep')) {
+    const a = agrees(priced.filter((s) => needsOver(s, lowerTop)), 'pass');
+    if (a && priced.some((s) => !needsOver(s, lowerTop) && s.verdict === 'keep')) {
       const next = applyAnswer('cash_available', lowerCash, { goals: g, about: p.about, savedAreas: p.savedAreas });
       if (next.ok) out.push({ question: 'budget_band', count: a.agreeing, text: `I’ve noticed you pass on ${share(a.all, 'deal', 'deals')} needing over ${money(lowerTop)} cash. Want me to change your Buying cash to ${cashLabel(lowerCash).replace(/^Under/, 'under')}?`, accept: 'Change my Buying cash', keep: KEEP_MY_ANSWER, change: { kind: 'goals', goals: next.answers.goals } });
     }

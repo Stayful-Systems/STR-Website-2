@@ -132,3 +132,26 @@ test('memberFinance: a cash buyer borrows nothing; everyone else keeps their own
   assert.equal(memberFinance({ ...g, path: 'r2r', buyer: { ...g.buyer, funding: 'cash' } })?.depositPct, 25, 'only on the buying path');
   assert.equal(memberFinance(null), null);
 });
+
+// Review R4 (R4-03): "Most you can pay" is sized for the end of the range the member is judged on, so one card
+// can never say "match" and "you can't pay this" at once.
+test('a card that passes never shows Most you can pay below the asking price', () => {
+  const at = { low: 'lowPcm', mid: 'midPcm', high: 'highPcm' } as const;
+  let checked = 0;
+  let middleOnly = 0;
+  for (const end of ['low', 'mid', 'high'] as const) {
+    for (let asking = 120_000; asking <= 300_000; asking += 2_500) {
+      const range = profitRange({ kind: 'sale', priceAmount: asking, pricePeriod: 'total', bedrooms: 2, grossRevenue: 30_000, confidence: 'medium', finance: mine, widths: WIDTHS })!;
+      // Comfortably passing (by £10 a month, past the £1,000 and £10 rounding steps).
+      if (range[at[end]] < mine.targetMarginPcm + 10) continue;
+      checked += 1;
+      if (end === 'mid' && range.lowPcm < mine.targetMarginPcm) middleOnly += 1;
+      const pay = mostYouCanPay({ kind: 'sale', grossRevenue: 30_000, bedrooms: 2, finance: mine, widthPct: WIDTHS.medium, end })!;
+      assert.equal(gapLine(asking, pay), 'Within what you can pay', `${end} end, £${asking}: passes, but most you can pay is £${pay.amount}`);
+    }
+  }
+  assert.ok(checked > 0 && middleOnly > 0, 'deals that pass on the middle but not the low end are covered');
+  // Without an end, the low end as before.
+  assert.equal(profitNeeded(300, 15), profitNeeded(300, 15, 'low'));
+  assert.ok(profitNeeded(300, 15, 'mid') < profitNeeded(300, 15, 'low') && profitNeeded(300, 15, 'high') < profitNeeded(300, 15, 'mid'));
+});

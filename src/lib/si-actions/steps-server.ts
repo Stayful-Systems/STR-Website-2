@@ -47,6 +47,7 @@ import { deepQuoteFor, runSearchSlice, searchStatusFor, startDeepSearch, type De
 import { SEARCH_SLICE_MS } from '../intelligence/config';
 import { answerQuestion, matchCountFor, profileSummaryFor } from '../profile/server';
 import { applyAnswer, currentValue, questionById, questionsFor, type Answers } from '../profile/questions';
+import { minimumWrite } from './undo';
 import { cashBandFromBudget } from '../profile/buying-power';
 import { DEAL_TYPE_LABELS, typesShown } from '../profile/deal-types';
 import { activeProfileFor } from '../profiles/server';
@@ -278,18 +279,24 @@ export async function previewCriteria(m: ActingMember, q: CriteriaQuestion, raw:
   const savedAs: CriteriaPreview['savedAs'] = cash ? 'cash_available' : CRITERIA_SAVED_AS[q];
   // A question that is no longer asked but still saves (the maximum rent, bedrooms, property type) is allowed.
   if (!questionsFor(s.answers).some((x) => x.id === savedAs) && questionById(savedAs)?.retired !== 'editable') return { reason: 'bad_value', message: 'Your profile doesn’t ask that.' };
+  // Review R4 (R4-05): the rent-to-rent minimum only for a profile that looks at rent-to-rent deals.
+  if (savedAs === 'r2r_min_profit' && questionById('r2r_min_profit')?.applies?.(s.answers) === false) return { reason: 'bad_value', message: 'Your profile doesn’t look at rent-to-rent deals.' };
   const next = nextValue(q, raw, s.answers, cash);
   if ('reason' in next) return next;
-  const applied = applyAnswer(savedAs, next.value, s.answers);
+  // Review R4 (R4-05): a minimum-profit change writes only the figure it is about, and keeps both figures for Undo.
+  const minimum = (q === 'min_profit' || q === 'r2r_min_profit') && typeof next.value === 'number' ? minimumWrite(q, next.value, s.answers.goals) : null;
+  const value = minimum ? minimum.value : next.value;
+  const label = minimum && minimum.savedAs === 'min_profit' && typeof minimum.value === 'object' ? next.label.replace(/^Minimum profit:/, 'Minimum profit (buying):') : next.label;
+  const applied = applyAnswer(savedAs, value, s.answers);
   if (!applied.ok) return { reason: 'bad_value', message: applied.error };
   const [countBefore, countAfter, active] = await Promise.all([
     matchCountFor({ userId: m.userId, email: m.email, answers: s.answers, answered: s.quiz.answered }).catch(() => null),
     matchCountFor({ userId: m.userId, email: m.email, answers: applied.answers, answered: s.quiz.answered }).catch(() => null),
     activeProfileFor(m.userId).catch(() => null),
   ]);
-  // The rent-to-rent minimum saves through the one minimum profit, but its own figure is what Undo goes back to.
-  const before = q === 'r2r_min_profit' ? (s.answers.goals.r2r.minMarginPcm ?? currentValue(savedAs, s.answers)) : currentValue(savedAs, s.answers);
-  return { savedAs, value: next.value, before, label: next.label, countBefore, countAfter, profileId: active?.id ?? null };
+  // Review R4 (R4-05): a minimum change keeps both figures, so Undo puts back exactly what was there.
+  const before = minimum ? minimum.before : currentValue(savedAs, s.answers);
+  return { savedAs, value, before, label, countBefore, countAfter, profileId: active?.id ?? null };
 }
 
 /** Saves a change through the profile editor's own save; the count after is the one it worked out. */

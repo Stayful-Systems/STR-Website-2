@@ -1,18 +1,21 @@
 /**
  * The one-off move of existing profiles onto the shorter quiz (Batch 30), and
- * what its dry run prints. Run it straight after the release, before the 07:00
- * sourcing run and before the first rate sync (market-warm, 04:45). Per profile
+ * what its dry run prints. Run it straight after the release, before the first
+ * rate sync (market-warm, 04:45 UK) and the 07:00 sourcing run. A real run that
+ * leaves nothing behind stamps billing_settings.quiz_v2_backfill_done_at, and
+ * the rate sync waits for that stamp (Review R4, R4-33). Per profile
  * (the member's live profiles.market_goals and every saved search_profiles.criteria):
  *
  *   setup     a profile that held an OLD setup answer (under £3k, £3–6k, £6–10k,
  *             £10k+) is written on the new bands, and keeps judging on it as a
  *             nice-to-have (filter_modes.setup = 'nice', unless the member already
- *             chose) — what it did before. Setup cash is a must-have only for
- *             members who answer the new question.
+ *             chose) — what it did before. Review R4 (R4-02): setup cash is now a
+ *             nice-to-have for everyone by default, so the switch only pins that.
  *   cash      a buyer with a budget but no Buying cash answer gets the band that
- *             budget points to (cashBandFromBudget), marked cashFromBudget: shown
- *             on the profile page as "worked out from your budget", never a filter
- *             (no answered mark is written).
+ *             budget points to (cashBandFromBudget); Review R4 (R4-43): an older
+ *             Buy to let member with no budget, the band their Buy to let cash band
+ *             points to (cashBandFromBtl). Marked cashFromBudget: shown on the
+ *             profile page as worked out, never a filter (no answered mark is written).
  *   rate      a profile whose member gave a real finance answer, or whose rate is
  *             not the house 5.5%, keeps it: finance.rateSet = true, so today's
  *             average never overwrites it. Only while no average has been synced
@@ -28,7 +31,7 @@
 import { DEFAULT_FINANCE_GOALS, LEGACY_SETUP_BUDGET, parseMarketGoals, type MarketGoals } from '../market/goals.ts';
 import type { FilterModes } from '../tailoring/profile.ts';
 import type { AboutYou } from './about.ts';
-import { cashBandFromBudget } from './buying-power.ts';
+import { cashBandFromBtl, cashBandFromBudget } from './buying-power.ts';
 import { dealTypesFor } from './deal-types.ts';
 import type { AnsweredMap } from './state.ts';
 
@@ -85,11 +88,11 @@ export function backfillQuizV2(raw: unknown, about: AboutYou | null, marks: Answ
     if (modes && modes.setup === undefined) nextModes = { ...modes, setup: 'nice' };
   }
 
-  // Cash: a buyer with a budget and no cash answer.
+  // Cash: a buyer with a budget and no cash answer; Review R4 (R4-43): or, with no budget, a Buy to let cash band.
   const buys = dealTypesFor({ goals, about }).some((t) => t === 'buy_str' || t === 'brrr' || t === 'btl');
   const budget = goals.budget ?? goals.brrr.budget;
-  if (buys && goals.buyer.cashAvailable === null && budget) {
-    const band = cashBandFromBudget(budget);
+  if (buys && goals.buyer.cashAvailable === null && (budget || goals.btl.cashBand)) {
+    const band = budget ? cashBandFromBudget(budget) : cashBandFromBtl(goals.btl.cashBand);
     if (band) {
       next = { ...next, buyer: { ...next.buyer, cashAvailable: band, cashFromBudget: true } };
       changed = true;
@@ -115,3 +118,11 @@ export function summarise(statuses: readonly ('map' | 'already' | 'no_goals')[])
   return { toMap: statuses.filter((s) => s === 'map').length, already: statuses.filter((s) => s === 'already').length, noGoals: statuses.filter((s) => s === 'no_goals').length };
 }
 
+
+/** Review R4 (R4-33): the "backfill done" stamp the rate sync waits for (listing/live-rate-sync.ts). */
+export { QUIZ_V2_BACKFILL_DONE_KEY } from '../listing/live-rate-sync.ts';
+
+/** A real run is done when every profile could be read and none was left for the next run. */
+export function backfillDone(r: { profilesReadable: boolean; left: number; outOfTime: boolean }): boolean {
+  return r.profilesReadable && r.left === 0 && !r.outOfTime;
+}

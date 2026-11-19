@@ -76,7 +76,10 @@ test('the changes themselves: worked out from the member’s own answers, never 
   assert.equal(profit.kind === 'goals' && profit.goals.finance.targetMarginPcm, 300);
   const cash = byKey.get('cash')!;
   assert.equal(cash.label, 'Cash up to £100k');
-  assert.deepEqual(byKey.get('nice-budget')!.change, { kind: 'mode', criterion: 'budget' });
+  // Review R4 (R4-44): the u200 budget is the one the £30–60k cash answer wrote, so it makes no second check to widen.
+  assert.equal(byKey.has('nice-budget'), false);
+  const own = new Map(widenChanges({ ...p, goals: { ...p.goals!, budget: '200-350' } }).map((c) => [c.key, c]));
+  assert.deepEqual(own.get('nice-budget')!.change, { kind: 'mode', criterion: 'budget' }, 'a budget the member set themselves still judges');
   assert.equal(isWidenKey('nice-budget'), true);
   assert.equal(isWidenKey('nice-motivation'), false);
   assert.equal(isWidenKey('miles'), true);

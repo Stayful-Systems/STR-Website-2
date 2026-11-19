@@ -92,3 +92,54 @@ export function undoLine(r: { undone: number; changed: number; failed: number })
   if (r.failed > 0) notes.push(`${r.failed} couldn’t be put back`);
   return notes.length > 0 ? `${head} ${notes.join('; ')}.` : head;
 }
+
+// ── Review R4 (R4-05, Zac 19 Nov 2026): the two minimum-profit figures stay separate ──
+
+/** Both minimum-profit figures as they stood: the buying one, and the rent-to-rent one (null: the buying one stands for both). */
+export interface Minimums {
+  buy: number;
+  r2r: number | null;
+}
+
+/** The member's two minimums now, for Undo to put back exactly. */
+export function minimumsOf(goals: { finance: { targetMarginPcm: number }; r2r: { minMarginPcm: number | null } }): Minimums {
+  return { buy: goals.finance.targetMarginPcm, r2r: goals.r2r.minMarginPcm };
+}
+
+/** An older member with two different minimums (from before Batch 30); a new member's one answer writes both, so they are equal. */
+export function twoMinimums(m: Minimums): boolean {
+  return m.r2r !== null && m.r2r !== m.buy;
+}
+
+export function isMinimums(v: unknown): v is Minimums {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.buy === 'number' && Number.isFinite(o.buy) && (o.r2r === null || (typeof o.r2r === 'number' && Number.isFinite(o.r2r)));
+}
+
+/**
+ * What a minimum-profit change saves, so it writes only the figure it is about:
+ *   the rent-to-rent minimum   its own question (r2r_min_profit), the buying figure untouched
+ *   the minimum profit         the one answer (both figures) while they are equal; only the buying
+ *                              figure ({ pcm, only: 'buy' }) when the member has two different ones
+ * `before` is both figures, for Undo.
+ */
+export function minimumWrite(q: 'min_profit' | 'r2r_min_profit', pcm: number, goals: Parameters<typeof minimumsOf>[0]): { savedAs: 'min_profit' | 'r2r_min_profit'; value: number | { pcm: number; only: 'buy' }; before: Minimums } {
+  const before = minimumsOf(goals);
+  if (q === 'r2r_min_profit') return { savedAs: 'r2r_min_profit', value: pcm, before };
+  return { savedAs: 'min_profit', value: twoMinimums(before) ? { pcm, only: 'buy' } : pcm, before };
+}
+
+/** The figure a saved value left on its question (a buying-only save leaves its pcm), for Undo's changed-since check. */
+export function writtenValue(v: unknown): unknown {
+  if (v && typeof v === 'object' && !Array.isArray(v) && (v as { only?: unknown }).only === 'buy') return (v as { pcm?: unknown }).pcm;
+  return v;
+}
+
+/**
+ * How Undo puts a profile change back: both minimums at once through the one minimum
+ * ({ buy, r2r }), when the step kept both; else the answer it kept, through the question it changed.
+ */
+export function restoreFor(savedAs: string, before: unknown): { questionId: string; value: unknown } {
+  return isMinimums(before) ? { questionId: 'min_profit', value: { buy: before.buy, r2r: before.r2r } } : { questionId: savedAs, value: before };
+}

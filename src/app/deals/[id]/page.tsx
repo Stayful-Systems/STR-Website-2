@@ -258,7 +258,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // Batch 14: the most they can pay to hit their own monthly profit, on the
   // same income and at the same finance as the range above (the member's
   // active profile; the house figures and £500 without answers).
-  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct, checked: check !== null });
+  // Review R4 (R4-03): sized for the end of the range the member is judged on (the same helper as Today's check).
+  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct, checked: check !== null, end: display.profitEnd ?? "low" });
   const askingFigure = deal.price_amount === null ? null : Number(deal.price_amount);
   const payGap = pay ? gapLine(askingFigure, pay) : null;
   // Batch 17: a Project deal leads with its own numbers (the card-safe row);

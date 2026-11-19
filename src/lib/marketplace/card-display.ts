@@ -7,6 +7,8 @@
  *   "Low end used, as you asked"              which end of the range their minimum is judged on
  *   "Middle of the range used, as you asked"  (only when they have a minimum profit)
  *   "Top end used, as you asked"
+ *   "Low end used"                            Review R4 (R4-04): with no answer to the new question
+ *                                             (or one given before Batch 30), the end is named, never "as you asked"
  *
  * Nothing here changes a figure: the card, the page behind it and Today all
  * read the same finance and the same judgeDeal.
@@ -15,7 +17,7 @@
  */
 import { ratePctLabel } from '../listing/deal.ts';
 import type { FinanceGoals } from '../market/goals.ts';
-import { profitEndNote, wantsFor } from '../tailoring/criteria.ts';
+import { profitEndNote, wantsFor, type ProfitEnd } from '../tailoring/criteria.ts';
 import type { TailoringProfile } from '../tailoring/profile.ts';
 
 export interface CardDisplay {
@@ -26,9 +28,11 @@ export interface CardDisplay {
   /** The end used for a sale / a rental, when the member has a minimum profit that judges it. */
   endSale: string | null;
   endRent: string | null;
+  /** Review R4 (R4-03): the end the member is judged on, so "Most you can pay" sizes for the same end; null with no goals. */
+  profitEnd: ProfitEnd | null;
 }
 
-export const NO_DISPLAY: CardDisplay = { rateLine: null, rateSet: false, endSale: null, endRent: null };
+export const NO_DISPLAY: CardDisplay = { rateLine: null, rateSet: false, endSale: null, endRent: null, profitEnd: null };
 
 /** "Using 5.4%, today's average" / "Using your 6%" / "Using 5.5%, a typical rate" (no average has been synced yet). */
 export function rateLineFor(finance: Pick<FinanceGoals, 'mortgageRatePct' | 'rateSet' | 'rateAsOf'> | null | undefined, cashBuyer: boolean): string | null {
@@ -43,8 +47,8 @@ export function cardDisplayFor(tailoring: TailoringProfile | null | undefined, c
   const g = tailoring?.goals;
   if (!tailoring || !g) return NO_DISPLAY;
   const w = wantsFor(tailoring);
-  const end = profitEndNote(w.profitEnd);
-  return { rateLine: rateLineFor(g.finance, cashBuyer), rateSet: g.finance.rateSet, endSale: w.minProfit !== null ? end : null, endRent: w.minProfitR2r !== null ? end : null };
+  const end = profitEndNote(w.profitEnd, w.profitEndAsked);
+  return { rateLine: rateLineFor(g.finance, cashBuyer), rateSet: g.finance.rateSet, endSale: w.minProfit !== null ? end : null, endRent: w.minProfitR2r !== null ? end : null, profitEnd: w.profitEnd };
 }
 
 /** Where "change" goes: the rate screen, then back to the page. */

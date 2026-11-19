@@ -14,7 +14,7 @@ import 'server-only';
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '../supabase/admin';
-import { stageRestore, stageUnchanged, sameValue, undoLine, undoOpen, type StageState } from './undo';
+import { restoreFor, stageRestore, stageUnchanged, sameValue, undoLine, undoOpen, writtenValue, type StageState } from './undo';
 import { instructionFor, readActionConfig, updateStep } from './store-server';
 import { applyCriteria, criteriaNow, restoreStage, stageStateOf, unkeepCheckedListing, type ActingMember } from './steps-server';
 import { instructionView } from './run-server';
@@ -72,8 +72,12 @@ export async function undoInstruction(m: ActingMember, supabase: SupabaseClient,
         const beforeValue = (s.before as { value?: unknown } | null)?.value;
         if (!now2 || beforeValue === undefined || beforeValue === null) result = 'failed';
         else if (s.profile_id && now2.profileId !== s.profile_id) result = 'changed';
-        else if (!sameValue(now2.value, (s.after as { value?: unknown } | null)?.value)) result = 'changed';
-        else result = (await applyCriteria(m, supabase, savedAs, beforeValue)).ok ? 'undone' : 'failed';
+        else if (!sameValue(now2.value, writtenValue((s.after as { value?: unknown } | null)?.value))) result = 'changed';
+        else {
+          // Review R4 (R4-05): a minimum change kept both figures, and both are put back exactly, in one save.
+          const back = restoreFor(savedAs, beforeValue);
+          result = (await applyCriteria(m, supabase, back.questionId, back.value)).ok ? 'undone' : 'failed';
+        }
       }
     } catch (err) {
       console.error('[si-actions] undo step failed:', (err as Error)?.message ?? err);

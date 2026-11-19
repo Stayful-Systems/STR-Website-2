@@ -8592,3 +8592,20 @@ revoke all on function public.sync_live_mortgage_rate(numeric, date) from public
 grant execute on function public.sync_live_mortgage_rate(numeric, date) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Review R4 (R4-33): the quiz v2 backfill's "done" stamp
+-- =========================
+-- The daily rate sync (market-warm, 04:45 UK) writes today's average into every profile that has not chosen its
+-- own rate. The Batch 30 backfill marks a rate a member chose as theirs only while no average has been synced
+-- yet, so the sync now waits for this stamp, which a real backfill run writes when it leaves nothing behind
+-- (src/lib/profile/quiz-v2-backfill-run.ts). Live's backfill finished on 14-15 Nov 2026 (checked 19 Nov: no old
+-- setup bands left, no member's chosen rate unprotected), so the stamp is seeded as done. Additive and
+-- re-runnable: a second run changes nothing. Nothing is added to ACCESS_COLUMNS.
+--   quiz_v2_backfill_done_at   when the quiz v2 backfill last finished with nothing left (an ISO time); absent: the sync waits
+
+insert into public.billing_settings (key, value) values
+  ('quiz_v2_backfill_done_at', to_jsonb(now()))
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

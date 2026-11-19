@@ -82,6 +82,26 @@ export function btlBandFromCash(cashBand: CashBand | null): BtlBand | null {
   }
 }
 
+/**
+ * Review R4 (R4-43): the Buying cash band an older Buy to let member's cash band points to: the smallest band
+ * that covers its top (the open £100k+ band: £100–200k). Worked out, not answered: the caller marks it
+ * cashFromBudget, so it is shown on the profile page and never filters.
+ */
+export function cashBandFromBtl(band: BtlBand | null): CashBand | null {
+  switch (band) {
+    case 'under_25k':
+      return 'u30';
+    case '25k_50k':
+      return '30-60';
+    case '50k_100k':
+      return '60-100';
+    case '100k_plus':
+      return '100-200';
+    default:
+      return null;
+  }
+}
+
 /** A budget band's top price (null: open-ended). */
 const BUDGET_TOP: Record<Exclude<Budget, 'any'>, number | null> = { u100: 100_000, '100-200': 200_000, u200: 200_000, '200-350': 350_000, '350-500': 500_000, '500+': null };
 

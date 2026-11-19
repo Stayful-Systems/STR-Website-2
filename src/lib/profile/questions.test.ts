@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIVE_ORDER, MARKS_WRITTEN, PREDECESSORS, QUESTIONS, RETIRED, answerLabel, applyAnswer, clearAnswer, currentValue, emptyAnswers, imageOf, isQuestionId, moneyQuestionsFor, optionsOf, questionById, questionsFor, text, type Answers, type QuestionId } from './questions.ts';
+import { LIVE_ORDER, MARKS_WRITTEN, PREDECESSORS, QUESTIONS, RETIRED, answerLabel, applyAnswer, clearAnswer, currentValue, emptyAnswers, imageOf, isQuestionId, moneyQuestionsFor, optionsOf, questionById, questionsFor, text, type Answers, type QuestionId, averageRateValue, NO_AVERAGE_YET } from './questions.ts';
 import { DEFAULT_FINANCE } from '../listing/deal.ts';
 
 test('"not sure" on finance and profit is the house finance, from its one definition', () => {
@@ -449,4 +449,11 @@ test('Batch 28 (Batch 30): Buy to let asks "What are you after?" once and shares
   assert.equal(answerLabel('btl_cash', a), '£25k to £50k');
   assert.equal(applyAnswer('btl_cash', '1m', a).ok, false);
   assert.deepEqual(clearAnswer('btl_priority', a).goals.btl, a.goals.btl, 'mandatory: no "Not sure"');
+});
+// Review R4 (R4-42): "Use today's average" with an empty rate cache changed the label but kept the member's rate.
+test('no cached average: refuse', () => {
+  assert.equal(averageRateValue({ depositPct: 25 }, null), null, 'no average in the cache: nothing to save');
+  assert.equal(averageRateValue({ depositPct: 25 }, undefined), null);
+  assert.deepEqual(averageRateValue({ depositPct: 30 }, { ratePct: 5.29, asOf: '2026-11-19' }), { depositPct: 30, mortgageRatePct: 5.29, useAverage: true, rateAsOf: '2026-11-19' });
+  assert.match(NO_AVERAGE_YET, /isn’t available yet/);
 });

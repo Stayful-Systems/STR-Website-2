@@ -5,7 +5,6 @@ import { getUnitCostTable } from "@/lib/credit/unit-costs";
 import { unitKey } from "@/lib/credit/costs";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 import { syncLiveMortgageRate } from "@/lib/listing/live-rate-sync-server";
-import { rateToSync, syncSummary } from "@/lib/listing/live-rate-sync";
 
 // ─── Market snapshot warm-up ────────────────────────────────────────
 // Vercel cron (vercel.json), 04:45 UTC: buys the shared PropertyData answers
@@ -21,6 +20,9 @@ import { rateToSync, syncSummary } from "@/lib/listing/live-rate-sync";
 // Batch 30: once the rates are in, today's average is written into every
 // profile that has not set its own rate (live-rate-sync.ts); nothing is
 // written when there is no rate, and the dry run only says what it would do.
+// Review R4 (R4-33): nor until the quiz v2 backfill has stamped
+// billing_settings.quiz_v2_backfill_done_at (the reason is logged, and the
+// dry run says so).
 //
 //   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/market-warm?dry=1"
 
@@ -46,7 +48,8 @@ async function dryRun(enabled: boolean): Promise<Response> {
     enabled,
     mortgageRates: buyRates ? "would buy (1 credit)" : "cached, fresh",
     keyStats: { wouldBuy: keyStats.wouldBuy, fresh: keyStats.fresh.length, deferred: keyStats.deferred },
-    rateSync: syncSummary(rateToSync(rates.value, new Date()), undefined, true),
+    // Review R4 (R4-33): reads the quiz v2 backfill's stamp and says whether it would wait for it; writes nothing.
+    rateSync: (await syncLiveMortgageRate(rates.value, new Date(), { dry: true })).line,
     estimatedCostPence: Math.round(costPence * 10) / 10,
     snapshot: "built from the hourly cache; a cold build looks up long-let rents for areas whose cached rent has expired (at most area_rent_daily_attempts a day)",
   };
