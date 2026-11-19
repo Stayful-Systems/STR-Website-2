@@ -8741,3 +8741,318 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 31: customer websites (Phase 1: schema and settings)
+-- =========================
+-- A member who is invited gets a small white-label website at /s/<slug> whose
+-- two-step lead form runs the income report for the landlord who submits it.
+-- This section is the whole database side:
+--
+--   funnels.kind              'form' (today's funnels) | 'website'. A website's
+--                             funnel row is kind='website', active=false for
+--                             ever: it exists only so leads, the lead cap and
+--                             the activity log have a funnel to hang on. Live /
+--                             paused lives on websites.status.
+--   websites                  one per member (user_id unique), one funnel row
+--                             each (on delete restrict: a funnel with a site
+--                             is never deleted from under it). settings,
+--                             pages, checks are the setup flow's jsonb.
+--                             domain is the Batch 33 seam; null for now.
+--   lead_sources              where a website lead came from (utm_*, fbclid,
+--                             the ad code, the landing PATH only, never a
+--                             query string or an address). Generic, so later
+--                             lead sources can reuse it. Cascades with the lead.
+--   website_reports           one row per website lead: where its income report
+--                             is (state), the billing mode and price FROZEN at
+--                             step 2, the lease a running report holds, the
+--                             attempts, the quality flag and the self-submit
+--                             flag. Cascades with the lead; expires after 14 days.
+--   website_report_slots      one row per free report claimed, per UK day: the
+--                             daily limit counts these. No foreign keys, so a
+--                             purged lead still counts against its day.
+--   website_report_charges    one row per charged report (the guard and the
+--                             record): charged, or unpaid when the balance was
+--                             short. lead_id is deliberately not a foreign key
+--                             (leads are purged; what was charged stays).
+--
+--   website_uk_day()                    today's date in Europe/London.
+--   website_free_report_claim(...)      claim one of today's free report slots:
+--                                       'claimed' | 'already' | 'site_full' | 'day_full'.
+--   website_report_charge(p)            charge one report, once, face pence.
+--
+-- Settings (billing_settings; src/lib/websites/settings.ts parses them):
+--   website_report_charge_on               false: free reports, house-paid
+--   website_report_pence                   the price when charging is on
+--   website_plan_gate_on                   false: no plan needed for a site
+--   website_free_reports_per_day           all sites together, per UK day
+--   website_free_reports_per_site_per_day  one site, per UK day (inside the above)
+--
+-- Everything is additive, idempotent and service role only (the one member
+-- read is "select your own website"). Nothing here is in ACCESS_COLUMNS
+-- (src/lib/access.ts): the access gate's column list is untouched.
+
+-- ── funnels.kind ──
+alter table public.funnels add column if not exists kind text not null default 'form';
+alter table public.funnels drop constraint if exists funnels_kind_check;
+alter table public.funnels add constraint funnels_kind_check check (kind in ('form', 'website'));
+
+-- ── websites ──
+create table if not exists public.websites (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null unique references public.profiles(id) on delete cascade,
+  funnel_id uuid not null unique references public.funnels(id) on delete restrict,
+  slug text not null unique,
+  status text not null default 'invited',
+  settings jsonb not null default '{}'::jsonb,
+  pages jsonb not null default '{}'::jsonb,
+  regen_count integer not null default 0,
+  checks jsonb not null default '{}'::jsonb,
+  invited_by uuid references public.profiles(id) on delete set null,
+  invited_at timestamptz not null default now(),
+  approved_at timestamptz,
+  live_at timestamptz,
+  paused_at timestamptz,
+  -- Batch 33: a customer's own domain. Null until then.
+  domain text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.websites drop constraint if exists websites_slug_check;
+alter table public.websites add constraint websites_slug_check check (slug ~ '^[a-z0-9-]{3,40}$');
+alter table public.websites drop constraint if exists websites_status_check;
+alter table public.websites add constraint websites_status_check check (status in ('invited', 'setup', 'preview', 'live', 'paused'));
+alter table public.websites drop constraint if exists websites_regen_count_check;
+alter table public.websites add constraint websites_regen_count_check check (regen_count >= 0);
+create index if not exists websites_status_idx on public.websites (status);
+alter table public.websites enable row level security;
+revoke all on public.websites from anon, authenticated;
+grant select on public.websites to authenticated;
+drop policy if exists "Users can read own website" on public.websites;
+create policy "Users can read own website"
+  on public.websites for select to authenticated
+  using ((select auth.uid()) = user_id);
+
+-- ── lead_sources ──
+create table if not exists public.lead_sources (
+  lead_id uuid primary key references public.leads(id) on delete cascade,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  utm_content text,
+  utm_term text,
+  fbclid text,
+  -- A path only: no query string, no address.
+  landing_page text,
+  ad_code varchar(40),
+  captured_at timestamptz not null default now()
+);
+alter table public.lead_sources enable row level security;  -- no policies: service role only
+revoke all on public.lead_sources from anon, authenticated;
+
+-- ── website_reports ──
+create table if not exists public.website_reports (
+  lead_id uuid primary key references public.leads(id) on delete cascade,
+  website_id uuid not null references public.websites(id) on delete cascade,
+  state text not null default 'awaiting_address',
+  -- Frozen at step 2, so flipping the setting mid-run changes nothing for this report.
+  billing_mode text,
+  price_pence integer,
+  -- A held report runs on or after this UK day.
+  due_day date,
+  -- A running report holds this lease; the cron takes it over once it is past.
+  lease_until timestamptz,
+  attempts integer not null default 0,
+  quality_ok boolean,
+  self_submit boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  completed_at timestamptz,
+  -- An abandoned step 2 stays a New lead; its report row goes after 14 days.
+  expires_at timestamptz not null default (now() + interval '14 days')
+);
+alter table public.website_reports drop constraint if exists website_reports_state_check;
+alter table public.website_reports add constraint website_reports_state_check
+  check (state in ('awaiting_address', 'held_cap', 'held_credit', 'held_self', 'running', 'done', 'failed', 'expired'));
+alter table public.website_reports drop constraint if exists website_reports_billing_mode_check;
+alter table public.website_reports add constraint website_reports_billing_mode_check
+  check (billing_mode is null or billing_mode in ('free', 'charged'));
+alter table public.website_reports drop constraint if exists website_reports_price_check;
+alter table public.website_reports add constraint website_reports_price_check
+  check (price_pence is null or price_pence >= 0);
+alter table public.website_reports drop constraint if exists website_reports_attempts_check;
+alter table public.website_reports add constraint website_reports_attempts_check check (attempts >= 0);
+create index if not exists website_reports_site_idx on public.website_reports (website_id, created_at desc);
+create index if not exists website_reports_held_idx on public.website_reports (due_day) where state in ('held_cap', 'held_credit');
+create index if not exists website_reports_running_idx on public.website_reports (lease_until) where state = 'running';
+create index if not exists website_reports_expires_idx on public.website_reports (expires_at) where state in ('awaiting_address', 'held_cap', 'held_credit', 'held_self');
+alter table public.website_reports enable row level security;  -- no policies: service role only
+revoke all on public.website_reports from anon, authenticated;
+
+-- ── website_report_slots: the free reports claimed per UK day ──
+create table if not exists public.website_report_slots (
+  lead_id uuid primary key,
+  website_id uuid not null,
+  day date not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists website_report_slots_day_idx on public.website_report_slots (day, website_id);
+alter table public.website_report_slots enable row level security;  -- no policies: service role only
+revoke all on public.website_report_slots from anon, authenticated;
+
+-- ── website_report_charges: one row per charged report (the guard and the record) ──
+create table if not exists public.website_report_charges (
+  lead_id uuid primary key,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  website_id uuid,
+  pence numeric not null,
+  txn_id bigint,
+  status text not null default 'unpaid',
+  refunded_at timestamptz,
+  created_at timestamptz not null default now()
+);
+alter table public.website_report_charges drop constraint if exists website_report_charges_status_check;
+alter table public.website_report_charges add constraint website_report_charges_status_check check (status in ('charged', 'unpaid'));
+create index if not exists website_report_charges_owner_idx on public.website_report_charges (owner_id, created_at desc);
+alter table public.website_report_charges enable row level security;  -- no policies: service role only
+revoke all on public.website_report_charges from anon, authenticated;
+
+-- ── billing_settings: the five switches and limits ──
+insert into public.billing_settings (key, value) values
+  ('website_report_charge_on', 'false'),
+  ('website_report_pence', '300'),
+  ('website_plan_gate_on', 'false'),
+  ('website_free_reports_per_day', '20'),
+  ('website_free_reports_per_site_per_day', '5')
+on conflict (key) do nothing;
+
+-- ── Functions ──
+
+-- Today in the UK. The daily limit's day is computed here, never by the app.
+create or replace function public.website_uk_day()
+returns date language sql stable set search_path = public as $$
+  select (now() at time zone 'Europe/London')::date;
+$$;
+revoke all on function public.website_uk_day() from public, anon, authenticated;
+grant execute on function public.website_uk_day() to service_role;
+
+-- A whole-number setting, or the default when the row is missing or not a
+-- whole number (a bad value must never raise inside a claim).
+create or replace function public.website_setting_int(p_key text, p_default integer)
+returns integer language sql security definer set search_path = public stable as $$
+  select coalesce(
+    (select case when (value #>> '{}') ~ '^[0-9]{1,9}$' then (value #>> '{}')::integer end
+       from public.billing_settings where key = p_key),
+    p_default);
+$$;
+revoke all on function public.website_setting_int(text, integer) from public, anon, authenticated;
+grant execute on function public.website_setting_int(text, integer) to service_role;
+
+-- website_free_report_claim(p_lead, p_website, p_held): claim one of today's
+-- free report slots for a lead.
+--   'claimed'    a slot is now this lead's
+--   'already'    this lead already holds a slot (any day): run, do not claim again
+--   'site_full'  this site is at its per-site limit for the UK day
+--   'day_full'   all sites together are at the daily limit
+-- Two limits, both read from billing_settings: the daily total
+-- (website_free_reports_per_day) and the per-site share inside it
+-- (website_free_reports_per_site_per_day). A held report (p_held = true, the
+-- cron running yesterday's overflow) needs used < limit. A live one needs
+-- used + the held reports now due < limit, so held reports always fit first
+-- and a busy day cannot push the backlog out for ever. The UK day is taken
+-- here; claims for one day queue on an advisory lock, so two claims at the
+-- limit cannot both win.
+create or replace function public.website_free_report_claim(p_lead uuid, p_website uuid, p_held boolean default false)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_day date := public.website_uk_day();
+  v_cap integer := public.website_setting_int('website_free_reports_per_day', 20);
+  v_site_cap integer := public.website_setting_int('website_free_reports_per_site_per_day', 5);
+  v_used integer;
+  v_site_used integer;
+  v_due integer := 0;
+  v_site_due integer := 0;
+begin
+  if p_lead is null or p_website is null then raise exception 'website_free_report_claim_bad_input'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('website_free_report_claim:' || v_day::text, 0));
+
+  if exists (select 1 from public.website_report_slots where lead_id = p_lead) then return 'already'; end if;
+
+  select count(*), count(*) filter (where website_id = p_website)
+    into v_used, v_site_used
+    from public.website_report_slots where day = v_day;
+
+  if not p_held then
+    -- Held reports that are due and have not yet taken a slot.
+    select count(*), count(*) filter (where r.website_id = p_website)
+      into v_due, v_site_due
+      from public.website_reports r
+     where r.state = 'held_cap' and r.due_day <= v_day
+       and not exists (select 1 from public.website_report_slots s where s.lead_id = r.lead_id);
+  end if;
+
+  if v_site_used + v_site_due >= v_site_cap then return 'site_full'; end if;
+  if v_used + v_due >= v_cap then return 'day_full'; end if;
+
+  insert into public.website_report_slots (lead_id, website_id, day) values (p_lead, p_website, v_day)
+  on conflict (lead_id) do nothing;
+  return 'claimed';
+end;
+$$;
+revoke all on function public.website_free_report_claim(uuid, uuid, boolean) from public, anon, authenticated;
+grant execute on function public.website_free_report_claim(uuid, uuid, boolean) to service_role;
+
+-- website_report_charge(p): charge one website report, once, when charging is
+-- on and the report was good enough to charge for (the app decides that).
+--   p: {owner, lead, website, pence, meta}; pence missing falls back to the
+--   price frozen on the report row.
+-- Returns {result, already, pence, tx, status}:
+--   result 'charged'          the guard row went in and the face debit worked
+--          'unpaid'           the balance was short (P0402): recorded, not raised
+--          'already_charged'  this lead has a row already (charged OR unpaid): nothing happens
+-- Once per lead: the guard row goes in first, under the owner's profile lock
+-- (as funnel_lead_charge does), so a retry, the cron and the live route can
+-- never charge the same lead twice. A short balance leaves a status='unpaid'
+-- row and returns normally, so the landlord's summary is never lost to a
+-- billing problem. The debit is credit_debit_face's (exactly p pence of the
+-- displayed balance); it never uses the run's action_id.
+create or replace function public.website_report_charge(p jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_owner uuid := nullif(p->>'owner', '')::uuid;
+  v_lead uuid := nullif(p->>'lead', '')::uuid;
+  v_site uuid := nullif(p->>'website', '')::uuid;
+  v_meta jsonb := case when jsonb_typeof(p->'meta') = 'object' then p->'meta' else '{}'::jsonb end;
+  v_pence numeric;
+  v_tx bigint;
+  v_row public.website_report_charges;
+begin
+  if v_owner is null or v_lead is null then raise exception 'website_report_charge_bad_input'; end if;
+  v_pence := coalesce(nullif(p->>'pence', '')::numeric, (select price_pence from public.website_reports where lead_id = v_lead));
+  if v_pence is null or v_pence <= 0 then raise exception 'website_report_charge_bad_input'; end if;
+
+  perform 1 from public.profiles where id = v_owner for update;
+
+  insert into public.website_report_charges (lead_id, owner_id, website_id, pence, status)
+  values (v_lead, v_owner, v_site, v_pence, 'unpaid')
+  on conflict (lead_id) do nothing;
+  if not found then
+    select * into v_row from public.website_report_charges where lead_id = v_lead;
+    return jsonb_build_object('result', 'already_charged', 'already', true, 'pence', v_row.pence, 'tx', v_row.txn_id, 'status', v_row.status);
+  end if;
+
+  begin
+    v_tx := public.credit_debit_face(v_owner, v_pence,
+      v_meta || jsonb_build_object('action', 'website_report', 'description', 'Website income report', 'website_id', v_site, 'lead_id', v_lead, 'quantity', 1));
+  exception when sqlstate 'P0402' then
+    return jsonb_build_object('result', 'unpaid', 'already', false, 'pence', v_pence, 'tx', null, 'status', 'unpaid');
+  end;
+
+  update public.website_report_charges set txn_id = v_tx, status = 'charged' where lead_id = v_lead;
+  return jsonb_build_object('result', 'charged', 'already', false, 'pence', v_pence, 'tx', v_tx, 'status', 'charged');
+end;
+$$;
+revoke all on function public.website_report_charge(jsonb) from public, anon, authenticated;
+grant execute on function public.website_report_charge(jsonb) to service_role;
+
+notify pgrst, 'reload schema';
