@@ -17,6 +17,9 @@
  *      Accept, on a production build with a dataset: the pixel loads (only on
  *      a clean page on the PageView list), a PageView goes, and each pending
  *      conversion is claimed and fired with the server's id.
+ *      Review R4 (R4-01): on Home and the reveal (config.ts
+ *      CONVERSION_ONLY_PATHS) the pixel loads only when a conversion is
+ *      held, fires it, and never sends a PageView (Zac, 19 Nov 2026).
  *
  * Also checked: after the app's credit-changed event (a top-up, the £5
  * profile credit, a report) at 0, 2, 5 and 10 s; every 3 s for 30 s after a
@@ -34,7 +37,7 @@ import { TRACKING } from './config';
 import { parseConsent, type Choice } from './consent';
 import { CONSENT_CHANGED_EVENT, clearMetaCookies, hasSessionCookie, isFramed, readConsentRaw } from './browser';
 import { parseBrowserConversion, parseMeAnswer, type BrowserConversion, type MeAnswer } from './me';
-import { isCleanForSend, isStripeReturn, surfaceFor, tidiedHref } from './surfaces';
+import { firesConversionsOnly, isStripeReturn, pixelPlan, surfaceFor, tidiedHref } from './surfaces';
 import { isTagged, keepFirst, serializeTouch, touchFromPage, type Touch } from './touch';
 
 export interface TrackingConfig {
@@ -211,7 +214,7 @@ async function firePending(mine: number, list: BrowserConversion[]): Promise<voi
   }
   for (const c of list) {
     if (claimedKeys.has(c.key)) continue;
-    if (mine !== nav || !canSendNow()) return;
+    if (mine !== nav || !canSendNow('conversion')) return;
     claimedKeys.add(c.key);
     const got = await claim(c.key);
     if (got === 'retry') {
@@ -251,15 +254,18 @@ async function act(mine: number): Promise<void> {
   const state = pixelState();
   if (state.silent || state.status === 'failed') return;
   if (state.status === 'idle') {
-    // Only ever started on a clean page on the PageView list.
-    if (surfaceFor(window.location.pathname) !== 'tracked' || !isCleanForSend(window.location.href)) return;
+    // Only ever started on a clean page on the PageView list, or (R4-01) on a
+    // clean Home or reveal with a conversion of this member's waiting to fire.
+    const held = member?.pixel ? member.pending.filter((c) => !claimedKeys.has(c.key)).length + unsent.size : 0;
+    if (!pixelPlan(window.location.href, held).start) return;
     if (!(await loadPixel(pixelId, member?.pixel ?? null))) return;
   } else if (state.status === 'loading') {
     if (!(await loadPixel(pixelId, null))) return;
   }
   if (mine !== nav) return;
 
-  if (pageViewNav !== mine && sendPageView()) pageViewNav = mine;
+  // Never a PageView on Home or the reveal (pixel.ts refuses one there too).
+  if (pageViewNav !== mine && pixelPlan(window.location.href, 0).pageView && sendPageView()) pageViewNav = mine;
   if (member?.pixel) await firePending(mine, member.pending);
 }
 
@@ -303,7 +309,7 @@ export function navigate(pathname: string, next: TrackingConfig): void {
   config = next;
   nav += 1;
   const mine = nav;
-  if (isFramed() || surfaceFor(pathname) === 'none') return;
+  if (isFramed() || (surfaceFor(pathname) === 'none' && !firesConversionsOnly(pathname))) return;
   setTimeout(() => settle(mine), 0);
 }
 

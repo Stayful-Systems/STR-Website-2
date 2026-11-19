@@ -5,6 +5,7 @@
  *
  * Pure: no network, no database, no server-only.
  */
+import { HOME_PATH } from '../auth/landing.ts';
 
 export const TRACKING = {
   /** The essential cookie that remembers the choice (version, choice, time, device id). */
@@ -113,6 +114,17 @@ export const PAGEVIEW_PATHS: readonly string[] = [
 ];
 
 /**
+ * Review R4 (R4-01): pages that never send a PageView (Zac, 19 Nov 2026: no
+ * PageView on Home or the reveal) but where a member's held conversions
+ * (CompleteRegistration, ProfileComplete, FirstReport, Purchase…) may still
+ * fire, after Accept and from a clean address only. A brand-new member goes
+ * quiz → reveal → Home and may never reach a PageView page that day, so
+ * without these the browser copies waited 24 hours and were lost. No banner
+ * here either: where the member is asked is unchanged.
+ */
+export const CONVERSION_ONLY_PATHS: readonly string[] = ['/welcome/reveal', HOME_PATH];
+
+/**
  * Pages with exactly one more path segment that is a public area name
  * (a town slug, never an id): /short-let-deals/york, /markets/leeds.
  */
@@ -161,14 +173,20 @@ export const TRACKING_PARAMS: readonly string[] = [
 
 /**
  * Flags a page reads once on load and never again, taken off the address on
- * that page only. `when` limits a flag to one value (the default /welcome
- * return path, so a reload still lands in the same place).
+ * that page only. `when` limits a flag to one value (the default way back
+ * from the quiz and the reveal, HOME_PATH, so a reload still lands in the
+ * same place). Review R4 (R4-01): it was '/today', so since Home became the
+ * landing a new member's /welcome?next=%2Fhome was never tidied and the pixel
+ * never started there. `pack` is the starter pack's Checkout return to the
+ * quiz (read before tidying: isStripeReturn).
  */
 export const ONE_SHOT_PARAMS: readonly { path: string; param: string; when?: string }[] = [
   { path: '/account/billing', param: 'topup' },
   { path: '/account/billing', param: 'subscribed' },
   { path: '/account/billing', param: 'plan' },
-  { path: '/welcome', param: 'next', when: '/today' },
+  { path: '/welcome', param: 'next', when: HOME_PATH },
+  { path: '/welcome', param: 'pack' },
+  { path: '/welcome/reveal', param: 'next', when: HOME_PATH },
   { path: '/signup', param: 'ref' },
 ];
 
