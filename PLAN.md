@@ -134,9 +134,9 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: `npm test`; every placeholder resolves against schema seeds; no answer types a figure.
   Notes: seed.ts +62 (six draft entries: what a website is, who can get one, the landlord form, report cost with the charge-on condition, the daily limit, privacy); placeholders.ts +15; service-facts.ts +8 ("Customer websites" block). DEVIATION: placeholder `website_report_price` renamed `website_report_cost` because existing tests forbid "price" in global placeholder names. `website_free_reports_per_site` renders in words. Conditions `website_report_charge_on` and `website_plan_gate_on` added. Knowledge tests 82/82 pass; no typed figures.
 
-- [ ] **Phase 14 — Final checks** (coordinator)
+- [x] **Phase 14 — Final checks** (coordinator)
   `npm test`, `npm run lint`, `npm run build`. Review: credit charged wrongly; free/paid leaks; address leaks (responses, emails, logs); dry runs on admin actions and cron; schema idempotent; `git diff` on `access.ts` empty; cross-member access. Then push and open a draft PR.
-  Notes:
+  Notes: npm test 3587 pass / 0 fail; npm run lint 0 errors (the same 79 pre-existing warnings); npm run build passes. Checklist: `git diff a0fa9c2` is empty for access.ts, src/lib/tracking, funnels/charge-server.ts, tiers*, management/report.ts, proxy.ts, src/app/f; nothing under websites/api-s/s/setup/cron imports charge-server or tiers (only a comment names them); no route returns the AnalysisResult; email builders take no address and carry no /r link; log lines carry lead ids and error names only; schema re-run guards pass in npm test, and Phase 1 ran the schema 3x on local Postgres 16 with identical dumps. NOT RUN anywhere (no Supabase/Turnstile/.env here): manual curl on the dev server, Playwright smokes, another-member 404 check, the admin panel against a real session. Those are on Zac's click-through list.
 
 ## Remaining risks
 
