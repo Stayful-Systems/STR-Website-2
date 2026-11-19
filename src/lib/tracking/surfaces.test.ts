@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isCleanForSend, isStripeReturn, surfaceFor, tidiedHref } from './surfaces.ts';
+import { firesConversionsOnly, isCleanForSend, isStripeReturn, pixelPlan, surfaceFor, tidiedHref } from './surfaces.ts';
+import { HOME_PATH, quizPathFor } from '../auth/landing.ts';
 
 const SITE = 'https://intelligence.stayful.co.uk';
 
@@ -43,9 +44,48 @@ test('one-shot flags come off only on their own page', () => {
 });
 
 test('/welcome loses ?next only when it is the default way back', () => {
-  assert.equal(tidiedHref(`${SITE}/welcome?next=%2Ftoday`), `${SITE}/welcome`);
+  assert.equal(tidiedHref(`${SITE}/welcome?next=%2Fhome`), `${SITE}/welcome`);
+  assert.equal(tidiedHref(`${SITE}/welcome?next=%2Ftoday`), null);
   assert.equal(tidiedHref(`${SITE}/welcome?next=%2Fmarkets`), null);
   assert.equal(tidiedHref(`${SITE}/welcome?q=roles&next=%2Fprofile`), null);
+});
+
+// Review R4 (R4-01): a new member's first page is the quiz with Home as the way back.
+test('/welcome loses ?next when it is HOME_PATH', () => {
+  assert.equal(tidiedHref(`${SITE}${quizPathFor(HOME_PATH)}`), `${SITE}/welcome`);
+  assert.equal(isCleanForSend(`${SITE}/welcome`), true);
+  // The quiz's starter pack returns here from Checkout: noticed first, then tidied too.
+  const packReturn = `${SITE}${quizPathFor(HOME_PATH)}&pack=1`;
+  assert.equal(isStripeReturn(packReturn), true);
+  assert.equal(tidiedHref(packReturn), `${SITE}/welcome`);
+  // The reveal's default way back goes too; any other stays.
+  assert.equal(tidiedHref(`${SITE}/welcome/reveal?next=${encodeURIComponent(HOME_PATH)}`), `${SITE}/welcome/reveal`);
+  assert.equal(tidiedHref(`${SITE}/welcome/reveal?next=%2Fdeals`), null);
+});
+
+// Review R4 (R4-01; Zac, 19 Nov 2026: no PageView on Home or the reveal).
+test('a held FirstReport/CompleteRegistration fires on /home with no PageView', () => {
+  for (const page of [HOME_PATH, '/welcome/reveal']) {
+    const href = `${SITE}${page}`;
+    // No banner and no PageView there…
+    assert.equal(surfaceFor(page), 'none', page);
+    assert.equal(firesConversionsOnly(page), true, page);
+    assert.equal(isCleanForSend(href), false, page);
+    assert.equal(isCleanForSend(href, 'PageView'), false, page);
+    // …but a held conversion (CompleteRegistration, FirstReport…) may fire from a clean address.
+    assert.equal(isCleanForSend(href, 'conversion'), true, page);
+    assert.deepEqual(pixelPlan(href, 2), { start: true, pageView: false, conversions: true }, page);
+    // Nothing held: the pixel is not even loaded there.
+    assert.deepEqual(pixelPlan(href, 0), { start: false, pageView: false, conversions: true }, page);
+    // Anything after the path: nothing at all.
+    assert.deepEqual(pixelPlan(`${href}?via=email`, 2), { start: false, pageView: false, conversions: false }, page);
+  }
+  // The quiz itself keeps its PageView, as before; other pages off the lists still get nothing.
+  assert.deepEqual(pixelPlan(`${SITE}/welcome`, 1), { start: true, pageView: true, conversions: true });
+  for (const page of ['/welcome/choices', '/home/extra', '/admin', '/deals/8f14e45f-ceea-467a-9c3b-1a2b3c4d5e6f', '/signup']) {
+    assert.equal(isCleanForSend(`${SITE}${page}`, 'conversion'), false, page);
+    assert.equal(pixelPlan(`${SITE}${page}`, 3).start, false, page);
+  }
 });
 
 test('?via is left for the visit heartbeat', () => {

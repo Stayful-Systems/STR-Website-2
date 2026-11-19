@@ -7,8 +7,9 @@
  *                         in. Not lead-form accounts (the n8n lead workflow
  *                         reports those), not team seats. Once per account.
  *   ProfileComplete       the profile quiz is first complete. Once per account.
- *   FirstReport           the first finished analyser report or Full analysis.
- *                         Once per account.
+ *   FirstReport           the first finished analyser report, Full analysis or
+ *                         (Review R4, Zac) £2 buy-to-let report. Once per
+ *                         account, whichever comes first.
  *   Subscribe             the first paid invoice (amount > 0) of a subscription
  *                         started after tracking began. Once per member.
  *   Purchase              Batch 29: the £10 starter pack only, at its price

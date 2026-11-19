@@ -17,12 +17,15 @@
  *     with whatever address is current when the script arrives), and every
  *     call checks the live address first (isCleanForSend): the pixel sends
  *     the whole address bar with every event.
+ *   - Review R4 (R4-01): a PageView only ever goes from a page on the
+ *     PageView list; a held conversion may also go from Home or the reveal
+ *     (surfaces.ts isCleanForSend's `send`).
  *   - After a Reject, or when the member behind it changes, it goes silent
  *     until the next full page load.
  *
  * Nothing here throws, and nothing runs on import.
  */
-import { isCleanForSend } from '../tracking/surfaces';
+import { isCleanForSend, type PixelSend } from '../tracking/surfaces';
 import { browserParams, isCustomEvent, type MetaEventName } from './events';
 
 const SCRIPT_SRC = 'https://connect.facebook.net/en_US/fbevents.js';
@@ -117,18 +120,18 @@ export function loadPixel(pixelId: string, identity: PixelIdentity | null): Prom
   return loading;
 }
 
-/** The pixel has loaded, has not been silenced, and the live address may be sent. */
-export function canSendNow(): boolean {
+/** The pixel has loaded, has not been silenced, and the live address may be sent with this kind of event. */
+export function canSendNow(send: PixelSend = 'PageView'): boolean {
   if (status !== 'ready' || silent || typeof window === 'undefined') return false;
   try {
-    return isCleanForSend(window.location.href);
+    return isCleanForSend(window.location.href, send);
   } catch {
     return false;
   }
 }
 
-function call(...args: unknown[]): boolean {
-  if (!canSendNow()) return false;
+function call(send: PixelSend, ...args: unknown[]): boolean {
+  if (!canSendNow(send)) return false;
   try {
     (window as PixelWindow).fbq?.(...args);
     return true;
@@ -138,12 +141,12 @@ function call(...args: unknown[]): boolean {
 }
 
 export function sendPageView(): boolean {
-  return call('track', 'PageView');
+  return call('PageView', 'track', 'PageView');
 }
 
 /** A conversion, with the server's event id so Meta keeps one of the two copies. */
 export function sendConversion(c: { name: MetaEventName; eventId: string; valuePence: number | null }): boolean {
-  return call(isCustomEvent(c.name) ? 'trackCustom' : 'track', c.name, browserParams(c.name, c.valuePence), { eventID: c.eventId });
+  return call('conversion', isCustomEvent(c.name) ? 'trackCustom' : 'track', c.name, browserParams(c.name, c.valuePence), { eventID: c.eventId });
 }
 
 /** Reject or withdrawal: tell the pixel, and send nothing more on this page load. */

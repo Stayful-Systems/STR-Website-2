@@ -11,15 +11,23 @@
  *   - just before every send the live address is checked again
  *     (isCleanForSend): anything still after the path, and nothing is sent.
  *
+ * Review R4 (R4-01): a few pages (config.ts CONVERSION_ONLY_PATHS: the
+ * reveal and Home) never send a PageView but may fire a member's held
+ * conversions, from a clean address only (pixelPlan, and the `send` argument
+ * of isCleanForSend). They show no banner: surfaceFor still says 'none'.
+ *
  * White-label and admin pages (/f, /r, /admin), token pages and unknown paths
  * (404s render in the root layout) get nothing at all: no banner, no pixel,
  * nothing read from the address.
  *
  * Pure: no network, no database, no server-only.
  */
-import { BANNER_ONLY_PREFIXES, ONE_SHOT_PARAMS, PAGEVIEW_AREA_PREFIXES, PAGEVIEW_PATHS, STRIPE_RETURNS, TRACKING_PARAMS } from './config.ts';
+import { BANNER_ONLY_PREFIXES, CONVERSION_ONLY_PATHS, ONE_SHOT_PARAMS, PAGEVIEW_AREA_PREFIXES, PAGEVIEW_PATHS, STRIPE_RETURNS, TRACKING_PARAMS } from './config.ts';
 
 export type Surface = 'tracked' | 'banner' | 'none';
+
+/** What the pixel is about to send: a PageView, or one of the member's held conversions. */
+export type PixelSend = 'PageView' | 'conversion';
 
 /**
  * Never anything here, whatever the lists above say: the white-label funnel
@@ -67,6 +75,17 @@ export function surfaceFor(pathname: string | null | undefined): Surface {
   return 'none';
 }
 
+/**
+ * Review R4 (R4-01): a page that never sends a PageView but where held
+ * conversions may fire (the reveal, Home). Not a tracked page, no banner.
+ */
+export function firesConversionsOnly(pathname: string | null | undefined): boolean {
+  if (typeof pathname !== 'string' || !pathname.startsWith('/')) return false;
+  const path = normalise(pathname);
+  if (NEVER.some((p) => under(path, p))) return false;
+  return CONVERSION_ONLY_PATHS.includes(path);
+}
+
 function parse(href: string): URL | null {
   try {
     return new URL(href);
@@ -103,16 +122,34 @@ export function tidiedHref(href: string): string | null {
 }
 
 /**
- * Whether the pixel may send from this address right now: a page on the
- * PageView list, nothing after the path, and at most a plain #anchor.
+ * Whether the pixel may send from this address right now: nothing after the
+ * path, at most a plain #anchor, and a page on the PageView list. A held
+ * conversion (send = 'conversion') may also go from a conversion-only page
+ * (the reveal, Home); a PageView never does.
  */
-export function isCleanForSend(href: string | null | undefined): boolean {
+export function isCleanForSend(href: string | null | undefined, send: PixelSend = 'PageView'): boolean {
   if (typeof href !== 'string') return false;
   const url = parse(href);
   if (!url) return false;
   if (url.search !== '' || href.includes('?')) return false;
   if (url.hash !== '' && !/^#[A-Za-z0-9_-]{1,40}$/.test(url.hash)) return false;
-  return surfaceFor(url.pathname) === 'tracked';
+  if (surfaceFor(url.pathname) === 'tracked') return true;
+  return send === 'conversion' && firesConversionsOnly(url.pathname);
+}
+
+/**
+ * Review R4 (R4-01): what the pixel may do on this page, for a member who
+ * has accepted. `held`: how many of their conversions are waiting to fire.
+ *   start       load the pixel here (a PageView page, or a conversion-only
+ *               page with something to fire: Home never loads it for nothing)
+ *   pageView    send a PageView (PageView pages only: never Home or the reveal)
+ *   conversions fire the held conversions
+ * All false on an address that is not clean.
+ */
+export function pixelPlan(href: string | null | undefined, held: number): { start: boolean; pageView: boolean; conversions: boolean } {
+  const pageView = isCleanForSend(href, 'PageView');
+  const conversions = isCleanForSend(href, 'conversion');
+  return { start: pageView || (conversions && held > 0), pageView, conversions };
 }
 
 /** A return from Stripe Checkout (?topup=1 / ?subscribed=1 on the billing page): read before tidying. */
