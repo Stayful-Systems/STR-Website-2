@@ -2,8 +2,10 @@ import { unstable_cache } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { readAllRegionKeyStats } from '@/lib/market/key-stats-cache';
-import { btlDistrictRows, type BtlDistrictRow } from '@/lib/btl/explorer';
+import { btlDistrictRowsFor, type BtlDistrictRow } from '@/lib/btl/explorer';
 import { readBtlSettingsCached } from '@/lib/btl/settings-server';
+import { DEFAULT_BTL_SETTINGS } from '@/lib/btl/config';
+import { DEFAULT_PROJECT_COSTS } from '@/lib/project/config';
 import { logActivity } from '@/lib/activity/log';
 import { ukDay } from '@/lib/activity/week';
 
@@ -15,9 +17,10 @@ import { ukDay } from '@/lib/activity/week';
  */
 const rowsCached = unstable_cache(
   async (): Promise<BtlDistrictRow[]> => {
-    const buyingCosts = hasServiceRole() ? (await readBtlSettingsCached(createAdminClient())).buyingCosts : 2_500;
+    // Review R4 (R4-24): the stored loan-to-value and buying costs, as the deal cards use.
+    const stored = hasServiceRole() ? await readBtlSettingsCached(createAdminClient()) : { settings: DEFAULT_BTL_SETTINGS, buyingCosts: DEFAULT_PROJECT_COSTS.buyingCosts };
     const rows = [...(await readAllRegionKeyStats()).values()].flatMap((s) => s.rows);
-    return btlDistrictRows(rows, buyingCosts);
+    return btlDistrictRowsFor(rows, stored);
   },
   ['explorer-btl-districts'],
   { revalidate: 3600 },

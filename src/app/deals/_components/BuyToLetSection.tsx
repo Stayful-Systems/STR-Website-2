@@ -34,7 +34,7 @@ export function BuyToLetSection({ numbers, flags, sheet, widened, pending, repor
         <>
           <dl className="mt-3 grid grid-cols-3 gap-3">
             {numbers.map((n) => (
-              <Fig key={n.key} label={n.label} value={n.value} />
+              <Fig key={n.key} label={n.label} value={n.value} sub={n.help} />
             ))}
           </dl>
           {flags.map((f) => (

@@ -29,7 +29,7 @@ import 'server-only';
  * Entry point: /api/internal/daily-digest (the cron, secret-gated, ?dry=1).
  */
 import { createAdminClient } from '../supabase/admin';
-import { btlWidenLine } from '../btl/today';
+import { btlDayLine } from '../btl/today';
 import { BTL_BADGE, showsAsBtl } from '../btl/view';
 import { btlFigureLine } from '../btl/card';
 import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from '../access';
@@ -340,7 +340,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
           // A near miss's advice, or a tailored day's "only N met your must-haves" (Batch 14).
           advice: plan?.advice ?? null,
           // Batch 28: the day looked further for its buy-to-let deals.
-          btlLine: plan?.btlWiden ? btlWidenLine(plan.btlWiden) : null,
+          btlLine: btlDayLine(plan?.btlWiden, plan?.btlBench),
           todayUrl: seat.profile ? profileLinks(base, seat.profile, GOALS_EDITOR_HREF).today : undefined,
           // Batch 10: each deal's profit as a range at this profile's finance.
           // Batch 28: a deal this profile is shown as Buy to let gives its own line and badge, never a short-let range.

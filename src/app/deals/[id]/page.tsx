@@ -25,6 +25,7 @@ import { isHeldForProject, projectEstimateFor } from "@/lib/project/read-server"
 import { btlCardsFor, projectCardsFor } from "@/lib/marketplace/queries";
 import { BTL_BADGE, btlLookerFor, btlViewFor, openProfitFor } from "@/lib/btl/view";
 import { btlSheet } from "@/lib/btl/sheet";
+import { btlBenchmarkBand } from "@/lib/btl/deal";
 import { DEFAULT_BTL_PRIORITY, regionPhrase } from "@/lib/btl/today";
 import { readBtlBenchmark, readBtlSettingsCached } from "@/lib/btl/settings-server";
 import { regionForArea } from "@/lib/market/regions";
@@ -152,7 +153,13 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const typed = { kind: deal.kind, band: deal.band, project: projectCard, btl_pass: btlCard !== null };
   const btlOnly = dealTypeOf(typed) === "btl";
   const asBtl = dealTypeFor(typed, btlLooker.types ?? []) === "btl";
-  const btlView = btlCard || btlOnly ? btlViewFor({ btl: btlCard, postcode_area: deal.postcode_area }, btlLooker) : null;
+  // Review R4 (R4-22, R4-28): the benchmark is the band holding the top of their Buying cash (one helper, the stored band
+  // tops); it is read before Open too, so the card's flag can say "Compared across the UK" or "Few deals to compare".
+  // Area-level figures only: nothing about the home.
+  const btlStored = btlCard ? (await readBtlSettingsCached(createAdminClient())).settings : null;
+  const btlBand = btlStored ? (btlBenchmarkBand(btlLooker.cash ?? null, btlStored.bands) ?? btlCard?.band ?? null) : null;
+  const btlBench = btlCard && btlLooker.centre && btlBand ? await readBtlBenchmark(createAdminClient(), btlLooker.centre, btlBand) : null;
+  const btlView = btlCard || btlOnly ? btlViewFor({ btl: btlCard, postcode_area: deal.postcode_area }, btlLooker, btlBench) : null;
   const pricing = quoter.pricing;
   const now = new Date();
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;
@@ -285,13 +292,11 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const numbers = asBtl ? null : numbersForCard(sheetCard, tailoring, areaLookup(cards), now);
   // Part D: why it fits them, and how well, in the same words as their card.
   const explanation = numbers ? explainCard(sheetCard, tailoring, areaLookup(cards), now) : null;
-  // Batch 28: once opened, the whole buy-to-let working, against the benchmark for where they search and their band.
-  const btlBand = btlLooker.cashBand ?? btlCard?.band ?? null;
-  const btlBench = btlCard && priv && btlLooker.centre && btlBand ? await readBtlBenchmark(createAdminClient(), btlLooker.centre, btlBand) : null;
+  // Batch 28: once opened, the whole buy-to-let working, against the benchmark for where they search and their band (read above).
   // Part G: the £2 buy-to-let report, at this member's own price (the welcome price on a revealed deal), or the one they have.
   const [btlQuote, btlReportId] = btlCard ? await Promise.all([quoteBtlReport(user.id, adminUser, { dealId: deal.id }), latestBtlReportId(user.id, { dealId: deal.id })]) : [null, null];
   // The labels name the stored finance and costs ("12% incl. VAT"), as the figures were worked out with them.
-  const btlLabels = btlCard && priv ? (await readBtlSettingsCached(createAdminClient())).settings : undefined;
+  const btlLabels = btlCard && priv ? (btlStored ?? undefined) : undefined;
   const btlSheetData = btlCard && priv ? btlSheet(btlCard, { priority: btlLooker.priority ?? DEFAULT_BTL_PRIORITY, benchmark: btlBench, regionName: btlLooker.centre ? regionPhrase(regionForArea(btlLooker.centre).name) : null, settings: btlLabels }) : null;
   // Part E: what holds them back leads the sheet. "Knowing the numbers": the
   // Full analysis first. "Landlord or agent consent": Batch 7's first message

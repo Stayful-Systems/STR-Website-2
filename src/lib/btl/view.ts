@@ -17,7 +17,8 @@ import { haversineMiles } from '../market/geo.ts';
 import { dealTypeFor, type DealType, type TypedDeal } from '../profile/deal-types.ts';
 import { btlFlags, btlNumbers, RENT_CONFIDENCE_WORDS, type BtlCard, type BtlCardNumber } from './card.ts';
 import type { BtlPriority } from './rules.ts';
-import type { CashBand } from './deal.ts';
+import type { BtlCashGoals, CashBand } from './deal.ts';
+import type { Benchmark } from './benchmark.ts';
 import { centreAreaOf, DEFAULT_BTL_PRIORITY } from './today.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import type { MarketGoals } from '../market/goals.ts';
@@ -37,8 +38,13 @@ export interface BtlLooker {
   ownAreas?: readonly string[];
   /** The postcode area their benchmark is read for (centreAreaOf). */
   centre?: string | null;
-  /** Their cash band, when they have said. */
+  /** Their older Buy to let cash band, when they have said. */
   cashBand?: CashBand | null;
+  /**
+   * Review R4 (R4-22): what their goals say about their cash (the Buying cash answer and the older band), for the one
+   * ceiling and benchmark band (deal.ts btlCashTop, btlBenchmarkBand) with the stored band tops.
+   */
+  cash?: BtlCashGoals | null;
 }
 
 export interface BtlView {
@@ -60,7 +66,7 @@ export function btlLookerFor(goals: MarketGoals | null, savedAreas: readonly str
   const centre = centreAreaOf(goals, own);
   const at = centre ? areaCentroid(centre) : null;
   const name = own.length === 1 ? areaMetaForCode(own[0]).name : centre ? areaMetaForCode(centre).name : null;
-  return { types, priority: goals?.btl?.priority ?? null, from: at && name ? { ...at, name } : null, ownAreas: own, centre, cashBand: goals?.btl?.cashBand ?? null };
+  return { types, priority: goals?.btl?.priority ?? null, from: at && name ? { ...at, name } : null, ownAreas: own, centre, cashBand: goals?.btl?.cashBand ?? null, cash: goals ? { buyer: goals.buyer, btl: goals.btl } : null };
 }
 
 /** Whether this card is shown as a buy-to-let deal to this member. */
@@ -78,15 +84,18 @@ export function btlDistance(area: string | null | undefined, looker: BtlLooker |
   return `${Math.max(1, Math.round(haversineMiles(from, at)))} miles from ${from.name}`;
 }
 
-/** The card's buy-to-let view: three numbers, the flags, and what the rent rests on. */
-export function btlViewFor(card: { btl?: BtlCard | null; postcode_area?: string | null }, looker: BtlLooker | null | undefined): BtlView {
+/**
+ * The card's buy-to-let view: three numbers, the flags, and what the rent rests on. `bench`: the benchmark the deal
+ * is judged against for this member (Review R4, R4-28: a national or thin one is flagged before Open).
+ */
+export function btlViewFor(card: { btl?: BtlCard | null; postcode_area?: string | null }, looker: BtlLooker | null | undefined, bench: Benchmark | null = null): BtlView {
   const c = card.btl ?? null;
   if (!c) return { numbers: [], flags: [], caption: 'Figures being updated', cash: null, pending: true };
   const priority = looker?.priority ?? DEFAULT_BTL_PRIORITY;
   const comps = c.rent.compCount > 0 ? ` · ${c.rent.compCount} rental${c.rent.compCount === 1 ? '' : 's'} nearby` : '';
   return {
     numbers: btlNumbers(c, priority),
-    flags: btlFlags(c, btlDistance(card.postcode_area, looker)),
+    flags: btlFlags(c, btlDistance(card.postcode_area, looker), bench),
     caption: `${RENT_CONFIDENCE_WORDS[c.rent.confidence]}${comps}`,
     // The cash in, as the "Cash in" number writes it.
     cash: `${btlNumbers(c, 'income')[0].value} cash in`,

@@ -5,9 +5,11 @@
  *
  *   THE DEALS     pool rows that pass the hard rules (btl_pass) with a
  *                 stored card, in budget (the middle cash in no more than
- *                 the top of their band), that pass their priority against
- *                 the benchmark for their band where they search (rules.ts
- *                 passesFor). Never a short-let figure: only the card.
+ *                 the top of their Buying cash: deal.ts btlCashTop, read
+ *                 with that ceiling so the row limit never cuts an
+ *                 affordable deal), that pass their priority against the
+ *                 benchmark for the band holding that top where they search
+ *                 (rules.ts passesFor). Never a short-let figure: only the card.
  *   WIDENING      their own areas first. Short of a full day there, the
  *                 nearest areas outward, a step at a time (10, 25, 50 miles,
  *                 then their region, then the whole UK; btl_benchmark's
@@ -32,8 +34,7 @@ import { TODAY_SIZE } from '../today/day.ts';
 import type { Benchmark } from './benchmark.ts';
 import { judgedOf, type BtlCard } from './card.ts';
 import { DEFAULT_BTL_SETTINGS, type BtlSettings } from './config.ts';
-import { inBudget, type CashBand } from './deal.ts';
-import { buyingCashTop } from '../profile/buying-power.ts';
+import { btlBenchmarkBand, btlCashTop, withinBtlCash, type CashBand } from './deal.ts';
 import { passesFor, type BtlPriority } from './rules.ts';
 
 /** What a member's buy-to-let deals are judged on when they have not said (decided: a bit of both). */
@@ -75,6 +76,48 @@ export interface BtlPick {
   miles: number | null;
   /** How far over the benchmark on their priority (percentage points); the margin over nothing when there is no benchmark. */
   margin: number;
+  /** Review R4 (R4-28): the benchmark it was judged against was across the UK, or had few deals; null otherwise. */
+  bench?: BtlBenchNote | null;
+}
+
+/** Review R4 (R4-28): what the member is told before Open about the benchmark a deal was judged against. */
+export type BtlBenchNote = 'national' | 'thin';
+
+/** Few deals to compare (thin, or too few to compare at all), or compared across the UK; null for a local comparison or none stored. */
+export function btlBenchNote(bm: Pick<Benchmark, 'step' | 'thin' | 'none'> | null | undefined): BtlBenchNote | null {
+  if (!bm) return null;
+  if (bm.thin || bm.none) return 'thin';
+  return bm.step === 'national' ? 'national' : null;
+}
+
+/** The note for the deals a day shows: "thin" when any of them rests on few deals, else "national" when any was compared across the UK. */
+export function btlBenchFor(choice: Pick<BtlDayChoice, 'picks'>, shown: readonly string[]): BtlBenchNote | null {
+  const on = new Set(shown);
+  let note: BtlBenchNote | null = null;
+  for (const p of choice.picks) {
+    if (!on.has(p.dealId) || !p.bench) continue;
+    if (p.bench === 'thin') return 'thin';
+    note = 'national';
+  }
+  return note;
+}
+
+/** The Today and email line for that note. */
+export function btlBenchLine(note: BtlBenchNote): string {
+  return note === 'thin'
+    ? 'Few buy-to-let deals with your cash to compare these with, so treat “beats the typical deal” as a rough guide.'
+    : 'Not enough buy-to-let deals with your cash near you to compare with, so these are compared with deals across the UK.';
+}
+
+/** The day's buy-to-let lines for Today and the email: how far it looked, then what the deals were compared with; null with neither. */
+export function btlDayLine(widen: BtlWiden | null | undefined, bench: BtlBenchNote | null | undefined): string | null {
+  const lines = [widen ? btlWidenLine(widen) : null, bench ? btlBenchLine(bench) : null].filter((l): l is string => l !== null);
+  return lines.length > 0 ? lines.join(' ') : null;
+}
+
+/** The stored note back (StoredChoice.btlBench); null when it is not one. */
+export function parseBtlBench(raw: unknown): BtlBenchNote | null {
+  return raw === 'national' || raw === 'thin' ? raw : null;
 }
 
 export interface BtlDayChoice {
@@ -172,9 +215,10 @@ export async function chooseBtlDay(input: BtlChooseInput, reads: BtlReads): Prom
   const s = input.settings ?? DEFAULT_BTL_SETTINGS;
   const goals = input.goals;
   const priority = btlPriorityOf(goals);
-  const band = goals?.btl?.cashBand ?? null;
-  // Batch 30: a real Buying cash answer is the exact ceiling (cash in at the middle of its range); without one, the stored band as before.
-  const exactTop = goals ? buyingCashTop(goals) : null;
+  // Review R4 (R4-22, Zac 19 Nov 2026): the one ceiling (btlCashTop): the exact top of their Buying cash, the same on every
+  // buy-to-let surface; the benchmark is the band that holds that top (btlBenchmarkBand).
+  const cashTop = btlCashTop(goals, s.bands);
+  const band = btlBenchmarkBand(goals, s.bands);
   const filters = filtersForType(goals, input.savedAreas, 'btl');
   const own = filters.areas;
   const centreArea = centreAreaOf(goals, own);
@@ -199,17 +243,19 @@ export async function chooseBtlDay(input: BtlChooseInput, reads: BtlReads): Prom
       if (row.postcode_area && rules.badAreas.has(row.postcode_area.toUpperCase())) continue;
       const card = row.btl ?? null;
       if (!card || !card.floorsOk) continue;
-      if (exactTop !== null ? card.cashIn.mid > exactTop : band && !inBudget(card.cashIn.mid, band, s.bands)) continue;
+      if (!withinBtlCash(card.cashIn.mid, cashTop)) continue;
       // The benchmark for their band (or the deal's own band when they have not said).
       const bm = await benchmarkFor(band ?? card.band);
       if (!passesFor(priority, judgedOf(card), bm).pass) continue;
       const at = row.postcode_area ? areaCentroid(row.postcode_area.toUpperCase()) : null;
-      out.push({ dealId: row.id, card, found, miles: centre && at ? roundMiles(haversineMiles(centre, at)) : null, margin: btlMargin(priority, card, bm) });
+      out.push({ dealId: row.id, card, found, miles: centre && at ? roundMiles(haversineMiles(centre, at)) : null, margin: btlMargin(priority, card, bm), bench: btlBenchNote(bm) });
     }
     return out.sort((a, b) => b.margin - a.margin || b.card.cashflowMonthly.low - a.card.cashflowMonthly.low || (a.miles ?? 0) - (b.miles ?? 0) || (a.dealId < b.dealId ? -1 : 1));
   };
 
-  const base: DealFilters = { ...filters, minPrice: null, maxPrice: null, minProfit: null, minUplift: null };
+  // Review R4 (R4-25, Zac 19 Nov 2026): the cash ceiling is applied in the read, before the row limit, so every row read
+  // is affordable; the order is unchanged.
+  const base: DealFilters = { ...filters, minPrice: null, maxPrice: null, minProfit: null, minUplift: null, btlMaxCashIn: cashTop };
   const picks = await judge(await reads.pool(base, BTL_POOL_LIMIT), { scope: 'own' });
   const ownMatches = own.length > 0 ? picks.length : null;
   if (own.length > 0 && picks.length < TODAY_SIZE) {

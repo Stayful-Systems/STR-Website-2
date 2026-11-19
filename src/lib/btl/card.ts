@@ -27,6 +27,7 @@ import { formatRange, moneyRange } from '../marketplace/profit-range.ts';
 import type { BtlDeal, CashBand, EpcRating, Range3, RentTest } from './deal.ts';
 import { isEpcRating } from './deal.ts';
 import type { BtlGrowth } from './growth.ts';
+import type { Benchmark } from './benchmark.ts';
 import type { ListingKind, RentRange } from './rent.ts';
 import { floorsPass, type BtlJudged, type BtlPriority } from './rules.ts';
 
@@ -194,6 +195,17 @@ const PLAN: Record<BtlPriority, BtlNumberKey[]> = {
   both: ['btlCash', 'btlRoi', 'btlGrowth'],
 };
 
+/**
+ * Review R4 (R4-26): the short note every member sees under a number that is before tax or past growth, whatever
+ * their experience (a beginner gets the whole help line). Growth is history, never a forecast.
+ */
+export const BTL_NUMBER_NOTE: Partial<Record<BtlNumberKey, string>> = {
+  btlMonthly: 'Before tax.',
+  btlRoi: 'Before tax.',
+  btlValue5y: 'History, not a forecast.',
+  btlGrowth: 'History, not a forecast.',
+};
+
 export const BTL_NUMBER_HELP: Record<BtlNumberKey, string> = {
   btlCash: 'Deposit, the tax on a second home and buying costs. The top end adds an energy upgrade allowance.',
   btlMonthly: 'Rent less the running costs and the mortgage interest, before tax.',
@@ -241,8 +253,22 @@ export function btlNumbers(card: BtlCard, priority: BtlPriority): BtlCardNumber[
 
 const BELOW_C = new Set<EpcRating>(['D', 'E', 'F', 'G']);
 
-/** The flags a card shows. `distance` is "24 miles from Leeds" when the deal is outside the member's own areas. */
-export function btlFlags(card: BtlCard, distance: string | null = null): string[] {
+/**
+ * Review R4 (R4-28): the flag for the benchmark a deal is judged against, before Open: "Few deals to compare" when
+ * it rests on fewer than the benchmark's minimum (or too few to compare at all), "Compared across the UK" when the
+ * comparison had to widen to the whole country; null for a local comparison or none stored.
+ */
+export function btlBenchmarkFlag(bm: Pick<Benchmark, 'step' | 'thin' | 'none'> | null | undefined): string | null {
+  if (!bm) return null;
+  if (bm.thin || bm.none) return 'Few deals to compare';
+  return bm.step === 'national' ? 'Compared across the UK' : null;
+}
+
+/**
+ * The flags a card shows. `distance` is "24 miles from Leeds" when the deal is outside the member's own areas;
+ * `bench` the benchmark it is judged against for this member (btlBenchmarkFlag).
+ */
+export function btlFlags(card: BtlCard, distance: string | null = null, bench: Pick<Benchmark, 'step' | 'thin' | 'none'> | null = null): string[] {
   const out: string[] = [];
   if (card.flags.serviceChargeConfirmed === false) out.push('Service charge not confirmed');
   if (card.flags.epc && BELOW_C.has(card.flags.epc)) out.push('EPC below C');
@@ -251,6 +277,8 @@ export function btlFlags(card: BtlCard, distance: string | null = null): string[
   if (card.flags.shortLease) out.push('Short lease');
   if (card.rent.confidence === 'low') out.push('Rough rent estimate');
   if (distance) out.push(distance);
+  const compared = btlBenchmarkFlag(bench);
+  if (compared) out.push(compared);
   return out;
 }
 

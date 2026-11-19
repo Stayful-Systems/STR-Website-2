@@ -33,7 +33,7 @@ import { parseScreening } from '../listing/screen.ts';
 import { judgedOf, type BtlCard } from '../btl/card.ts';
 import type { Benchmark } from '../btl/benchmark.ts';
 import type { BtlStandoutSettings } from '../btl/config.ts';
-import { inBudget, type CashBand } from '../btl/deal.ts';
+import { btlCashTop, withinBtlCash, type BtlCashGoals } from '../btl/deal.ts';
 import { btlStandout, passesFor, type BtlPriority } from '../btl/rules.ts';
 
 export type ProfitBasis = 'range' | 'after_works' | 'after_refinance' | 'btl_cashflow';
@@ -79,7 +79,8 @@ export interface StandoutInput {
 
 /**
  * Batch 28: a buy-to-let deal's standout (Part D): it passes the member's
- * priority against their benchmark and is in their cash band, and the LOW
+ * priority against their benchmark and is within their cash ceiling (Review
+ * R4, R4-22: the exact top of their Buying cash, btlCashTop, as Today), and the LOW
  * end on that priority is at least 125% of the benchmark median (rules.ts
  * btlStandout: never on a median of 0% or less, and Income needs 6% at the
  * low end). Judged on the stored card alone: no short-let figure, no
@@ -88,10 +89,15 @@ export interface StandoutInput {
 export interface BtlStandoutContext {
   card: BtlCard | null;
   priority: BtlPriority;
-  cashBand: CashBand | null;
+  /** The most the middle cash in may be (deal.ts btlCashTop); null: no ceiling. */
+  cashTop: number | null;
   benchmark: Benchmark | null;
   settings: BtlStandoutSettings;
-  bands: readonly number[];
+}
+
+/** The standout context for a member's goals: the same ceiling Today uses (btlCashTop on the stored band tops). */
+export function btlStandoutContext(i: { card: BtlCard | null; priority: BtlPriority; goals: BtlCashGoals | null | undefined; benchmark: Benchmark | null; settings: BtlStandoutSettings; bands: readonly number[] }): BtlStandoutContext {
+  return { card: i.card, priority: i.priority, cashTop: btlCashTop(i.goals, i.bands), benchmark: i.benchmark, settings: i.settings };
 }
 
 /** The % the member sees: matchLine's own rounding (src/lib/tailoring/why.ts). */
@@ -144,7 +150,7 @@ function judgeBtlStandout(i: StandoutInput, base: Omit<StandoutJudgement, 'outco
   const no = (reason: StandoutReason, inPool = true): StandoutJudgement => ({ outcome: 'not_standout', reason, inPool, ...b });
   if (!i.btl || !c) return no('btl_no_figures', false);
   if (i.judgement.mustFails.includes('location')) return no('must_have_missed', false);
-  if (i.btl.cashBand && !inBudget(c.cashIn.mid, i.btl.cashBand, i.btl.bands)) return no('btl_over_budget', false);
+  if (!withinBtlCash(c.cashIn.mid, i.btl.cashTop)) return no('btl_over_budget', false);
   const judged = judgedOf(c);
   if (!passesFor(i.btl.priority, judged, i.btl.benchmark).pass) return no('btl_below_benchmark', false);
   if (i.forced) return { outcome: 'standout', reason: 'forced', inPool: true, ...b };
@@ -258,9 +264,17 @@ export interface KnownDeal {
   dealType: string | null;
 }
 
-/** The best low-end profit among what the member already had at this match or better, of the same deal type. */
+/**
+ * The best low-end profit among what the member already had at this match or better, of the same deal type.
+ * Review R4 (R4-27, Zac 19 Nov 2026): a buy-to-let deal has no match %, so it must beat the buy-to-let deals already
+ * shown or saved on their low-end monthly cashflow alone; an entry with no deal type never sets that bar.
+ */
 export function bestAtLeast(known: readonly KnownDeal[], matchPct: number | null, dealType: string | null): number | null {
   let best: number | null = null;
+  if (dealType === 'btl') {
+    for (const k of known) if (k.dealType === 'btl' && k.profitLow !== null) best = best === null ? k.profitLow : Math.max(best, k.profitLow);
+    return best;
+  }
   for (const k of known) {
     if (k.profitLow === null || k.matchPct === null || matchPct === null || k.matchPct < matchPct) continue;
     if (k.dealType && dealType && k.dealType !== dealType) continue;

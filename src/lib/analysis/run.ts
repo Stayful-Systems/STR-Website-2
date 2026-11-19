@@ -31,6 +31,12 @@ import type { FinanceGoals } from '../market/goals';
 import type { AnalysisInput } from './input';
 import { dealFigures } from './deal-figures';
 import { noticeForFailure, noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
+import { btlInsteadFor } from '../btl/analyser';
+import { listingKind } from '../btl/listing';
+import { readBtlSettingsCached } from '../btl/settings-server';
+import { DEFAULT_BTL_SETTINGS } from '../btl/config';
+import { DEFAULT_PROJECT_COSTS } from '../project/config';
+import { createAdminClient, hasServiceRole } from '../supabase/admin';
 
 /**
  * One property analysis, end to end: geocode, short-let and long-let data,
@@ -574,6 +580,8 @@ export async function runAnalysis(
         // Present only when an enhanced run came back without one.
         enhancedNotice: secondOpinionOutcome.notice,
       };
+      // Review R4 (R4-24): "Buy to let instead?" on the server, with the stored settings and a flat's service charge.
+      result.btlInstead = await btlInsteadForReport(result, input);
 
       // What this report actually used, so the caller can show it.
       const spend = userId
@@ -586,4 +594,23 @@ export async function runAnalysis(
       await finish({ completed }).catch(() => {});
     }
   });
+}
+
+/**
+ * Review R4 (R4-24): the report's "Buy to let instead?" card, worked out here because the page that shows it is a
+ * client component and cannot read settings: Zac's stored buy-to-let settings and buying costs (readBtlSettingsCached;
+ * an unreadable row reads as its decided default), and a flat's service charge and ground rent as the deal cards
+ * carry them (the form's property type, else the listing's title). Never throws: on any failure there is no card.
+ */
+async function btlInsteadForReport(result: AnalysisResult, input: Pick<AnalysisInput, 'propertyType' | 'sourceListing'>): Promise<AnalysisResult['btlInstead']> {
+  try {
+    const stored = hasServiceRole() ? await readBtlSettingsCached(createAdminClient()) : { settings: DEFAULT_BTL_SETTINGS, buyingCosts: DEFAULT_PROJECT_COSTS.buyingCosts };
+    // The listing's own title first (the form's type defaults to a flat when nothing is chosen), then the form's type.
+    const fromTitle = listingKind({ rawType: null, title: input.sourceListing?.title ?? '' });
+    const kind = fromTitle !== 'unknown' ? fromTitle : input.propertyType === 'flat' ? 'flat' : /_house$/.test(input.propertyType ?? '') ? 'house' : 'unknown';
+    return btlInsteadFor(result, { settings: stored.settings, buyingCosts: stored.buyingCosts, kind });
+  } catch (err) {
+    console.warn('[analysis] buy to let instead not worked out:', (err as Error)?.message ?? err);
+    return null;
+  }
 }

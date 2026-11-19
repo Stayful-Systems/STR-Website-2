@@ -145,3 +145,88 @@ test('a buy-to-let search has no price band: its cash band is judged on the card
   assert.deepEqual([f.kind, f.types, f.minPrice, f.maxPrice], ['sale', ['btl'], null, null]);
   assert.notEqual(filtersForType(g, ['LS'], 'buy_str').maxPrice, null, 'Short-let keeps its budget');
 });
+
+// ── Review R4 (R4-22, R4-25, R4-28: Zac 19 Nov 2026) ──
+
+test('R4-22: Today and standout agree on the ceiling for every Buying cash answer, and compare with the band that holds its top', async () => {
+  const { judgeStandout, btlStandoutContext } = await import('../standout/rules.ts');
+  const { DEFAULT_STANDOUT } = await import('../standout/settings.ts');
+  const { DEFAULT_BTL_SETTINGS } = await import('./config.ts');
+  const { btlBandFromCash } = await import('../profile/buying-power.ts');
+  const { TAILORING } = await import('../tailoring/config.ts');
+  type Cash = NonNullable<MarketGoals['buyer']['cashAvailable']>;
+  const strong = card({ roiPct: { low: 7, mid: 10.2, high: 14.9 } });
+  const national: Benchmark = { band: '50k_100k', step: '25mi', radiusMiles: 25, count: 157, steps: [], roiMedianPct: 0.8, roiP40Pct: 0.2, growthMedianPct: 1.83, growthP40Pct: 1.37, thin: false, none: false };
+  for (const cash of ['u30', '30-60', '60-100', '100-200', '200+'] as Cash[]) {
+    // As the quiz writes it: the Buying cash answer, and the older Buy to let band one step down.
+    const g = goals({ priority: 'income', cashBand: btlBandFromCash(cash) }, { buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: cash, cashFromBudget: false } });
+    const top = TAILORING.cashAvailableTop[cash];
+    for (const mid of top === null ? [150_000, 900_000] : [top - 1_000, top, top + 1_000]) {
+      const c = { ...strong, cashIn: { low: mid, mid, high: mid + 5_000 } };
+      const bands: string[] = [];
+      const day = await chooseBtlDay({ goals: g, savedAreas: ['B'], feedback: [], exclude: new Set() }, { pool: poolOf([row('d', 'B', c)]).pool, benchmark: async (_a, band) => (bands.push(band), { ...national, band }) });
+      const onToday = day.dealIds.includes('d');
+      const ctx = btlStandoutContext({ card: c, priority: 'income', goals: g, benchmark: national, settings: DEFAULT_BTL_SETTINGS.standout, bands: DEFAULT_BTL_SETTINGS.bands });
+      const j = judgeStandout({ judgement: { checks: [], mustFails: [], mustUnknown: [], niceMissed: 0, met: 0, unknown: 0, checked: 0 } as never, facts: { kind: 'sale', dealType: 'btl', dealTypes: ['btl'], project: null }, figures: { range: null }, wants: { minProfit: null, minProfitR2r: null }, chosenTypes: ['btl'], revealPct: null, settings: DEFAULT_STANDOUT, btl: ctx });
+      assert.equal(j.reason === 'btl_over_budget', !onToday, `${cash} at £${mid}: Today ${onToday ? 'shows' : 'hides'} it, standout must agree (${j.reason})`);
+      assert.equal(onToday, top === null || mid <= top, `${cash} at £${mid}: the ceiling is the exact Buying cash top`);
+      if (onToday) assert.equal(bands[0], top === null ? '100k_plus' : top <= 25_000 ? 'under_25k' : top <= 50_000 ? '25k_50k' : top <= 100_000 ? '50k_100k' : '100k_plus', `${cash}: the band that holds the top`);
+    }
+  }
+  // Member A (worked example): £56k cash in, Buying cash £30–60k: on Today, compared with the £50k–£100k deal, not £25k–£50k.
+  const memberA = goals({ priority: 'income', cashBand: '25k_50k' }, { buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '30-60', cashFromBudget: false } });
+  const asked: string[] = [];
+  const a = await chooseBtlDay({ goals: memberA, savedAreas: ['B'], feedback: [], exclude: new Set() }, { pool: poolOf([row('a', 'B', { ...strong, cashIn: { low: 56_000, mid: 56_000, high: 61_000 } })]).pool, benchmark: async (_x, band) => (asked.push(band), { ...national, band }) });
+  assert.deepEqual(a.dealIds, ['a']);
+  assert.deepEqual(asked, ['50k_100k']);
+});
+
+test('R4-25: with 500 passing rows, an in-budget deal ranked 450th by short-let profit is still picked', async () => {
+  // The pool as the database answers it: best short-let profit first, the row limit after the filters, and the
+  // buy-to-let cash ceiling applied in the read (queries.ts dealsQuery, btl->cashIn->mid).
+  const pricey = card({ cashIn: { low: 90_000, mid: 95_000, high: 100_000 } });
+  const cheap = card({ cashIn: { low: 28_000, mid: 28_000, high: 33_000 }, roiPct: { low: 8, mid: 12, high: 14 } });
+  const rows = Array.from({ length: 500 }, (_, i) => ({ ...row(`r${String(i).padStart(3, '0')}`, 'B', i === 449 ? cheap : pricey), annual_profit: 50_000 - i }) as PoolRow);
+  const asked: DealFilters[] = [];
+  const pool = async (f: DealFilters, limit: number) => {
+    asked.push(f);
+    const top = f.btlMaxCashIn ?? null;
+    return rows.filter((r) => f.areas.length === 0 || f.areas.includes(r.postcode_area ?? '')).filter((r) => top === null || ((r.btl as BtlCard | null)?.cashIn.mid ?? Infinity) <= top).slice(0, limit);
+  };
+  const g = goals({ priority: 'income', cashBand: 'under_25k' }, { buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: 'u30', cashFromBudget: false } });
+  const day = await chooseBtlDay({ goals: g, savedAreas: ['B'], feedback: [], exclude: new Set() }, { pool, benchmark: async () => bm(5) });
+  assert.ok(day.dealIds.includes('r449'), 'the affordable deal 450th by short-let profit is picked');
+  assert.equal(asked[0].btlMaxCashIn, 30_000, 'the read carries the ceiling: the exact Buying cash top');
+  // No ceiling (nothing said): nothing is filtered in the read.
+  const none: DealFilters[] = [];
+  await chooseBtlDay({ goals: goals({ priority: 'income', cashBand: null }), savedAreas: ['B'], feedback: [], exclude: new Set() }, { pool: async (f, l) => (none.push(f), rows.slice(0, l)), benchmark: async () => bm(5) });
+  assert.equal(none[0].btlMaxCashIn ?? null, null);
+});
+
+test('R4-28: Today and the email say when the deals were compared across the UK or with few deals; stored and read back', async () => {
+  const { btlBenchFor, btlBenchLine, btlDayLine, parseBtlBench } = await import('./today.ts');
+  const strong = card({ roiPct: { low: 7, mid: 10.2, high: 14.9 } });
+  const national = bm(0.8, 1.8, { step: 'national', radiusMiles: null });
+  const thin = bm(0.8, 1.8, { step: 'national', radiusMiles: null, thin: true, count: 18 });
+  const g = goals({ priority: 'income', cashBand: '50k_100k' });
+  const dayN = await chooseBtlDay({ goals: g, savedAreas: ['B'], feedback: [], exclude: new Set() }, { pool: poolOf([row('n', 'B', strong)]).pool, benchmark: async () => national });
+  assert.equal(btlBenchFor(dayN, ['n']), 'national');
+  assert.equal(btlBenchFor(dayN, []), null, 'nothing shown: no line');
+  const dayT = await chooseBtlDay({ goals: g, savedAreas: ['B'], feedback: [], exclude: new Set() }, { pool: poolOf([row('t', 'B', strong)]).pool, benchmark: async () => thin });
+  assert.equal(btlBenchFor(dayT, ['t']), 'thin');
+  const local = await chooseBtlDay({ goals: g, savedAreas: ['B'], feedback: [], exclude: new Set() }, { pool: poolOf([row('l', 'B', strong)]).pool, benchmark: async () => bm(0.8) });
+  assert.equal(btlBenchFor(local, ['l']), null, 'a local comparison says nothing');
+  assert.match(btlBenchLine('national'), /across the UK/);
+  assert.match(btlBenchLine('thin'), /rough guide/);
+  assert.equal(btlDayLine(null, null), null);
+  assert.equal(btlDayLine(null, 'thin'), btlBenchLine('thin'));
+  const w = { from: 'Leeds', found: { scope: 'national' as const } };
+  assert.equal(btlDayLine(w, 'national'), `${btlWidenLine(w)} ${btlBenchLine('national')}`);
+  // Stored with the day's list (profile_today_lists.choice) and read back for Today and the email.
+  assert.equal(parseStoredChoice({ checked: 3, btlBench: 'thin' })?.btlBench, 'thin');
+  assert.equal(parseStoredChoice({ checked: 3, btlBench: 'moon' })?.btlBench, null);
+  assert.equal(parseBtlBench('national'), 'national');
+  // chooseDay carries it for a Buy to let day.
+  const typed = await chooseDay({ goals: g, savedAreas: ['B'], feedback: [], exclude: new Set(), cards: null, now: new Date('2026-11-19T08:00:00Z'), types: ['btl'] } as never, { pool: async () => [row('n', 'B', strong)], btlBenchmark: async () => national } as never);
+  assert.equal(typed.btlBench, 'national');
+});

@@ -45,7 +45,8 @@ import { serverFetchEnabled } from '../listing/fetch';
 import { londonDay, londonParts } from '../sms/uk-time';
 import { seatKey } from '../profiles/rules';
 import type { TailoringProfile } from '../tailoring/profile';
-import { judgeStandout, memberSkip, matchPctOf, bestFirst, bestAtLeast, beatsBest, liveConfirmed, inWindow, passesMemberRules, savesLeftToday, type BtlStandoutContext, type KnownDeal, type StandoutJudgement } from './rules';
+import { judgeStandout, memberSkip, matchPctOf, bestFirst, bestAtLeast, beatsBest, liveConfirmed, inWindow, passesMemberRules, savesLeftToday, btlStandoutContext, type BtlStandoutContext, type KnownDeal, type StandoutJudgement } from './rules';
+import { btlBenchmarkBand } from '../btl/deal';
 import { reasonLabel, type StandoutReason } from './reasons';
 import { recheckDeal, requestCheck } from './recheck';
 import {
@@ -382,11 +383,13 @@ async function judgeAndSave(c: Ctx): Promise<void> {
     if (!btlSettings || !a.types.includes('btl')) return null;
     const looker = btlLookerFor(a.profile.goals, a.profile.areas, a.t.about);
     const parsed = parseBtlCard(card);
-    const band = looker.cashBand ?? parsed?.band ?? null;
+    // Review R4 (R4-22, Zac 19 Nov 2026): Today's ceiling (the exact top of their Buying cash) and the benchmark band
+    // that holds it, through the one helper, on the stored band tops.
+    const band = btlBenchmarkBand(looker.cash ?? null, btlSettings.bands) ?? parsed?.band ?? null;
     const key = `${looker.centre}:${band}`;
     if (looker.centre && band && !benchmarks.has(key)) benchmarks.set(key, readBtlBenchmark(admin, looker.centre, band));
     const benchmark = looker.centre && band ? await benchmarks.get(key)! : null;
-    return { card: parsed, priority: looker.priority ?? DEFAULT_BTL_PRIORITY, cashBand: looker.cashBand ?? null, benchmark, settings: btlSettings.standout, bands: btlSettings.bands };
+    return btlStandoutContext({ card: parsed, priority: looker.priority ?? DEFAULT_BTL_PRIORITY, goals: looker.cash ?? null, benchmark, settings: btlSettings.standout, bands: btlSettings.bands });
   };
 
   // ── Judge ──

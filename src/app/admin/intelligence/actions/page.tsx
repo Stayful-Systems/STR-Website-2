@@ -10,6 +10,7 @@ import { pct } from "@/lib/chat/metrics";
 import { chargeLabel } from "@/lib/chat/format";
 import { weekLabel } from "@/lib/activity/week";
 import { saveActionSettingsAction } from "./actions";
+import { TidyPanel } from "./TidyPanel";
 import { readFlash } from "../flash";
 import { BUTTON, CARD, FlashBox, SiAdminNav } from "../SiAdmin";
 
@@ -275,6 +276,14 @@ export default async function ActionsAdminPage() {
               </tbody>
             </table>
             <p className="mt-2 text-xs text-muted-foreground">The newest row’s next week is the one in progress. Weekly active is the headline’s definition (admin, staff and excluded accounts left out).</p>
+          </section>
+
+          <section className={CARD}>
+            <h2 className="text-base font-semibold">Nightly tidy</h2>
+            <p className="mt-1 text-xs text-muted-foreground">What the nightly run does (02:55 UTC): cancels questions whose answer never arrived (nothing in them ran), expires countdowns and confirms nobody answered, closes runs left open past two hours, and clears a checked listing&apos;s held snapshot once its Undo window has passed. Nothing is charged or refunded.</p>
+            <div className="mt-3">
+              <TidyPanel />
+            </div>
           </section>
 
           <section className={CARD}>

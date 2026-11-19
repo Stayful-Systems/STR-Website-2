@@ -5,6 +5,8 @@ import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { runBackfill, runRetention, setMetricsExclusion, type BackfillResult, type RetentionResult, type RunOutcome } from '@/lib/activity/admin-server';
+import { previewDueGrants } from '@/lib/credit/ledger';
+import { packExpirySummary, type PackExpirySummary } from '@/lib/credit/pack-expiry-preview';
 
 const PAGE = '/admin/weekly-active';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -44,4 +46,21 @@ export type RetentionState = { at: string; outcome: RunOutcome<RetentionResult> 
 export async function retentionCheckAction(): Promise<RetentionState> {
   await requireAdmin();
   return { at: new Date().toISOString(), outcome: await runRetention({ apply: false }) };
+}
+
+export type PackExpiryState = { at: string; ok: true; summary: PackExpirySummary } | { at: string; ok: false; message: string } | null;
+
+/**
+ * Review R4 (R4-31): the credit sweep's dry run (/api/internal/credit-sweep?dry=1) for the admin who is logged in: what
+ * would expire and which starter-pack bonuses would be lifted, as totals. A preview only: it never expires, lifts or
+ * grants anything (the nightly sweep at 03:00 UTC does). Kept off /admin/billing (Batch 31a's page).
+ */
+export async function packExpiryPreviewAction(): Promise<PackExpiryState> {
+  await requireAdmin();
+  const at = new Date().toISOString();
+  try {
+    return { at, ok: true, summary: packExpirySummary(await previewDueGrants()) };
+  } catch (err) {
+    return { at, ok: false, message: (err as Error)?.message ?? 'failed' };
+  }
 }

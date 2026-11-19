@@ -27,7 +27,7 @@ import { chooseTodayFrom, type ChooseInput, type ChooseReads, type TodayChoice }
 import { TODAY_SIZE } from './day.ts';
 import { goalsForType, lightOnlyFor } from './type-filters.ts';
 import { DEFAULT_TODAY_MIX, fillMix, mixSlots, type Strength } from './mix.ts';
-import { btlWidenFor, chooseBtlDay, type BtlDayChoice, type BtlWiden } from '../btl/today.ts';
+import { btlBenchFor, btlWidenFor, chooseBtlDay, type BtlBenchNote, type BtlDayChoice, type BtlWiden } from '../btl/today.ts';
 
 export interface DayChoice extends TodayChoice {
   /** Tailored: the deals meeting every must-have ("N deals match you"). Null on the untailored path. */
@@ -36,6 +36,8 @@ export interface DayChoice extends TodayChoice {
   capped: boolean;
   /** Batch 28: how far the day looked for the buy-to-let deals it shows; null or absent when it did not have to. */
   btlWiden?: BtlWiden | null;
+  /** Review R4 (R4-28): the buy-to-let deals it shows were compared across the UK, or with few deals; null or absent otherwise. */
+  btlBench?: BtlBenchNote | null;
 }
 
 async function chooseOne(input: ChooseInput, reads: ChooseReads, opts: TailoredOptions): Promise<DayChoice> {
@@ -105,7 +107,7 @@ export async function chooseDay(input: ChooseInput, reads: ChooseReads, opts: Ta
   if (types.length === 1 && types[0] === 'btl') {
     const { day, btl } = await chooseBtl(input, reads);
     const dealIds = day.dealIds.slice(0, TODAY_SIZE);
-    return { ...day, dealIds, btlWiden: btlWidenFor(btl, dealIds) };
+    return { ...day, dealIds, btlWiden: btlWidenFor(btl, dealIds), btlBench: btlBenchFor(btl, dealIds) };
   }
   if (types.length === 1) return chooseOne(inputForType(input, types[0]), readsFor(input, reads, types[0]), optsFor(types[0]));
 
@@ -178,5 +180,5 @@ export async function chooseDay(input: ChooseInput, reads: ChooseReads, opts: Ta
     if (closest) return { ...closest, mustMatches: tailored ? mustMatches : null, capped };
     return { dealIds: [], nearMiss: false, advice: null, mustMatches: tailored ? mustMatches : null, capped, best: null };
   }
-  return { dealIds, nearMiss: false, advice: tailored ? shortListAdvice(dealIds.length) : null, mustMatches: tailored ? mustMatches : null, capped, best: null, btlWiden: btlChoice ? btlWidenFor(btlChoice, dealIds) : null };
+  return { dealIds, nearMiss: false, advice: tailored ? shortListAdvice(dealIds.length) : null, mustMatches: tailored ? mustMatches : null, capped, best: null, btlWiden: btlChoice ? btlWidenFor(btlChoice, dealIds) : null, btlBench: btlChoice ? btlBenchFor(btlChoice, dealIds) : null };
 }

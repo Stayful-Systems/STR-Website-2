@@ -33,6 +33,8 @@ import { DEFAULT_FINANCE, mortgagePayment } from '../listing/deal.ts';
 import { stampDutyLocal, type TaxCountry, type TaxName } from '../listing/stamp-duty.ts';
 import { DEFAULT_BTL_BANDS, DEFAULT_BTL_COSTS, DEFAULT_BTL_EPC, DEFAULT_BTL_FINANCE, type BtlCosts, type BtlEpcSettings, type BtlFinance } from './config.ts';
 import type { FlatCharges } from './listing.ts';
+import { buyingCashTop } from '../profile/buying-power.ts';
+import type { BuyerGoals, BtlGoals } from '../market/goals.ts';
 
 export interface Range3 {
   low: number;
@@ -268,4 +270,56 @@ export function bandTop(band: CashBand, tops: readonly number[] = DEFAULT_BTL_BA
 /** A deal is in budget when its middle cash in is no more than the top of the member's band. */
 export function inBudget(cashInMid: number, band: CashBand, tops: readonly number[] = DEFAULT_BTL_BANDS): boolean {
   return Number.isFinite(cashInMid) && cashInMid <= bandTop(band, tops);
+}
+
+// ─── Review R4 (R4-22, Zac 19 Nov 2026): the member's buy-to-let cash ceiling, one helper ───
+
+/** What a member's goals say about the cash they can put in: their Buying cash answer, and the older Buy to let band. */
+export interface BtlCashGoals {
+  buyer: Pick<BuyerGoals, 'cashAvailable' | 'cashFromBudget'>;
+  btl?: Pick<BtlGoals, 'cashBand'> | null;
+}
+
+/** A real Buying cash answer (not worked out from a budget), whatever its top. */
+function answeredBuyingCash(goals: BtlCashGoals): boolean {
+  return goals.buyer.cashAvailable !== null && !goals.buyer.cashFromBudget;
+}
+
+/**
+ * The most a buy-to-let deal's middle cash in may be for this member: the
+ * EXACT top of their Buying cash answer (Zac's rule: the same ceiling on
+ * Today, standouts, the what-if, Browse, the benchmark and the £2 report).
+ * Without a real answer (unanswered, or only worked out from a budget), the
+ * top of their older Buy to let cash band, on Zac's band tops. Null: no
+ * ceiling (the open-ended "£200k+" answer, the top band, or nothing said).
+ */
+export function btlCashTop(goals: BtlCashGoals | null | undefined, tops: readonly number[] = DEFAULT_BTL_BANDS): number | null {
+  if (!goals) return null;
+  const exact = buyingCashTop(goals);
+  if (exact !== null) return exact;
+  if (answeredBuyingCash(goals)) return null;
+  const band = goals.btl?.cashBand ?? null;
+  if (!band) return null;
+  const top = bandTop(band, tops);
+  return Number.isFinite(top) ? top : null;
+}
+
+/** A deal is within the member's ceiling when its middle cash in is no more than it (no ceiling: always). */
+export function withinBtlCash(cashInMid: number, top: number | null): boolean {
+  return Number.isFinite(cashInMid) && (top === null || cashInMid <= top);
+}
+
+/**
+ * The band whose typical deal a member's buy-to-let deals are compared with
+ * (Zac's rule: the band that holds the top of their Buying cash): the
+ * smallest band whose top is at or above their ceiling, the top band when
+ * their answer has no top, their older band without a Buying cash answer.
+ * Null with nothing said (the caller then compares each deal with its own band).
+ */
+export function btlBenchmarkBand(goals: BtlCashGoals | null | undefined, tops: readonly number[] = DEFAULT_BTL_BANDS): CashBand | null {
+  if (!goals) return null;
+  const top = btlCashTop(goals, tops);
+  if (top !== null) return CASH_BANDS.find((b) => bandTop(b, tops) >= top) ?? CASH_BANDS[CASH_BANDS.length - 1];
+  if (answeredBuyingCash(goals)) return CASH_BANDS[CASH_BANDS.length - 1];
+  return goals.btl?.cashBand ?? null;
 }

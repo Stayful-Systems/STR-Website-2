@@ -569,13 +569,13 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'btl_add',
-    from: 'batch 28',
+    from: 'batch 28; Review R4 (R4-22, the cash ceiling is the Buying cash), Zac 19 Nov 2026',
     category: 'deals',
     channels: ['chat', 'view'],
     showWhen: null,
     question: 'How do I get buy-to-let deals?',
     variants: ['How do I add Buy to let?', 'Why don’t I see buy-to-let deals?', 'I chose All of them, why no buy to let?', 'Can I turn off buy-to-let deals?'],
-    answer: 'Tick Buy to let in your profile’s deal types, then tell me what you’re after; the cash you can put in is the same Buying cash answer as for any purchase. If you chose All of them before buy to let arrived, nothing changed for you: tap Add Buy to let to have them. Untick it any time.',
+    answer: 'Tick Buy to let in your profile’s deal types, then tell me what you’re after; the cash you can put in is the same Buying cash answer as for any purchase. A buy-to-let deal is shown only when the middle of its cash in is no more than the top of your Buying cash, the same limit on Today, Browse, standout deals, the what-ifs and the buy-to-let report. If you chose All of them before buy to let arrived, nothing changed for you: tap Add Buy to let to have them. Untick it any time.',
   },
   {
     slug: 'btl_rent_test',
@@ -589,23 +589,23 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'btl_costs',
-    from: 'batch 28',
+    from: 'batch 28; Review R4 (R4-24, the analyser uses the saved settings), Zac 19 Nov 2026',
     category: 'deals',
     channels: ['chat', 'view'],
     showWhen: null,
     question: 'What costs are in the buy-to-let figures?',
     variants: ['Do the buy-to-let figures include an agent?', 'Is the cashflow before tax?', 'What about service charge?', 'Why is there an energy upgrade in the cash in?'],
-    answer: 'Every figure has {btl_running_costs}, plus a flat’s service charge and ground rent (an estimate when the listing doesn’t say). The cash in is the deposit, the tax on a second home and the buying costs; the top end adds {btl_epc_allowance}. All before tax, and an estimate, not advice.',
+    answer: 'Every figure has {btl_running_costs}, plus a flat’s service charge and ground rent (an estimate when the listing doesn’t say), the Full analysis’s “Buy to let instead?” included. The cash in is the deposit, the tax on a second home and the buying costs; the top end adds {btl_epc_allowance}. All before tax, and an estimate, not advice.',
   },
   {
     slug: 'btl_judged',
-    from: 'batch 28',
+    from: 'batch 28; Review R4 (R4-22 the benchmark band, R4-27 the standout bar, R4-28 the notice before Open), Zac 19 Nov 2026',
     category: 'deals',
     channels: ['chat', 'view'],
     showWhen: null,
     question: 'How do you decide a buy-to-let deal is good?',
     variants: ['What is the typical deal in my budget?', 'Why is this buy-to-let deal miles away?', 'What makes a buy-to-let standout?', 'Why did you look further out?'],
-    answer: 'I compare it with the typical deal on the market in your cash band near you, widening the search until there are enough to compare, and say how far I looked. Income needs a better return, growth better growth, and a bit of both a fair share of each. It’s a standout only when even its low end is {btl_standout_margin} of the typical deal’s.',
+    answer: 'I compare it with the typical deal on the market in the cash band that holds the top of your Buying cash, near you, widening the search until there are enough to compare, and say how far I looked. When I had to compare across the UK, or there are only a few deals to compare, the card says so before you open it. Income needs a better return, growth better growth, and a bit of both a fair share of each. It’s a standout only when even its low end is {btl_standout_margin} of the typical deal’s, and it makes more each month at the low end than the buy-to-let deals I’ve already shown you.',
   },
   {
     slug: 'btl_report',
@@ -616,6 +616,18 @@ export const SEED: readonly SeedEntry[] = [
     question: 'What is the buy-to-let report?',
     variants: ['What do I get for the buy-to-let report?', 'How much is the buy-to-let report?', 'Is there a PDF of the buy-to-let report?', 'Was I charged for a buy-to-let report that failed?'],
     answer: 'For {btl_report_cost}: a rent valuation, a sale valuation, sold prices nearby, the EPC, flood and planning checks, and the buy-to-let figures with all of it in. You see the price first and it’s charged once, only when the report is made; a deal you revealed in your first days can have a welcome price. It’s on the web, saved in My deals.',
+  },
+
+  // ── Review R4 (R4-26): growth on a buy-to-let card is history (a draft for Zac; no figure) ──
+  {
+    slug: 'btl_growth_history',
+    from: 'Review R4 (R4-26, history, not a forecast), Zac 19 Nov 2026',
+    category: 'deals',
+    channels: ['chat', 'view'],
+    showWhen: null,
+    question: 'Is the future value on a buy-to-let card a forecast?',
+    variants: ['What does Value in five years mean?', 'Will the price really go up that much?', 'Is the growth figure a prediction?', 'Are the buy-to-let figures before tax?'],
+    answer: 'No. The value and the growth are history, not a forecast: what the price would be if the area’s prices kept rising as they have over recent years, with a slower pace as the low end. Prices can fall. The monthly cashflow and the return are before tax. Every card says so under the figure.',
   },
 
   // ── Batch 30: shorter signup questions (drafts for Zac; every figure a placeholder) ──

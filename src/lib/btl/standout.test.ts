@@ -30,7 +30,7 @@ const input = (over: Partial<StandoutInput> = {}, btl: Partial<NonNullable<Stand
   chosenTypes: ['btl'],
   revealPct: null,
   settings: DEFAULT_STANDOUT,
-  btl: { card: STRONG, priority: 'income', cashBand: '50k_100k', benchmark: NATIONAL, settings: DEFAULT_BTL_SETTINGS.standout, bands: DEFAULT_BTL_SETTINGS.bands, ...btl },
+  btl: { card: STRONG, priority: 'income', cashTop: 100_000, benchmark: NATIONAL, settings: DEFAULT_BTL_SETTINGS.standout, ...btl },
   ...over,
 });
 
@@ -46,7 +46,7 @@ test('a buy-to-let standout: passes their priority, in their band, and the low e
 
 test('not a buy-to-let standout: below the benchmark, over the band, outside their areas, no figures, or good but not 125%', () => {
   assert.equal(judgeStandout(input({}, { benchmark: { ...NATIONAL, roiMedianPct: 30 } })).reason, 'btl_below_benchmark');
-  assert.equal(judgeStandout(input({}, { cashBand: '25k_50k' })).reason, 'btl_over_budget');
+  assert.equal(judgeStandout(input({}, { cashTop: 50_000 })).reason, 'btl_over_budget');
   assert.equal(judgeStandout(input({ judgement: judgement(['location']) })).reason, 'must_have_missed');
   assert.equal(judgeStandout(input({}, { card: null })).reason, 'btl_no_figures');
   assert.equal(judgeStandout(input({ btl: null })).inPool, false, 'without its own rule, never judged on short-let figures');
@@ -60,4 +60,28 @@ test('a Buy to let profile needs no minimum-profit answer to be judged; the call
   assert.equal(memberSkip({ isTeamMember: false, primary, chosenTypes: ['btl'], wants: { minProfit: null, minProfitR2r: null } }), null);
   assert.equal(memberSkip({ isTeamMember: false, primary, chosenTypes: ['buy_str'], wants: { minProfit: null, minProfitR2r: null } }), 'no_min_profit');
   assert.equal(whatOf({ bedrooms: 3, propertyKind: 'house', dealType: 'btl' }), '3-bed house to let to long-term tenants');
+});
+
+// ── Review R4 (R4-22, Zac 19 Nov 2026) ──
+
+test('R4-22: Buying cash 30-60: cash in £56k is not over budget (the same ceiling as Today), £61k is', async () => {
+  const { btlStandoutContext } = await import('../standout/rules.ts');
+  // Member A, as the quiz writes them: Buying cash £30–60k, and the older band one step down (£25k–£50k).
+  const memberA = { buyer: { cashAvailable: '30-60' as const, cashFromBudget: false }, btl: { cashBand: '25k_50k' as const } };
+  const at = (mid: number) => ({ ...STRONG, cashIn: { low: mid, mid, high: mid + 5_000 } });
+  const ctx = (c: BtlCard) => btlStandoutContext({ card: c, priority: 'income', goals: memberA, benchmark: NATIONAL, settings: DEFAULT_BTL_SETTINGS.standout, bands: DEFAULT_BTL_SETTINGS.bands });
+  assert.equal(ctx(at(56_000)).cashTop, 60_000, 'the exact Buying cash top, not the band below');
+  assert.equal(judgeStandout(input({ btl: ctx(at(56_000)) })).outcome, 'standout');
+  assert.equal(judgeStandout(input({ btl: ctx(at(61_000)) })).reason, 'btl_over_budget');
+  // £200k+: no ceiling at all; an older member with no Buying cash answer: their band's top, on Zac's tops.
+  assert.equal(btlStandoutContext({ card: STRONG, priority: 'income', goals: { buyer: { cashAvailable: '200+', cashFromBudget: false }, btl: { cashBand: '100k_plus' } }, benchmark: NATIONAL, settings: DEFAULT_BTL_SETTINGS.standout, bands: DEFAULT_BTL_SETTINGS.bands }).cashTop, null);
+  assert.equal(btlStandoutContext({ card: STRONG, priority: 'income', goals: { buyer: { cashAvailable: null, cashFromBudget: false }, btl: { cashBand: '25k_50k' } }, benchmark: NATIONAL, settings: DEFAULT_BTL_SETTINGS.standout, bands: [25_000, 60_000, 100_000] }).cashTop, 60_000);
+});
+
+test('R4-22 wiring: the standout run builds its context through the one helper, on the stored band tops', async () => {
+  const { readFileSync } = await import('node:fs');
+  const run = readFileSync(new URL('../standout/run.ts', import.meta.url).pathname, 'utf8');
+  assert.match(run, /return btlStandoutContext\(\{ card: parsed, priority: looker\.priority \?\? DEFAULT_BTL_PRIORITY, goals: looker\.cash \?\? null, benchmark, settings: btlSettings\.standout, bands: btlSettings\.bands \}\);/);
+  assert.match(run, /const band = btlBenchmarkBand\(looker\.cash \?\? null, btlSettings\.bands\) \?\? parsed\?\.band \?\? null;/);
+  assert.doesNotMatch(run, /looker\.cashBand/);
 });

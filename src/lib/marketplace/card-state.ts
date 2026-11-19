@@ -27,6 +27,10 @@ import { cardView, NOT_OPENED, type CardState, type CardView } from './card-view
 import { freeStandoutOpens } from '../standout/saved-server';
 import { cardDisplayFor } from './card-display';
 import type { TailoringProfile } from '../tailoring/profile';
+import { showsAsBtl } from '../btl/view';
+import { btlBenchmarkBand, type CashBand } from '../btl/deal';
+import type { Benchmark } from '../btl/benchmark';
+import { readBtlBenchmark, readBtlSettingsCached } from '../btl/settings-server';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -85,7 +89,7 @@ export async function cardStatesFor(supabase: ServerClient, userId: string, paye
 export async function cardViewsFor(input: { supabase: ServerClient; userId: string; adminUser: boolean; cards: DealCard[]; finance?: Partial<FinanceDefaults> | null; cashBuyer?: boolean; btl?: BtlLooker | null; tailoring?: TailoringProfile | null }): Promise<Map<string, CardView>> {
   const { payerId } = await payerFor(input.userId);
   const ids = input.cards.map((c) => c.id);
-  const [settings, quoter, states, offers, free, ready] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, ids), offerPricingFor(input.userId, input.adminUser), input.adminUser ? Promise.resolve(new Set<string>()) : freeStandoutOpens(payerId, ids), reportReadyDealIds(ids)]);
+  const [settings, quoter, states, offers, free, ready, benches] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, ids), offerPricingFor(input.userId, input.adminUser), input.adminUser ? Promise.resolve(new Set<string>()) : freeStandoutOpens(payerId, ids), reportReadyDealIds(ids), btlBenchesFor(input.cards, input.btl ?? null)]);
   // Batch 30: the rate and range-end lines, the same for every card of this member.
   const display = cardDisplayFor(input.tailoring ?? null, input.cashBuyer === true);
   // Batch 22: each card priced with this member's offers (the welcome price on their revealed deals).
@@ -93,7 +97,35 @@ export async function cardViewsFor(input: { supabase: ServerClient; userId: stri
   return new Map(
     input.cards.map((c) => [
       c.id,
-      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntry: settings.lowEntry, label: quoter.label, labelDue: quoter.labelDue, reportReady: ready.has(c.id), freeOpen: free.has(c.id), btl: input.btl ?? null, display }),
+      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntry: settings.lowEntry, label: quoter.label, labelDue: quoter.labelDue, reportReady: ready.has(c.id), freeOpen: free.has(c.id), btl: input.btl ?? null, btlBench: benches.get(c.id) ?? null, display }),
     ]),
   );
+}
+
+/**
+ * Review R4 (R4-28): the benchmark each card shown as Buy to let is judged against for this member (where they search,
+ * the band holding their Buying cash, else the deal's own band), so the card can say "Compared across the UK" or
+ * "Few deals to compare" before Open. Area-level figures only: nothing about the home. Empty on any failure.
+ */
+async function btlBenchesFor(cards: readonly DealCard[], looker: BtlLooker | null): Promise<Map<string, Benchmark>> {
+  const out = new Map<string, Benchmark>();
+  const centre = looker?.centre ?? null;
+  const shown = looker && centre ? cards.filter((c) => c.btl && showsAsBtl(c, looker)) : [];
+  if (shown.length === 0 || !hasServiceRole()) return out;
+  try {
+    const admin = createAdminClient();
+    const { settings } = await readBtlSettingsCached(admin);
+    const theirs = btlBenchmarkBand(looker?.cash ?? null, settings.bands);
+    const byBand = new Map<CashBand, Promise<Benchmark | null>>();
+    for (const c of shown) {
+      const band = theirs ?? c.btl?.band ?? null;
+      if (!band) continue;
+      if (!byBand.has(band)) byBand.set(band, readBtlBenchmark(admin, centre!, band).catch(() => null));
+      const bm = await byBand.get(band)!;
+      if (bm) out.set(c.id, bm);
+    }
+  } catch (err) {
+    console.warn('[card-state] buy-to-let benchmark unreadable:', (err as Error)?.message ?? err);
+  }
+  return out;
 }

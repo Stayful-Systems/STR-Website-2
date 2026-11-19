@@ -23,7 +23,7 @@ import { payersFor, type Payer } from '../team';
 import { seatKey } from '../profiles/rules';
 import { dealFitsTypes, dealTypeFor, type DealType } from '../profile/deal-types';
 import { parseStoredChoice } from '../today/choice';
-import type { BtlWiden } from '../btl/today';
+import type { BtlBenchNote, BtlWiden } from '../btl/today';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -41,6 +41,8 @@ export interface TodayPlan {
   types?: DealType[];
   /** Batch 28: how far the day looked for its buy-to-let deals (the stored choice), for the email's line. */
   btlWiden?: BtlWiden | null;
+  /** Review R4 (R4-28): what its buy-to-let deals were compared with (across the UK, or few deals), for the same line. */
+  btlBench?: BtlBenchNote | null;
 }
 
 /** payersFor, a chunk at a time: one `.in()` over every member would outgrow the request at scale. */
@@ -122,13 +124,16 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
   for (const card of await withProjectCards([...cards.values()])) cards.set(card.id, card);
   // Batch 28: the day's "I looked further" line, for the profiles that chose Buy to let (the stored choice, Batch 22's column).
   const btlWiden = new Map<string, BtlWiden>();
+  const btlBench = new Map<string, BtlBenchNote>();
   const btlSeats = members.filter((m) => m.profileId && typesFor(m).includes('btl') && (lists.get(planKey(m))?.stored.length ?? 0) > 0);
   for (let i = 0; i < btlSeats.length; i += ID_CHUNK) {
     const { data, error } = await admin.from('profile_today_lists').select('user_id, profile_id, choice').eq('day', todayKey(now)).in('profile_id', btlSeats.slice(i, i + ID_CHUNK).map((m) => m.profileId!));
     if (error) console.warn('[notify] buy-to-let widen line unreadable:', error.message);
     for (const r of (data ?? []) as { user_id: string; profile_id: string; choice: unknown }[]) {
-      const w = parseStoredChoice(r.choice)?.btlWiden ?? null;
+      const stored = parseStoredChoice(r.choice);
+      const w = stored?.btlWiden ?? null;
       if (w) btlWiden.set(planKey({ userId: r.user_id, profileId: r.profile_id }), w);
+      if (stored?.btlBench) btlBench.set(planKey({ userId: r.user_id, profileId: r.profile_id }), stored.btlBench);
     }
   }
   const answered = new Map<string, Set<string>>();
@@ -151,7 +156,7 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
       const c = cards.get(id);
       if (c) mine.set(id, c);
     }
-    out.set(planKey(m), { ...l, answered: answered.get(m.userId) ?? new Set(), cards: mine, types: typesFor(m), btlWiden: btlWiden.get(planKey(m)) ?? null });
+    out.set(planKey(m), { ...l, answered: answered.get(m.userId) ?? new Set(), cards: mine, types: typesFor(m), btlWiden: btlWiden.get(planKey(m)) ?? null, btlBench: btlBench.get(planKey(m)) ?? null });
   }
   return out;
 }

@@ -109,7 +109,7 @@ export function btlSheet(card: BtlCard, opts: { priority: BtlPriority; benchmark
     { label: 'ROI', value: pcts(card.roiPct), sub: 'a year’s cashflow on the cash in, before tax' },
   ];
   if (card.growth) {
-    rows.push({ label: 'Value in 5 years', value: money(card.growth.value5y), sub: 'if the area repeats its last five years, or half that pace' });
+    rows.push({ label: 'Value in 5 years', value: money(card.growth.value5y), sub: 'if the area repeats its last five years, or half that pace. History, not a forecast.' });
     rows.push({ label: 'Growth a year', value: pcts(card.growth.annualPct), sub: card.growth.growth1yPct !== null ? `${card.growth.growth1yPct >= 0 ? '+' : '−'}${pct1(Math.abs(card.growth.growth1yPct))} in the last year${card.growth.turning ? ': prices here have turned' : ''}` : 'history, not a forecast' });
   }
   const c = card.costLines;

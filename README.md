@@ -1392,7 +1392,10 @@ In this order:
    - **Before it goes:** `/api/internal/daily-digest?dry=1` and the picks dry
      run show `btlLaunch: true` for whoever would get it. Sends are counted
      on `/admin/deals/btl`.
-7. **The £2 report** needs nothing more. Its price is `btl_report_pence`, it
+7. **The £2 report** needs nothing more. Its price is `btl_report_pence`
+   (Review R4, R4-31: changed on `/admin/deals/btl` → Settings, with the
+   finance in `btl_finance`: loan-to-value, stress rate, rent cover and the
+   no-live-rate fallback; every other `btl_*` setting stays SQL-only), it
    is charged only once the report is made, and it carries Batch 22's
    welcome price on revealed deals (`reveal_analysis_discount_pct`, once
    per member). It is web only, at `/btl-report/<id>`, and the chat can run
