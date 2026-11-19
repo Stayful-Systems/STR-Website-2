@@ -24,6 +24,11 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm test
+      # Review R4 (R4-32): the production build, so a build-only failure (a
+      # Next.js security gate, a server/client import mix-up) fails CI rather
+      # than a release. It needs no secrets: every key is read at request time.
+      - name: Build
+        run: npm run build
 
   # The database half of CI (Batch 21, G4): supabase/schema.sql on a fresh
   # Postgres 16 behind a Supabase stand-in, run twice so every statement is

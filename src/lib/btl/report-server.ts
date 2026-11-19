@@ -20,6 +20,11 @@ import 'server-only';
  *
  * Never the address, the full postcode or the listing's link in what is
  * stored or shown: the report runs on them server-side only.
+ *
+ * Review R4 (Zac, 19 Nov 2026): a member's first finished report counts as
+ * Meta's FirstReport, the same once-per-member event (and key) as the
+ * analyser and the Full analysis, so it is never sent twice; never on a
+ * failure, and only after the report is written.
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { payerFor } from '../team';
@@ -33,6 +38,7 @@ import { runMetered } from '../credit/context';
 import { quoterFor } from '../credit/quote-server';
 import { activeProfileIdOf } from '../profiles/server';
 import { logActivity } from '../activity/log';
+import { recordConversion } from '../meta/conversions';
 import { faceMatches, quoteMatches, ANALYSIS_STALE_MS } from '../analysis/deal-analysis-rules';
 import { dueDiligenceFor } from '../analysis/propertydata-steps';
 import { btlReportOffer, type OfferKind } from '../analysis/offers';
@@ -296,6 +302,9 @@ export async function runBtlReport(input: { userId: string; adminUser: boolean; 
     if (txId !== null) void afterDebit(payer.payerId).catch(() => {});
     await finish('complete', { transaction_ids: txId === null ? [] : [txId], charged_base_pence: txId === null ? 0 : price });
     logActivity(input.userId, 'report_run', { ...(found.dealId ? { dealId: found.dealId } : {}), dedupeKey: `btl_report:${purchaseId}`, extras: { type: 'btl', from: found.dealId ? 'deal' : 'listing', ...(quote.offer ? { offer: quote.offer } : {}) } });
+    // Meta's FirstReport, once per member (the key FirstReport:<member> is shared with the analyser and the Full analysis,
+    // so a later report of any kind records nothing). Awaited: never throws, and the member's stored browser details are used.
+    await recordConversion({ name: 'FirstReport', userId: input.userId });
     return { ok: true, reportId, purchaseId, chargedBasePence: txId === null ? 0 : price };
   } catch (err) {
     console.error('[btl-report] failed:', err);

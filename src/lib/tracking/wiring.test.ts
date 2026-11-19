@@ -6,6 +6,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { ONE_SHOT_PARAMS } from './config.ts';
+import { HOME_PATH } from '../auth/landing.ts';
 
 const read = (path: string) => readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
 
@@ -27,9 +29,9 @@ test('the pixel is set up with no automatic events before init, and never by the
   assert.ok(autoConfig > 0 && init > autoConfig, 'autoConfig off before init');
   assert.doesNotMatch(code, /noscript/i);
   assert.doesNotMatch(code, /fbq\('track'/, 'every send goes through the checked call()');
-  // Every send checks the live address first.
-  assert.match(code, /function call\([^)]*\)[^{]*\{\s*if \(!canSendNow\(\)\) return false;/);
-  assert.match(code, /isCleanForSend\(window\.location\.href\)/);
+  // Every send checks the live address first, for its own kind of event.
+  assert.match(code, /function call\(send: PixelSend[^)]*\)[^{]*\{\s*if \(!canSendNow\(send\)\) return false;/);
+  assert.match(code, /isCleanForSend\(window\.location\.href, send\)/);
 });
 
 test('every page is served with a referrer policy that never carries a path or query', () => {
@@ -104,4 +106,34 @@ test('every link to the management start route is never prefetched', () => {
     }
   }
   assert.ok(seen >= 4, 'the four ways in are linked');
+});
+
+// Review R4 (R4-01): the quiz's default way back is Home, so that is the value tidied off /welcome.
+test("the tidy rule's when equals HOME_PATH", () => {
+  const rule = ONE_SHOT_PARAMS.find((f) => f.path === '/welcome' && f.param === 'next');
+  assert.ok(rule, 'the /welcome ?next rule is there');
+  assert.equal(rule.when, HOME_PATH);
+  assert.equal(ONE_SHOT_PARAMS.find((f) => f.path === '/welcome/reveal' && f.param === 'next')?.when, HOME_PATH);
+  assert.ok(ONE_SHOT_PARAMS.some((f) => f.path === '/welcome' && f.param === 'pack' && f.when === undefined), 'the quiz pack return is tidied');
+  assert.match(read('src/lib/tracking/config.ts'), /import \{ HOME_PATH \} from '\.\.\/auth\/landing\.ts'/);
+});
+
+// Review R4 (R4-01; Zac: no PageView on Home or the reveal): how the runtime and the pixel use pixelPlan.
+test('held conversions fire on Home and the reveal, and a PageView never does', () => {
+  const pixel = read('src/lib/meta/pixel.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  // The pixel itself refuses a PageView anywhere off the PageView list.
+  assert.match(pixel, /export function sendPageView\(\): boolean \{\s*return call\('PageView', 'track', 'PageView'\);/);
+  assert.match(pixel, /export function sendConversion\([^)]*\)[^{]*\{\s*return call\('conversion',/);
+  const runtime = read('src/lib/tracking/runtime.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  // The pixel starts only where pixelPlan says (a PageView page, or Home/the reveal with something held)…
+  assert.match(runtime, /if \(!pixelPlan\(window\.location\.href, held\)\.start\) return;/);
+  // …a PageView only where pixelPlan allows one…
+  assert.match(runtime, /pixelPlan\(window\.location\.href, 0\)\.pageView && sendPageView\(\)/);
+  // …held conversions are fired wherever a conversion may go…
+  assert.match(runtime, /canSendNow\('conversion'\)/);
+  // …and Home and the reveal are settled (tidied, looked up) although they show no banner.
+  assert.match(runtime, /surfaceFor\(pathname\) === 'none' && !firesConversionsOnly\(pathname\)/);
+  // Consent is unchanged: nothing is loaded before Accept.
+  const act = runtime.slice(runtime.indexOf('async function act('), runtime.indexOf('async function refresh('));
+  assert.ok(act.indexOf("if (choice !== 'accept' || member?.excluded) return;") < act.indexOf('loadPixel('), 'Accept first');
 });
