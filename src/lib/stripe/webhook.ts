@@ -100,6 +100,8 @@ export interface WebhookDeps {
    */
   recordPayment?(payment: PaymentRecord): Promise<unknown>;
   recordRefund?(refund: RefundRecord): Promise<unknown>;
+  /** Review R4 (R4-14): a dispute opened (open) or closed in our favour (not open) on a payment; implementations must swallow their own errors. */
+  recordDispute?(input: { paymentIntentId: string; open: boolean }): Promise<unknown>;
   /** The PaymentIntent a paid invoice was paid with (its refunds are matched on it); null when it cannot be told. */
   invoicePaymentIntent?(invoiceId: string): Promise<string | null>;
   /**
@@ -336,6 +338,21 @@ async function recordChargeRefund(deps: WebhookDeps, charge: Stripe.Charge): Pro
     if (!userId && id(charge.customer)) userId = (await deps.findUserByCustomer(id(charge.customer)!))?.id ?? null;
     if (!userId) return;
     await deps.recordRefund({ chargeId: charge.id, userId, paymentIntentId: piId, amountRefundedPence: Number(charge.amount_refunded) || 0 });
+  } catch {
+    // Bookkeeping never fails a delivery.
+  }
+}
+
+/**
+ * Review R4 (R4-14): a payment under a dispute (or one closed in our favour)
+ * for public.member_payment_dispute: a charged-back further payment no longer
+ * counts as paying again. Never throws.
+ */
+async function recordDisputeMark(deps: WebhookDeps, dispute: Stripe.Dispute, open: boolean): Promise<void> {
+  const piId = id(dispute?.payment_intent);
+  if (!deps.recordDispute || !piId) return;
+  try {
+    await deps.recordDispute({ paymentIntentId: piId, open });
   } catch {
     // Bookkeeping never fails a delivery.
   }
@@ -753,6 +770,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
     case 'charge.dispute.created': {
       // Batch 20: every refund comes off Total paid, whatever the charge was for.
       if (event.type === 'charge.refunded') await recordChargeRefund(deps, event.data.object as Stripe.Charge);
+      else await recordDisputeMark(deps, event.data.object as Stripe.Dispute, true);
       // Batch 20: a starter pack's credit comes back in the same share as its payment.
       const packClawback = await clawbackPackIfPack(event, deps);
       if (packClawback) return packClawback;
@@ -780,6 +798,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
     case 'charge.dispute.closed': {
       const dispute = event.data.object as Stripe.Dispute;
       if (dispute.status !== 'won' && dispute.status !== 'warning_closed') return { handled: false, note: `dispute ${dispute.status}: nothing to give back` };
+      await recordDisputeMark(deps, dispute, false);
       if (!deps.restoreDisputedCredit) return { handled: false, note: 'no restore configured' };
       const piId = id(dispute.payment_intent);
       if (!piId) return { handled: false, note: 'no payment intent' };

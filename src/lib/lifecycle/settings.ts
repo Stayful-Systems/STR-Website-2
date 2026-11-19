@@ -23,6 +23,7 @@
  *   pack_early_offer_pence     the one-off offer when a pack-only member's balance falls to this
  *   pack_picks_pause_days      a pack-only member's picks pause after this many days without a visit
  *   places_cache_days          Google Places nearby results are reused for this long
+ *   places_cache_empty_days    an EMPTY Places answer is reused only this long (Review R4, R4-20)
  *
  * Batch 30 (shorter signup questions):
  *   home_blocker_card_day      the Home "What's holding you back?" card shows from this day since sign-up (0: from the first visit)
@@ -47,6 +48,7 @@ export interface LifecycleSettings {
   packEarlyOfferPence: number;
   packPicksPauseDays: number;
   placesCacheDays: number;
+  placesCacheEmptyDays: number;
   packPayingHeadlineFloorPct: number;
   packPayingHeadlineTargetPct: number;
   packPayingRundownPaidFloorPct: number;
@@ -71,6 +73,7 @@ export const LIFECYCLE_KEYS = {
   packEarlyOfferPence: 'pack_early_offer_pence',
   packPicksPauseDays: 'pack_picks_pause_days',
   placesCacheDays: 'places_cache_days',
+  placesCacheEmptyDays: 'places_cache_empty_days',
   packPayingHeadlineFloorPct: 'pack_paying_headline_floor_pct',
   packPayingHeadlineTargetPct: 'pack_paying_headline_target_pct',
   packPayingRundownPaidFloorPct: 'pack_paying_rundown_paid_floor_pct',
@@ -95,6 +98,7 @@ export const DEFAULT_LIFECYCLE: LifecycleSettings = {
   packEarlyOfferPence: 1500,
   packPicksPauseDays: 7,
   placesCacheDays: 90,
+  placesCacheEmptyDays: 3,
   packPayingHeadlineFloorPct: 10,
   packPayingHeadlineTargetPct: 22,
   packPayingRundownPaidFloorPct: 35,
@@ -134,6 +138,7 @@ export function parseLifecycle(get: (key: string) => unknown): LifecycleSettings
     packEarlyOfferPence: wholeAtLeast(get(LIFECYCLE_KEYS.packEarlyOfferPence), 0, d.packEarlyOfferPence),
     packPicksPauseDays: wholeAtLeast(get(LIFECYCLE_KEYS.packPicksPauseDays), 1, d.packPicksPauseDays),
     placesCacheDays: wholeAtLeast(get(LIFECYCLE_KEYS.placesCacheDays), 0, d.placesCacheDays),
+    placesCacheEmptyDays: wholeAtLeast(get(LIFECYCLE_KEYS.placesCacheEmptyDays), 0, d.placesCacheEmptyDays),
     packPayingHeadlineFloorPct: pctOr(get(LIFECYCLE_KEYS.packPayingHeadlineFloorPct), d.packPayingHeadlineFloorPct),
     packPayingHeadlineTargetPct: pctOr(get(LIFECYCLE_KEYS.packPayingHeadlineTargetPct), d.packPayingHeadlineTargetPct),
     packPayingRundownPaidFloorPct: pctOr(get(LIFECYCLE_KEYS.packPayingRundownPaidFloorPct), d.packPayingRundownPaidFloorPct),

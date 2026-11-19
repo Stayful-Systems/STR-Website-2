@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { browserParams, carriesValue, dedupeKeyFor, eventSourceUrl, isCustomEvent, isPostLaunch, purchaseFromPack, repeatPurchaseDue, repeatValue, subscribeFromInvoice, topupValue } from './events.ts';
+import { browserParams, carriesValue, dedupeKeyFor, earlierFurtherPayment, eventSourceUrl, isCustomEvent, isPostLaunch, purchaseFromPack, repeatPurchaseDue, repeatValue, subscribeFromInvoice, topupValue } from './events.ts';
 
 const SINCE = '2026-10-01T00:00:00Z';
 
@@ -80,4 +80,21 @@ test('the browser sends a value only with the payments', () => {
   assert.deepEqual(browserParams('RepeatPurchase', 2500), { value: 25, currency: 'GBP' });
   assert.deepEqual(browserParams('FirstReport', 1000), {});
   assert.deepEqual(browserParams('Subscribe', null), {});
+});
+
+test('Review R4 (R4-21): two payments 1s apart: only the first is a RepeatPurchase', () => {
+  const a = { id: 'pi:pi_a', at: '2026-11-19T10:00:00.000Z' };
+  const b = { id: 'pi:pi_b', at: '2026-11-19T10:00:01.000Z' };
+  // Processed together: each sees the other already written.
+  assert.equal(earlierFurtherPayment([a, b], a), false, 'the first has no earlier payment: it is the RepeatPurchase');
+  assert.equal(earlierFurtherPayment([a, b], b), true, 'the second has one: nothing');
+  // The same moment: the smaller id wins, so exactly one of them counts.
+  const c = { id: 'pi:pi_c', at: a.at };
+  assert.notEqual(earlierFurtherPayment([a, c], a), earlierFurtherPayment([a, c], c));
+  // Alone, it never sees itself.
+  assert.equal(earlierFurtherPayment([a], a), false);
+  // Its own row not written yet: it is the latest, so any other is earlier (as before).
+  assert.equal(earlierFurtherPayment([b], { id: 'pi:pi_new', at: null }), true);
+  assert.equal(earlierFurtherPayment([], { id: 'pi:pi_new', at: null }), false);
+  assert.equal(repeatPurchaseDue({ packAt: '2026-11-01T00:00:00Z', trackingSince: '2026-10-01T00:00:00Z', earlierFurtherPayment: earlierFurtherPayment([a, b], a) }), true);
 });

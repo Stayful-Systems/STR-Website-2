@@ -5,6 +5,12 @@ import { logActivity } from '../activity/log';
 import { getBillingSettings } from './unit-costs';
 import { packStateForPayer } from './pack-server';
 import { earlyOfferEmailDue, lowCreditHeldForOffer, lowCreditWaitsForOffer } from './pack-rules';
+import { packOfferMessage } from './pack-offer';
+import { siteUrl } from '../url';
+import { sendEmail, isEmailConfigured } from '../email/send';
+import { renderEmail } from '../notify/render-email';
+import { abandonSend, claimSlot, finishSend, markSending, releaseClaim } from '../notify/sends';
+import { newSendToken, sendKey } from '../notify/cap';
 
 export { packOfferSection } from './pack-offer';
 
@@ -14,8 +20,10 @@ export { packOfferSection } from './pack-offer';
  *   - due: a pack-only member whose total balance is at or under
  *     pack_early_offer_pence and who has not had the offer's email section.
  *     The picks run or the digest (whichever email goes first that day) adds
- *     the section and stamps pack_offer_emailed_at; it is never an email of
- *     its own.
+ *     the section and stamps pack_offer_emailed_at. Review R4 (R4-15, Zac 19
+ *     Nov 2026): on a morning no daily email is built for them, the digest
+ *     sends it as its own email (sendPackOfferAlone), so the £5 decision is
+ *     held one day, never day after day.
  *   - held: sent (or first shown on Home) today, or due with a morning email
  *     to carry it (lowCreditHeldForOffer in pack-rules.ts). The £5 decision
  *     and the nudge wait for these members, so a member never gets both on
@@ -103,4 +111,36 @@ export async function markPackOfferEmailed(admin: Admin, userId: string, now: Da
     return;
   }
   if ((data ?? []).length > 0) logActivity(userId, 'pack_offer_shown', { dedupeKey: 'pack_offer_shown:email', extras: { surface: 'email' } });
+}
+
+/**
+ * Review R4 (R4-15): the offer as its own email, in the day's one slot, when no
+ * daily email was built for the member that morning (the digest's fallback).
+ * Stamps pack_offer_emailed_at once it has gone, so the £5 decision waits for
+ * the next UK day. Never the £5 decision's stamp.
+ */
+export async function sendPackOfferAlone(admin: Admin, input: { userId: string; email: string; state: Pick<PackOfferState, 'totalPence' | 'bonusPence'>; now?: Date }): Promise<'sent' | 'slot_used' | 'unavailable' | 'failed' | 'not_configured'> {
+  const now = input.now ?? new Date();
+  if (!isEmailConfigured()) return 'not_configured';
+  const claim = await claimSlot(admin, input.userId, 'low_credit', now);
+  if (!claim.ok) return claim.reason === 'slot_used' ? 'slot_used' : 'unavailable';
+  const base = siteUrl();
+  const token = newSendToken();
+  const unsubscribeUrl = `${base.replace(/\/$/, '')}/api/notify/unsubscribe/${token}`;
+  const message = packOfferMessage(input.state, base, { label: 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl });
+  const summary = { packOffer: true, balancePence: Math.round(input.state.totalPence), subject: message.subject };
+  if (!(await markSending(admin, claim.id, summary, token))) {
+    await releaseClaim(admin, claim.id);
+    return 'unavailable';
+  }
+  const mail = renderEmail(message);
+  const res = await sendEmail({ to: input.email, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers, idempotencyKey: sendKey('daily', input.userId, claim.day) });
+  if (!res.sent) {
+    // The slot goes back for a later send today.
+    await abandonSend(admin, claim.id);
+    return 'failed';
+  }
+  await finishSend(admin, claim.id, true, summary, []);
+  await markPackOfferEmailed(admin, input.userId, now);
+  return 'sent';
 }

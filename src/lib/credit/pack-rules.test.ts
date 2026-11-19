@@ -18,7 +18,12 @@ import {
   lowCreditHeldForOffer,
   lowCreditWaitsForOffer,
   packPauseDue,
+  aloneCreditEmail,
+  bonusLineFor,
+  packMemberValues,
+  slotGoesBack,
   type EarlyOfferFacts,
+  type PackState,
 } from './pack-rules.ts';
 import { allocate, allocateSteps, type GrantLite } from './deal-pricing.ts';
 
@@ -183,4 +188,53 @@ test('affordability before a charge uses spendableFor, never getBalance().spenda
   const run = readFileSync(new URL('../si-actions/run-server.ts', import.meta.url), 'utf8');
   assert.match(run, /spendableFor\(m\.payerId, BONUS_OK_ACTION\)/, 'the whole is judged as an action the bonus pays for');
   assert.match(run, /otherActions\.map\(\(a\) => spendableFor\(m\.payerId, a\)/, 'the rest on the steps’ own actions');
+});
+
+// ── Review R4 (r4d), Zac 19 Nov 2026 ──
+
+test('R4-15: no daily email built and the offer due: the offer goes alone; the next day the £5 decision goes', () => {
+  // Day 1: credit ran out, Today's 5 unfunded, so no daily email is built. Both are due; the offer goes on its own.
+  assert.equal(aloneCreditEmail({ offerDue: true, lowDue: true }), 'pack_offer');
+  assert.equal(aloneCreditEmail({ offerDue: true, lowDue: false }), 'pack_offer');
+  // The offer went (stamped emailed) this morning: the £5 decision is held for the rest of the day...
+  const sent = '2026-11-14T08:12:00Z';
+  assert.equal(lowCreditHeldForOffer({ due: false, emailedAt: sent, homeAt: null, dailyEmails: true }, new Date('2026-11-14T15:00:00Z')), true);
+  // ...and the next day it is not held, and goes (alone, when nothing else is built).
+  const next = new Date('2026-11-15T08:10:00Z');
+  assert.equal(lowCreditHeldForOffer({ due: false, emailedAt: sent, homeAt: null, dailyEmails: true }, next), false);
+  assert.equal(aloneCreditEmail({ offerDue: false, lowDue: true }), 'low_credit');
+  assert.equal(aloneCreditEmail({ offerDue: false, lowDue: false }), null);
+});
+
+test('R4-15: the digest sends the offer on its own when no daily email is built, before the £5 decision', () => {
+  const src = readFileSync('src/lib/notify/digest-run.ts', 'utf8');
+  const fallback = src.slice(src.indexOf('if (!built) {'), src.indexOf('// `parts` (Batch 14)'));
+  assert.match(fallback, /aloneCreditEmail\(/);
+  assert.match(fallback, /sendPackOfferAlone\(/);
+  assert.ok(fallback.indexOf('sendPackOfferAlone(') < fallback.indexOf('sendLowCreditAlone('), 'the offer is tried first');
+  assert.match(fallback, /if \(opts\.dry\) \{\s*wouldEmail\.push\(\{ user: p\.id, email: p\.email, kind: 'pack_offer' \}\)/, 'a dry run sends and stamps nothing');
+});
+
+test('R4-17: a failed report gives its fresh-report slot back, even if part of it was charged', () => {
+  assert.equal(slotGoesBack({ completed: false, charged: true }), true, 'failed after paid calls');
+  assert.equal(slotGoesBack({ completed: false, charged: false }), true);
+  assert.equal(slotGoesBack({ completed: true, charged: false }), true, 'an empty run');
+  assert.equal(slotGoesBack({ completed: true, charged: true }), false, 'a finished report keeps it');
+  const run = readFileSync('src/lib/analysis/run.ts', 'utf8');
+  assert.match(run, /slotGoesBack\(\{ completed, charged \}\)/);
+  assert.match(run, /await finish\(\{ completed \}\)/, 'runAnalysis tells finish whether the report got to the end');
+  const route = readFileSync('src/app/api/analyse/route.ts', 'utf8');
+  assert.equal((route.match(/prepared\.releaseSlot\?\.\(\)/g) ?? []).length, 3, 'no figures, not saved, failed: each gives the slot back');
+});
+
+test('R4-19: a pack buyer on a plan trial with a restricted bonus gets the bonus line', () => {
+  const trial: PackState = { ...NOT_PACK, bought: true, packAt: '2026-11-01T10:00:00Z', packOnly: false, bonusPence: 2000, bonusExpiresAt: '2026-12-01T10:00:00Z', freshCap: 3 };
+  assert.equal(bonusLineFor(trial), PACK_COPY.bonusLine(2000, '2026-12-01T10:00:00Z'));
+  assert.equal(bonusLineFor({ ...trial, bonusPence: 0 }), null, 'lifted or spent: no line');
+  assert.equal(bonusLineFor(NOT_PACK), null);
+  const values = packMemberValues(trial);
+  assert.ok(values, 'Stayful Intelligence can explain it to them too');
+  assert.equal(values!.packOnly, false, 'but they are not pack-only (no cap)');
+  assert.equal(values!.freshLeft, null);
+  for (const f of ['src/app/account/billing/page.tsx', 'src/app/account/usage/page.tsx']) assert.match(readFileSync(f, 'utf8'), /bonusLineFor\(packState\)/, f);
 });

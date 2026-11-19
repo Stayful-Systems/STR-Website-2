@@ -86,6 +86,7 @@ export function SettingsForm({ values }: { values: SettingsFormValues }) {
         <Field label="Early offer at (pence)" name="pack_early_offer_pence" defaultValue={values.pack.pack_early_offer_pence} hint="A pack-only member's balance at or below this gets the Home card and one email section, once. 0: off." />
         <Field label="Pause a pack-only member's picks after (days away)" name="pack_picks_pause_days" defaultValue={values.pack.pack_picks_pause_days} hint="Days without a visit; any visit starts them again. Runs even while the inactivity rules are off." />
         <Field label="Google Places answers kept for (days)" name="places_cache_days" defaultValue={values.pack.places_cache_days} hint="Nearby places for the same ~100m are reused, so the report is the same and costs nothing. 0: off." />
+        <Field label="Empty Google Places answers kept for (days)" name="places_cache_empty_days" defaultValue={values.pack.places_cache_empty_days} hint="An answer with no places (say, no station nearby) is reused only this long, so one odd empty reply is asked again soon. 0: never kept." />
       </div>
       <h3 className="mt-6 text-sm font-semibold text-foreground">Pack → paying lines (on Weekly active)</h3>
       <div className="mt-2 grid gap-4 sm:grid-cols-2">

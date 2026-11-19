@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { invoicePaymentIntentId, monthlyValuePence, paymentFromIntent, paymentFromInvoice, paymentKindFor, totalPaidPence } from './rules.ts';
+import { invoicePaymentIntentId, monthlyValuePence, paymentFromIntent, paymentFromInvoice, paymentKindFor, stripeTimeIso, totalPaidPence } from './rules.ts';
 
 test('a PaymentIntent is ours only when its metadata says pack or top-up', () => {
   assert.equal(paymentKindFor({ kind: 'starter_pack' }), 'starter_pack');
@@ -46,4 +46,17 @@ test("an invoice's PaymentIntent is its paid payment's, when the invoice carries
   assert.equal(invoicePaymentIntentId({}), null);
   assert.equal(paymentFromInvoice({ id: 'in_1', amount_paid: 1900 }, 'u1', 'starter', 'pi_1')?.paymentIntentId, 'pi_1');
   assert.equal(paymentFromInvoice({ id: 'in_1', amount_paid: 1900 }, 'u1', 'starter')?.paymentIntentId, null);
+});
+
+test('Review R4 (R4-18): a payment row carries Stripe\'s time for it, so a webhook landing late does not move it', () => {
+  const created = Date.parse('2026-10-31T23:58:00Z') / 1000;
+  const now = new Date('2026-11-01T00:03:00Z');
+  assert.equal(stripeTimeIso(created, now), '2026-10-31T23:58:00.000Z');
+  const top = paymentFromIntent({ id: 'pi_9', amount_received: 1200, currency: 'gbp', metadata: { kind: 'topup' }, created }, 'u1');
+  assert.equal(top?.paidAt, '2026-10-31T23:58:00.000Z');
+  const inv = paymentFromInvoice({ id: 'in_9', amount_paid: 1900, created: created - 600, status_transitions: { paid_at: created } }, 'u1', 'starter');
+  assert.equal(inv?.paidAt, '2026-10-31T23:58:00.000Z', 'the invoice\'s paid time, not when it was drafted');
+  assert.equal(paymentFromIntent({ id: 'pi_8', amount_received: 1200, metadata: { kind: 'topup' } }, 'u1')?.paidAt, undefined, 'unknown: the insert time');
+  assert.equal(stripeTimeIso(now.getTime() / 1000 + 3600, now), now.toISOString(), 'never in the future');
+  assert.equal(stripeTimeIso(null), undefined);
 });

@@ -189,6 +189,30 @@ export function repeatPurchaseDue(f: { packAt: string | Date | null | undefined;
   return !f.earlierFurtherPayment;
 }
 
+/**
+ * Review R4 (R4-21): two further payments landing together each see the
+ * other, so "any other payment since the pack" lost the RepeatPurchase for
+ * both. The earliest wins: a payment has an earlier further payment only when
+ * another one was paid before it, or at the same moment with a smaller id.
+ * `self.at` null: this payment's own row is not written yet, so it is the
+ * latest. Times are ISO strings or Dates.
+ */
+export function earlierFurtherPayment(others: readonly { id: string; at: string | Date | null }[], self: { id: string; at: string | Date | null }): boolean {
+  const ms = (v: string | Date | null): number | null => {
+    if (v === null) return null;
+    const t = v instanceof Date ? v.getTime() : Date.parse(v);
+    return Number.isFinite(t) ? t : null;
+  };
+  const own = ms(self.at);
+  return others.some((o) => {
+    if (o.id === self.id) return false;
+    if (own === null) return true;
+    const t = ms(o.at);
+    if (t === null) return false;
+    return t < own || (t === own && o.id < self.id);
+  });
+}
+
 /** The parameters the browser fires a conversion with (value only for the payments). */
 export function browserParams(name: MetaEventName, valuePence: number | null | undefined): Record<string, string | number> {
   if (!carriesValue(name) || valuePence === null || valuePence === undefined || !Number.isFinite(valuePence)) return {};

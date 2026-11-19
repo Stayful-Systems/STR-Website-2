@@ -18,7 +18,7 @@ import { listFunnels } from "@/lib/funnels";
 import { getFunnelTierSettings, ownerPricing } from "@/lib/funnels/tiers-server";
 import { usageLine } from "@/lib/funnels/tiers";
 import { packStateForPayer } from "@/lib/credit/pack-server";
-import { NOT_PACK, PACK_COPY } from "@/lib/credit/pack-rules";
+import { NOT_PACK, bonusLineFor } from "@/lib/credit/pack-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +58,7 @@ export default async function UsagePage() {
   const { payerId } = await payerFor(user.id);
   const [credit, quoter, packState] = await Promise.all([teamCreditSnapshot({ id: user.id, admin }), quoterFor(payerId, admin), admin ? Promise.resolve(NOT_PACK) : packStateForPayer(payerId)]);
   // Batch 29: how much of the balance is the starter pack's bonus, and when it expires.
-  const bonusLine = packState.packOnly && packState.bonusPence > 0 ? PACK_COPY.bonusLine(packState.bonusPence, packState.bonusExpiresAt) : null;
+  const bonusLine = bonusLineFor(packState);
   const onPlan = Boolean(credit.cycle?.planCode);
   const period = await usagePeriodFor(payerId, onPlan);
   const { lines, truncated, failed } = await usageLinesSince(payerId, period.start);

@@ -88,6 +88,7 @@ export default async function LifecyclePage() {
             pack_early_offer_pence: s.packEarlyOfferPence,
             pack_picks_pause_days: s.packPicksPauseDays,
             places_cache_days: s.placesCacheDays,
+            places_cache_empty_days: s.placesCacheEmptyDays,
             pack_paying_headline_floor_pct: s.packPayingHeadlineFloorPct,
             pack_paying_headline_target_pct: s.packPayingHeadlineTargetPct,
             pack_paying_rundown_paid_floor_pct: s.packPayingRundownPaidFloorPct,

@@ -1008,3 +1008,20 @@ test('Batch 23: an ordinary top-up never switches auto top-up on', async () => {
   await handleStripeEvent(ev('checkout.session.completed', { id: 'cs_1', mode: 'payment', client_reference_id: 'u1', customer: 'cus_1', payment_intent: 'pi_7', amount_total: 2500, customer_details: { email: 'a@example.com' } }), deps);
   assert.equal(called, false);
 });
+
+test('Review R4 (R4-14): a dispute marks its payment (so a charged-back payment stops counting as paying again); one won clears it; one lost changes nothing', async () => {
+  const deps = fakeDeps();
+  const marks: Array<{ paymentIntentId: string; open: boolean }> = [];
+  deps.recordDispute = async (m) => {
+    marks.push(m);
+  };
+  deps.retrievePaymentIntent = async () => ({ id: 'pi_top', metadata: { kind: 'topup', user_id: 'u1', amount_pence: '1000' }, amount: 1200 }) as unknown as Stripe.PaymentIntent;
+  await handleStripeEvent(ev('charge.dispute.created', { id: 'dp_1', payment_intent: 'pi_top', amount: 1200 }), deps);
+  await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_1', payment_intent: 'pi_top', status: 'lost' }), deps);
+  await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_2', payment_intent: 'pi_top', status: 'won' }), deps);
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', payment_intent: 'pi_top', customer: 'cus_1', amount: 1200, amount_refunded: 1200 }), deps);
+  assert.deepEqual(marks, [
+    { paymentIntentId: 'pi_top', open: true },
+    { paymentIntentId: 'pi_top', open: false },
+  ]);
+});

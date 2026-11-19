@@ -324,7 +324,7 @@ test('no briefing: the email is byte for byte what it was (the £0 and switched-
   assert.deepEqual(buildDaily(input)!.message.sections.map((s) => s.key), ['notice', 'pick', 'teasers', 'notice', 'changes']);
 });
 
-test('Batch 29: the starter pack offer takes the low-credit decision’s place, never beside it, and never makes an email alone', () => {
+test('Batch 29: the starter pack offer takes the low-credit decision’s place, never beside it; buildDaily never builds an email around it alone (the digest sends it on its own: R4-15)', () => {
   const packOffer = packOfferSection({ totalPence: 1400, bonusPence: 900 }, SITE);
   const input = { siteUrl: SITE, now: NOW, pick, teasers: [card()], changes: [change()], freeCutoffIso: null, unsubscribe: null, lowCredit, packOffer, profiles: [{ heading: null, pick, teasers: [card()] }] };
   const built = buildDaily(input)!;
@@ -388,4 +388,28 @@ test('R3-124: "Saved for you" with changes on tracked deals names both in the su
   assert.match(built.message.subject, /^I saved a deal for you · ./);
   assert.ok(built.message.sections.some((x) => x.key === 'saved_for_you'));
   assert.ok(built.message.sections.some((x) => x.key === 'changes'));
+});
+
+test('Review R4 (R4-16): with both the offer and the £5 decision, the email carries only the offer, and only the offer is the note to stamp', () => {
+  const packOffer = packOfferSection({ totalPence: 1400, bonusPence: 900 }, SITE);
+  // A member whose picks are paused, on a day a tracked deal changed: only changes, both notes due.
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [change()], freeCutoffIso: null, unsubscribe: null, lowCredit, packOffer, profiles: [] })!;
+  assert.ok(built, 'the changes email is built');
+  assert.ok(built.message.sections.includes(packOffer), 'the offer is in it');
+  assert.ok(!built.message.sections.includes(lowCredit), 'the £5 decision is not');
+  assert.equal(built.creditNote, 'pack_offer', 'so only the offer is stamped; the £5 decision goes another day');
+  const lowOnly = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [change()], freeCutoffIso: null, unsubscribe: null, lowCredit, profiles: [] })!;
+  assert.equal(lowOnly.creditNote, 'low_credit');
+  const none = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [change()], freeCutoffIso: null, unsubscribe: null, profiles: [] })!;
+  assert.equal(none.creditNote, null);
+});
+
+test('Review R4 (R4-16): the picks run and the digest stamp from the note the email carried, never both', async () => {
+  const { readFileSync } = await import('node:fs');
+  for (const f of ['src/lib/notify/digest-run.ts', 'src/lib/listing/picks-run.ts']) {
+    const src = readFileSync(f, 'utf8');
+    assert.match(src, /built\.creditNote === ['"]low_credit['"]\) await markLowCreditTold/, f);
+    assert.match(src, /built\.creditNote === ['"]pack_offer['"]\) await markPackOfferEmailed/, f);
+    assert.doesNotMatch(src, /if \(lowNotices\.has\([^)]*\)\) await markLowCreditTold/, f);
+  }
 });

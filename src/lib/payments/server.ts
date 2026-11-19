@@ -30,7 +30,7 @@ export async function recordPayment(p: PaymentRecord | null): Promise<boolean> {
     const { data, error } = await createAdminClient()
       .from('member_payments')
       .upsert(
-        { id: p.id, user_id: p.userId, kind: p.kind, amount_pence: p.amountPence, currency: p.currency, plan_code: p.planCode, payment_intent_id: p.paymentIntentId },
+        { id: p.id, user_id: p.userId, kind: p.kind, amount_pence: p.amountPence, currency: p.currency, plan_code: p.planCode, payment_intent_id: p.paymentIntentId, ...(p.paidAt ? { paid_at: p.paidAt } : {}) },
         { onConflict: 'id', ignoreDuplicates: true },
       )
       .select('id');
@@ -55,6 +55,22 @@ export async function recordRefund(r: RefundRecord | null): Promise<void> {
     const { error } = await createAdminClient().rpc('member_refund_set', { p: { charge: r.chargeId, user: r.userId, pi: r.paymentIntentId, amount: Math.max(0, Math.round(r.amountRefundedPence)) } });
     if (error) warn(error.message);
     else await queueFunnelSync(r.userId, 'refund');
+  } catch (err) {
+    warn(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Review R4 (R4-14): a dispute opened on a payment (open) or closed in our
+ * favour. public.member_payment_dispute marks the payment row, so a
+ * charged-back further payment no longer counts as paying again, and
+ * restricts (or lifts again) the starter pack bonus. Never throws.
+ */
+export async function recordDispute(input: { paymentIntentId: string; open: boolean } | null): Promise<void> {
+  if (!input?.paymentIntentId || !hasServiceRole()) return;
+  try {
+    const { error } = await createAdminClient().rpc('member_payment_dispute', { p: { pi: input.paymentIntentId, open: input.open } });
+    if (error) warn(error.message);
   } catch (err) {
     warn(err instanceof Error ? err.message : String(err));
   }

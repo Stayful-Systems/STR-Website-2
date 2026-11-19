@@ -19,6 +19,7 @@ import { newSendToken, sendKey } from '../notify/cap';
 import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { lowCreditDue, lowCreditMessage, type LowCreditNotice } from './low-credit';
 import { packStateForPayer } from './pack-server';
+import { holdsRestrictedBonus } from './pack-rules';
 
 /**
  * The £5 low-credit decision's reads and its one standalone send (Batch 20,
@@ -81,8 +82,8 @@ export async function noticeFor(input: { userId: string; createdAt: string | nul
   }
   // Batch 21 (D22): a dry run (preview) reads no card from Stripe.
   const [card, packState] = await Promise.all([input.preview ? Promise.resolve(null) : cardSummary(input.paymentMethodId), packStateForPayer(input.userId)]);
-  // Batch 29: the bonus line, for a pack-only member with bonus left.
-  const bonus = packState.packOnly && packState.bonusPence > 0 ? { pence: packState.bonusPence, expiresAt: packState.bonusExpiresAt } : null;
+  // Batch 29: the bonus line, for anyone holding a restricted bonus (Review R4, R4-19: a pack buyer on a trial too).
+  const bonus = holdsRestrictedBonus(packState) ? { pence: packState.bonusPence, expiresAt: packState.bonusExpiresAt } : null;
   return { balancePence: input.balancePence, kind: 'decision', ...offer, card: card ? { brand: card.brand, last4: card.last4 } : null, pack: null, enforcing, bonus };
 }
 

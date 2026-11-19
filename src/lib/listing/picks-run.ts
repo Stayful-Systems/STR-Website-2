@@ -1690,10 +1690,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // send and this record can be interrupted into telling them twice.
     if (claimId) await finishSend(admin, claimId, true, sendSummary, closingIds(built, settled));
     summary.emails += 1;
-    // Batch 20: the low-credit decision went with it: once a cycle.
-    if (lowNotices.has(userId)) await markLowCreditTold(admin, userId);
+    // Batch 20: the low-credit decision went with it: once a cycle. Review R4 (R4-16): only the note in the email is stamped.
+    if (built.creditNote === "low_credit") await markLowCreditTold(admin, userId);
     // Batch 29: the £15 offer went with it: never again.
-    if (packOffers.get(userId)?.due) await markPackOfferEmailed(admin, userId);
+    if (built.creditNote === "pack_offer") await markPackOfferEmailed(admin, userId);
     // Batch 25: the "Saved for you" deals in it are told.
     if (built.savedIds.length > 0) await markSavedEmailed(admin, userId, built.savedIds);
     // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.

@@ -285,4 +285,96 @@ begin
   raise notice 'si pre-check scope ok';
 end $$;
 
+-- ── Review R4 (r4d, Zac 19 Nov 2026) ──
+--   R4-14: a further payment refunded in full or charged back no longer counts as paying again: the bonus is
+--          restricted again with its original expiry and Pack → paying leaves the payment out. A dispute won
+--          counts again.
+--   R4-18: a payment made before the bonus expired but recorded after it lifts the bonus at once.
+--   R4-17: a fresh-report slot comes back when its report fails, even after part of it was charged.
+do $$
+declare
+  u uuid := gen_random_uuid();   -- tops up, then the top-up is refunded
+  d uuid := gen_random_uuid();   -- tops up, then disputes it (won later)
+  o uuid := gen_random_uuid();   -- an old bonus: its original expiry has passed by the refund
+  l uuid := gen_random_uuid();   -- paid before expiry, recorded after it
+  f uuid := gen_random_uuid();   -- the fresh-report slot on a failed, partly charged report
+  rate numeric := credit_spend_rate('topup');
+  g uuid;
+  a record;
+  j jsonb;
+  act uuid := gen_random_uuid();
+  ok boolean;
+begin
+  insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
+  select i, 'pack-smoke-r4d-' || i::text || '@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now()
+    from unnest(array[u, d, o, l, f]) as i;
+  insert into profiles (id, email) select i, 'pack-smoke-r4d-' || i::text || '@example.test' from unnest(array[u, d, o, l, f]) as i on conflict (id) do nothing;
+
+  -- R4-14, refund: partial keeps the lift, full takes it away.
+  insert into starter_pack_purchases (payment_intent_id, user_id, status, price_pence, credit_pence, granted_at) values ('pi_r4d_pack_u', u, 'granted', 1000, 3000, now() - interval '1 day');
+  perform credit_grant(u, 'topup', 1000, null, 'pi:pi_r4d_pack_u');
+  g := credit_grant_pack_bonus(jsonb_build_object('user', u, 'amount', 2000, 'source_ref', 'pack_bonus:pi_r4d_pack_u'));
+  insert into member_payments (id, user_id, kind, amount_pence, payment_intent_id) values ('pi:pi_r4d_pack_u', u, 'starter_pack', 1000, 'pi_r4d_pack_u');
+  perform credit_grant(u, 'topup', 1000, null, 'pi:pi_r4d_topup_u');
+  insert into member_payments (id, user_id, kind, amount_pence, payment_intent_id) values ('pi:pi_r4d_topup_u', u, 'topup', 1200, 'pi_r4d_topup_u');
+  if (select scope_lifted_at from credit_grants where id = g) is null then raise exception 'the top-up should lift the bonus'; end if;
+  perform member_refund_set(jsonb_build_object('charge', 'ch_r4d_u', 'user', u, 'pi', 'pi_r4d_topup_u', 'amount', 500));
+  if (select scope_lifted_at from credit_grants where id = g) is null or member_paid_again_at(u) is null then raise exception 'a partial refund still counts as paying again'; end if;
+  perform member_refund_set(jsonb_build_object('charge', 'ch_r4d_u', 'user', u, 'pi', 'pi_r4d_topup_u', 'amount', 1200));
+  select * into a from credit_grants where id = g;
+  if a.scope_lifted_at is not null then raise exception 'a full refund should restrict the bonus again: %', a; end if;
+  if a.expires_at is null or abs(extract(epoch from a.expires_at - (a.created_at + interval '30 days'))) > 60 then raise exception 'the restricted bonus should get its original expiry back: %', a.expires_at; end if;
+  if member_paid_again_at(u) is not null then raise exception 'a refunded top-up is not paying again: %', member_paid_again_at(u); end if;
+  if (pack_member_state(jsonb_build_object('user', u))->>'paid_again_at') is not null then raise exception 'pack_member_state should show the member pack-only again'; end if;
+  if abs(credit_spendable_for(u, 'full_analysis') - credit_spendable_for(u, 'deal_open')) < 1 then raise exception 'the restricted bonus must not pay for a fresh report again'; end if;
+  select x into j from jsonb_array_elements(pack_paying_facts('{"low_credit_pence": 500}'::jsonb)) as x where x->>'u' = u::text;
+  if j is null or jsonb_array_length(j->'paid') <> 0 then raise exception 'Pack → paying must leave out a refunded payment: %', j; end if;
+  raise notice 'r4d refund re-restricts ok';
+
+  -- R4-14, dispute: open restricts, won lifts again (the payment counts again).
+  insert into starter_pack_purchases (payment_intent_id, user_id, status, price_pence, credit_pence, granted_at) values ('pi_r4d_pack_d', d, 'granted', 1000, 3000, now());
+  g := credit_grant_pack_bonus(jsonb_build_object('user', d, 'amount', 2000, 'source_ref', 'pack_bonus:pi_r4d_pack_d'));
+  insert into member_payments (id, user_id, kind, amount_pence, payment_intent_id) values ('pi:pi_r4d_topup_d', d, 'topup', 1000, 'pi_r4d_topup_d');
+  if (select scope_lifted_at from credit_grants where id = g) is null then raise exception 'the top-up should lift the bonus (d)'; end if;
+  if member_payment_dispute(jsonb_build_object('pi', 'pi_r4d_topup_d', 'open', true)) <> 1 then raise exception 'the dispute should mark one payment'; end if;
+  if (select scope_lifted_at from credit_grants where id = g) is not null or member_paid_again_at(d) is not null then raise exception 'a charged-back top-up is not paying again'; end if;
+  if member_payment_dispute(jsonb_build_object('pi', 'pi_r4d_topup_d', 'open', true)) <> 0 then raise exception 'a second dispute event changes nothing'; end if;
+  perform member_payment_dispute(jsonb_build_object('pi', 'pi_r4d_topup_d', 'open', false));
+  select * into a from credit_grants where id = g;
+  if a.scope_lifted_at is null or a.expires_at is not null or member_paid_again_at(d) is null then raise exception 'a dispute won counts again and lifts the bonus: %', a; end if;
+  raise notice 'r4d dispute ok';
+
+  -- R4-14: a bonus whose original expiry has passed is restricted and no longer spendable; the sweep writes it off.
+  g := credit_grant_pack_bonus(jsonb_build_object('user', o, 'amount', 2000, 'source_ref', 'pack_bonus:pi_r4d_pack_o'));
+  update credit_grants set created_at = now() - interval '40 days' where id = g;
+  insert into member_payments (id, user_id, kind, amount_pence, payment_intent_id, paid_at) values ('pi:pi_r4d_topup_o', o, 'topup', 1000, 'pi_r4d_topup_o', now() - interval '35 days');
+  if (select scope_lifted_at from credit_grants where id = g) is null then raise exception 'the top-up should lift the bonus (o)'; end if;
+  perform member_refund_set(jsonb_build_object('charge', 'ch_r4d_o', 'user', o, 'pi', 'pi_r4d_topup_o', 'amount', 1000));
+  select * into a from credit_grants where id = g;
+  if a.scope_lifted_at is not null or a.expires_at > now() then raise exception 'an old bonus goes back restricted with its passed expiry: %', a; end if;
+  if credit_spendable_for(o, 'deal_open') > 0.0001 then raise exception 'an expired bonus is not spendable: %', credit_spendable_for(o, 'deal_open'); end if;
+  perform credit_expire_due();
+  if (select remaining_pence from credit_grants where id = g) <> 0 then raise exception 'the sweep should write off the expired bonus'; end if;
+  raise notice 'r4d expired on refund ok';
+
+  -- R4-18: paid (Stripe's time) before the expiry, recorded after it: lifted at once, no sweep needed.
+  g := credit_grant_pack_bonus(jsonb_build_object('user', l, 'amount', 2000, 'source_ref', 'pack_bonus:pi_r4d_pack_l'));
+  update credit_grants set expires_at = now() - interval '5 minutes' where id = g;
+  insert into member_payments (id, user_id, kind, amount_pence, payment_intent_id, paid_at) values ('pi:pi_r4d_late_l', l, 'topup', 1000, 'pi_r4d_late_l', now() - interval '10 minutes');
+  select * into a from credit_grants where id = g;
+  if a.scope_lifted_at is null or a.expires_at is not null or a.remaining_pence <> 2000 then raise exception 'a payment made before the expiry should lift the bonus when it lands: %', a; end if;
+  raise notice 'r4d late payment lifts ok';
+
+  -- R4-17: claim, part of the report charged on that action id, the report fails: the slot comes back.
+  j := pack_fresh_report_claim(jsonb_build_object('user', f, 'action_id', act, 'kind', 'report', 'cap', 1));
+  if not (j->>'ok')::boolean then raise exception 'claim refused: %', j; end if;
+  perform credit_grant(f, 'topup', 1000, null, 'pi:pi_r4d_f');
+  perform credit_debit(f, 30, null, true, jsonb_build_object('action', 'report', 'action_id', act));
+  ok := pack_fresh_report_release(act);
+  if not ok then raise exception 'a failed report''s slot should be released even after a partial charge'; end if;
+  j := pack_fresh_report_claim(jsonb_build_object('user', f, 'action_id', gen_random_uuid(), 'kind', 'report', 'cap', 1));
+  if not (j->>'ok')::boolean then raise exception 'the slot should be free again: %', j; end if;
+  raise notice 'r4d failed report slot ok';
+end $$;
+
 rollback;

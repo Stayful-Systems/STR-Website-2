@@ -476,6 +476,12 @@ export interface BuiltMessage {
   savedIds: string[];
   /** Batch 28: the buy-to-let launch line is in it: what to mark once it has gone. */
   btlLaunch: boolean;
+  /**
+   * Review R4 (R4-16): which credit note is in it: the starter pack's offer
+   * (it takes the £5 decision's place on its day) or the £5 decision. Only
+   * that one is stamped as told once it has gone.
+   */
+  creditNote: 'pack_offer' | 'low_credit' | null;
 }
 
 /**
@@ -593,6 +599,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     droppedTeasers: dropped,
     savedIds: saved.map((x) => x.dealId),
     btlLaunch: Boolean(input.btlLaunch),
+    creditNote: input.packOffer ? 'pack_offer' : input.lowCredit ? 'low_credit' : null,
   };
 }
 

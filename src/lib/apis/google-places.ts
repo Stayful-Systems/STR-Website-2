@@ -9,6 +9,11 @@
  * property's report is identical. A cached read is logged as a free call
  * (unit places_nearby_cached, cache_hit), the way Airbtics' cached report read
  * is; the member's price is per report and does not change.
+ *
+ * Review R4 (R4-20): an EMPTY answer (no airport in range, say) is kept only
+ * places_cache_empty_days (3 by default), not the full 90: a genuine empty
+ * answer still saves the repeat calls, and one odd empty reply is asked again
+ * soon instead of telling the whole cell "nothing nearby" for months.
  */
 
 import type { DemandDrivers, NearbyAmenity } from '../types';
@@ -23,19 +28,33 @@ export function placesCacheKey(includedType: string, lat: number, lng: number): 
   return `${includedType}|${lat.toFixed(3)},${lng.toFixed(3)}`;
 }
 
-/** Where the raw places are kept between reports (injected in tests). */
+/** Where the raw places are kept between reports (injected in tests). `kind`: an empty answer is kept for the short time. */
 export interface PlacesCache {
   get(key: string): Promise<PlaceResult[] | null>;
-  set(key: string, places: PlaceResult[]): Promise<void>;
+  set(key: string, places: PlaceResult[], kind?: PlacesAnswerKind): Promise<void>;
+}
+
+export type PlacesAnswerKind = 'places' | 'empty';
+
+/** Review R4 (R4-20): an answer with no places is 'empty' (kept for the short time). */
+export function placesAnswerKind(places: readonly PlaceResult[]): PlacesAnswerKind {
+  return places.length === 0 ? 'empty' : 'places';
+}
+
+/** How many days an answer of this kind is kept (0: not kept). */
+export function placesCacheDaysFor(kind: PlacesAnswerKind, days: { placesCacheDays: number; placesCacheEmptyDays: number }): number {
+  const full = Math.max(0, days.placesCacheDays);
+  // Never longer than a full answer is kept.
+  return kind === 'empty' ? Math.min(full, Math.max(0, days.placesCacheEmptyDays)) : full;
 }
 
 export const NO_PLACES_CACHE: PlacesCache = { get: async () => null, set: async () => {} };
 
-/** broker_cache, for places_cache_days (0: off, and off without a database). */
+/** broker_cache, for places_cache_days (0: off, and off without a database); an empty answer for places_cache_empty_days. */
 async function defaultPlacesCache(): Promise<PlacesCache> {
   if (!hasServiceRole()) return NO_PLACES_CACHE;
-  const days = (await getBillingSettings()).lifecycle.placesCacheDays;
-  if (!(days > 0)) return NO_PLACES_CACHE;
+  const lifecycle = (await getBillingSettings()).lifecycle;
+  if (!(lifecycle.placesCacheDays > 0)) return NO_PLACES_CACHE;
   const { brokerStore } = await import('../broker/store');
   const store = brokerStore();
   return {
@@ -44,7 +63,9 @@ async function defaultPlacesCache(): Promise<PlacesCache> {
       if (!a || !Array.isArray(a.value) || !(Date.parse(a.expiresAt) > Date.now())) return null;
       return a.value;
     },
-    async set(key, places) {
+    async set(key, places, kind) {
+      const days = placesCacheDaysFor(kind ?? placesAnswerKind(places), lifecycle);
+      if (!(days > 0)) return;
       const now = new Date();
       await store.set(PLACES_QUESTION, key, { value: places, provider: 'google', level: 3, fetchedAt: now.toISOString(), expiresAt: new Date(now.getTime() + days * 86_400_000).toISOString() });
     },
@@ -153,7 +174,7 @@ async function searchNearbyByType(
 
   const data = await response.json();
   const places: PlaceResult[] = data.places ?? [];
-  await cache.set(cacheKey, places).catch((err) => console.warn('[places] cache write failed:', err instanceof Error ? err.message : String(err)));
+  await cache.set(cacheKey, places, placesAnswerKind(places)).catch((err) => console.warn('[places] cache write failed:', err instanceof Error ? err.message : String(err)));
   return amenitiesFromPlaces(places, includedType, lat, lng);
 }
 
