@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ANSWER_EXTRAS, CHAT_TOOLS, parseToolInput, statusFor, TOOL_NAMES, TOOL_STATUS } from './tools.ts';
+import { ANSWER_EXTRAS, CHAT_TOOLS, featureRequestText, offerAmountFor, parseToolInput, statusFor, TOOL_NAMES, TOOL_STATUS } from './tools.ts';
 
 test('no look-up takes a member, a user or an account', () => {
   for (const t of CHAT_TOOLS) {
@@ -54,10 +54,26 @@ test('Batch 27: a plan is parsed step by step; nothing in it can name a member',
 });
 
 test('Batch 27: drafts, reports and tap choices are checked again', () => {
-  assert.deepEqual(parseToolInput('draft_message', { deal_id: '0b6a3c3e-1111-4222-8333-444455556666', message: 'offer', offer_amount: '£140k' }), { tool: 'draft_message', dealId: '0b6a3c3e-1111-4222-8333-444455556666', message: 'offer', offerAmount: 140000 });
+  assert.deepEqual(parseToolInput('draft_message', { deal_id: '0b6a3c3e-1111-4222-8333-444455556666', message: 'offer', offer_amount: '£140k' }), { tool: 'draft_message', dealId: '0b6a3c3e-1111-4222-8333-444455556666', message: 'offer', offerAmount: 140000, offerText: '£140k' });
   assert.equal(parseToolInput('draft_message', { deal_id: '0b6a3c3e-1111-4222-8333-444455556666', message: 'send_it', offer_amount: null }), null);
   assert.equal(parseToolInput('report_issue', { kind: 'refund', summary: 'x', their_words: 'y' }), null);
   assert.deepEqual(parseToolInput('report_issue', { kind: 'bug', summary: 'Wrong price', their_words: 'It says £165k' }), { tool: 'report_issue', kind: 'bug', summary: 'Wrong price', theirWords: 'It says £165k' });
   assert.equal(parseToolInput('ask_which', { options: ['Only one'] }), null);
   assert.deepEqual(parseToolInput('ask_which', { options: ['The 2 bed in LS6', 'The 3 bed in LS11', 'The 2 bed in LS6'] }), { tool: 'ask_which', options: ['The 2 bed in LS6', 'The 3 bed in LS11'] });
+});
+
+// Review R4 (R4-12): the drafted offer amount and the feature-request summary pass the figure and advice guard.
+test('an offer amount not in the question is dropped', () => {
+  const parsed = parseToolInput('draft_message', { deal_id: '0b6a3c3e-1111-4222-8333-444455556666', message: 'offer', offer_amount: '£140k' });
+  assert.ok(parsed && parsed.tool === 'draft_message');
+  assert.equal(offerAmountFor(parsed, 'write my offer for the Leeds flat'), null, 'the member never said £140k');
+  assert.equal(offerAmountFor(parsed, 'write my offer for the Leeds flat at £140k'), 140000);
+  assert.equal(offerAmountFor(parsed, 'offer 140,000 on the Leeds flat'), 140000, 'the same figure written another way');
+  assert.equal(offerAmountFor({ offerAmount: null, offerText: null }, 'offer £140k'), null);
+});
+
+test('a feature-request summary with a figure they didn’t give, or advice, is left out', () => {
+  assert.equal(featureRequestText('I want alerts for Leeds', 'Alerts for deals under £90k', 'can you alert me about Leeds?'), 'I want alerts for Leeds');
+  assert.equal(featureRequestText('I want alerts for Leeds', 'Wants alerts. I recommend Leeds', 'can you alert me about Leeds?'), 'I want alerts for Leeds');
+  assert.equal(featureRequestText('I want alerts for Leeds', 'Area alerts', 'can you alert me about Leeds?'), 'I want alerts for Leeds\n\n(Area alerts)');
 });

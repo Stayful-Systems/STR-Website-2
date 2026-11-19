@@ -106,3 +106,26 @@ export function reusable(analysedAtIso: string, reuseDays: number, now: Date = n
   const t = Date.parse(analysedAtIso);
   return Number.isFinite(t) && now.getTime() - t < reuseDays * 24 * 60 * 60 * 1000;
 }
+
+/**
+ * Review R4 (R4-09): the deals a Full analysis would reuse a saved analysis
+ * for, judged as the purchase judges it: a row for the same deal ON THE SAME
+ * INPUTS (`keys`: each deal's input key now, deal-input.ts inputKeyFor),
+ * young enough and complete. A deal whose listing facts changed since its
+ * analysis (bedrooms corrected) is fresh again, though the card's
+ * deal-only badge still says "Report ready". Stayful Intelligence's planner
+ * uses this so it never promises more fresh reports than the pack's cap.
+ */
+export function savedOnInputs(
+  rows: readonly { deal_id: string; input_key: string | null; analysed_at: string; result: { result?: Pick<AnalysisResult, 'shortLet'> } | null }[],
+  keys: ReadonlyMap<string, string>,
+  reuseDays: number,
+  now: Date = new Date(),
+): Set<string> {
+  const out = new Set<string>();
+  for (const r of rows) {
+    const key = keys.get(r.deal_id);
+    if (key && r.input_key === key && reusable(r.analysed_at, reuseDays, now) && analysisComplete(r.result?.result ?? null)) out.add(r.deal_id);
+  }
+  return out;
+}

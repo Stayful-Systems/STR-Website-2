@@ -15,7 +15,6 @@ import 'server-only';
 import { quoteBtlReport, reportIdsFor } from '../btl/report-server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { getBalance } from '../credit/ledger';
 import { quoterFor } from '../credit/quote-server';
 import { formatPence } from '../credit/deal-pricing';
 import { dealCardsByIds } from '../marketplace/queries';
@@ -26,13 +25,12 @@ import { ukDay } from '../activity/week';
 import { londonDayStart } from '../leads/search';
 import { CHARGED_KINDS, DROP_REASONS, isStepKind, type StepKind } from './config';
 import { checkPlan, type PlanDeal, type ProposedStep, type ValidStep } from './validate';
-import { decideSpend, spendLine, type PricedStep } from './spend';
+import { decideSpend, spendLine, stepLedgerAction, type PricedStep } from './spend';
 import { actionsOn, insertInstruction, instructionsSince, liveInstructionFor, readActionConfig, type NewStep } from './store-server';
-import { mayCheckLinks, previewCriteria, quoteAnalysis, quoteDeepSearch, quoteLinkCheck, quotePmiAddon, type ActingMember } from './steps-server';
-import { freshenLive } from './run-server';
+import { mayCheckLinks, previewCriteria, quoteAnalysis, quoteDeepSearch, quoteLinkCheck, quotePmiAddon, savedOnOwnInputs, type ActingMember } from './steps-server';
+import { freshenLive, scopedFace, scopedSpendable } from './run-server';
 import { packStateForPayer } from '../credit/pack-server';
 import { freshLeft } from '../credit/pack-rules';
-import { reportReadyDealIds } from '../analysis/saved-server';
 
 export interface ProposeInput {
   member: ActingMember;
@@ -59,7 +57,7 @@ export function dealLabel(card: Pick<DealCard, 'bedrooms' | 'raw_type' | 'tenure
   return where ? `${what} in ${where}` : what;
 }
 
-async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[]): Promise<Map<string, PlanDeal & { reportId: string | null }>> {
+async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[], analysisIds: readonly string[]): Promise<Map<string, PlanDeal & { reportId: string | null }>> {
   const out = new Map<string, PlanDeal & { reportId: string | null }>();
   if (ids.length === 0) return out;
   const load = await loadTrackedDeals(m.userId, { scope: 'own', adminUser: m.admin });
@@ -70,8 +68,9 @@ async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[
     cardStatesFor(supabase as never, m.userId, m.payerId, ids),
     // Batch 28: the deals the member already has a buy-to-let report on (charged once).
     hasServiceRole() ? reportIdsFor(createAdminClient(), m.userId, { dealIds: ids }) : Promise.resolve(null),
-    // Batch 29: the deals with a saved analysis (never a fresh report for the cap).
-    reportReadyDealIds(ids),
+    // Batch 29: the deals with a saved analysis (never a fresh report for the cap). Review R4 (R4-09): on the
+    // inputs this purchase would use (deal and input key), as startDealAnalysis checks it, not by deal alone.
+    savedOnOwnInputs(analysisIds.filter((id) => ids.includes(id))),
   ]);
   const cards = new Map<string, Pick<DealCard, 'bedrooms' | 'raw_type' | 'tenure' | 'outcode' | 'town' | 'btl_pass'>>([...load.cards.entries(), ...live.map((c) => [c.id, c] as const)]);
   for (const id of ids) {
@@ -112,18 +111,18 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
   const { member: m, now } = input;
   const admin = createAdminClient();
   const config = await readActionConfig(admin);
-  if (!actionsOn(config)) return { ok: false, note: 'Doing things for the member is switched off just now: offer the button instead (offer_action).' };
+  if (!actionsOn(config)) return { ok: false, code: 'switched_off', note: 'Doing things for the member is switched off just now: offer the button instead (offer_action).' };
 
   // Zac: one instruction at a time, and a limit an hour and a day. One whose page went away doesn't count as live.
   await freshenLive(m, now).catch((err) => console.error('[si-actions] freshen live failed:', (err as Error)?.message ?? err));
   const dayStart = londonDayStart(ukDay(now)) ?? new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const [lastHour, today, live] = await Promise.all([instructionsSince(admin, m.userId, new Date(now.getTime() - 60 * 60 * 1000)), instructionsSince(admin, m.userId, dayStart), liveInstructionFor(admin, m.userId)]);
-  if (lastHour >= config.ratePerHour || today >= config.ratePerDay) return { ok: false, note: 'They have given a lot of instructions in a short time: tell them to try again a little later. Nothing was done.' };
+  if (lastHour >= config.ratePerHour || today >= config.ratePerDay) return { ok: false, code: 'rate_limited', note: 'They have given a lot of instructions in a short time: tell them to try again a little later. Nothing was done.' };
 
   const wanted = new Set(input.steps.map((s) => s.action));
   const ids = [...new Set(input.steps.map((s) => (s.dealId ?? '').trim().toLowerCase()).filter((id) => input.seenDeals.has(id)))];
   const [deals, search, links, pack] = await Promise.all([
-    planDeals(m, input.supabase, ids),
+    planDeals(m, input.supabase, ids, input.steps.filter((s) => s.action === 'full_analysis' || s.action === 'deep_report').map((s) => (s.dealId ?? '').trim().toLowerCase())),
     wanted.has('deep_search') ? quoteDeepSearch(m.userId) : Promise.resolve(null),
     wanted.has('check_link') ? mayCheckLinks() : Promise.resolve(false),
     m.admin ? Promise.resolve(null) : packStateForPayer(m.payerId),
@@ -139,7 +138,8 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
   });
 
   // ── Price every charged step exactly as its own code will; preview every profile change ──
-  type Planned = { step: ValidStep; row: NewStep; basePence: number; aboutBasePence: number | null; opensDeal: boolean };
+  // bonusBasePence: the part the starter pack's restricted bonus may pay for (Review R4, R4-06); action: what its own code holds it under.
+  type Planned = { step: ValidStep; row: NewStep; basePence: number; aboutBasePence: number | null; opensDeal: boolean; bonusBasePence?: number; action?: string };
   const planned: Planned[] = [];
   const dropped: NewStep[] = [];
   const dropRow = (action: StepKind, label: string | null, reason: keyof typeof DROP_REASONS): NewStep => ({ seq: 0, action, deal_id: null, target_label: label, params: {}, part: 'now', quote_base_pence: 0, quote_face_pence: 0, status: 'dropped', drop_reason: reason });
@@ -156,24 +156,24 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
       }
       planned.push({ step, row: { ...base, target_label: p.label, params: { question: step.question, value: step.value, savedAs: p.savedAs }, before: { value: p.before, countBefore: p.countBefore }, after: { value: p.value, label: p.label, countBefore: p.countBefore, countAfter: p.countAfter }, profile_id: p.profileId }, basePence: 0, aboutBasePence: null, opensDeal: false });
     } else if (step.kind === 'full_analysis') {
-      const q = await quoteAnalysis(m, step.dealId, false);
+      const q = await quoteAnalysis(m, step.dealId, false, deals.get(step.dealId)?.saved === true);
       if (!q) {
         dropped.push(dropRow('full_analysis', step.label, 'not_seen'));
         continue;
       }
-      planned.push({ step, row: { ...base, params: { withPmi: false } }, basePence: q.basePence, aboutBasePence: null, opensDeal: q.opensDeal });
+      planned.push({ step, row: { ...base, params: { withPmi: false } }, basePence: q.basePence, aboutBasePence: null, opensDeal: q.opensDeal, bonusBasePence: q.bonusBasePence, action: stepLedgerAction('full_analysis') });
     } else if (step.kind === 'deep_report') {
       const reportId = step.addOn ? (deals.get(step.dealId)?.reportId ?? null) : null;
       if (step.addOn && reportId) {
         const price = await quotePmiAddon(m);
-        planned.push({ step, row: { ...base, params: { withPmi: true, addOn: true, reportId } }, basePence: price, aboutBasePence: null, opensDeal: false });
+        planned.push({ step, row: { ...base, params: { withPmi: true, addOn: true, reportId } }, basePence: price, aboutBasePence: null, opensDeal: false, action: stepLedgerAction('deep_report', { addOn: true }) });
       } else {
-        const q = await quoteAnalysis(m, step.dealId, true);
+        const q = await quoteAnalysis(m, step.dealId, true, deals.get(step.dealId)?.saved === true);
         if (!q) {
           dropped.push(dropRow('deep_report', step.label, 'not_seen'));
           continue;
         }
-        planned.push({ step, row: { ...base, params: { withPmi: true, addOn: false } }, basePence: q.basePence, aboutBasePence: null, opensDeal: q.opensDeal });
+        planned.push({ step, row: { ...base, params: { withPmi: true, addOn: false } }, basePence: q.basePence, aboutBasePence: null, opensDeal: q.opensDeal, bonusBasePence: q.bonusBasePence, action: stepLedgerAction('deep_report') });
       }
     } else if (step.kind === 'deep_search') {
       const q = search?.quote;
@@ -181,14 +181,14 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
         dropped.push(dropRow('deep_search', null, 'deep_search_off'));
         continue;
       }
-      planned.push({ step, row: { ...base, target_label: q.areas.length > 0 ? q.areas.slice(0, 6).join(', ') : null, params: { upToBasePence: q.upToBasePence, firstDiscount: q.firstDiscount } }, basePence: q.upToBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false });
+      planned.push({ step, row: { ...base, target_label: q.areas.length > 0 ? q.areas.slice(0, 6).join(', ') : null, params: { upToBasePence: q.upToBasePence, firstDiscount: q.firstDiscount } }, basePence: q.upToBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false, action: stepLedgerAction('deep_search') });
     } else if (step.kind === 'btl_report') {
       // Batch 28: priced exactly as its own path will charge it (the welcome price on a revealed deal).
       const q = await quoteBtlReport(m.userId, m.admin, { dealId: step.dealId }, now);
-      planned.push({ step, row: base, basePence: q.basePence, aboutBasePence: null, opensDeal: false });
+      planned.push({ step, row: base, basePence: q.basePence, aboutBasePence: null, opensDeal: false, action: stepLedgerAction('btl_report') });
     } else if (step.kind === 'check_link') {
       const q = await quoteLinkCheck();
-      planned.push({ step, row: { ...base, target_label: step.source, params: { url: step.url, aboutBasePence: q.aboutBasePence } }, basePence: q.maxBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false });
+      planned.push({ step, row: { ...base, target_label: step.source, params: { url: step.url, aboutBasePence: q.aboutBasePence } }, basePence: q.maxBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false, action: stepLedgerAction('check_link') });
     }
   }
 
@@ -200,9 +200,14 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
   const kept = planned.filter((p) => !CHARGED_KINDS.has(p.step.kind) || runCharged.includes(p));
 
   // ── What it spends, and whether the eye asks first ──
-  const [quoter, balance, auto] = await Promise.all([
+  // Review R4 (R4-06, Zac 19 Nov 2026): what the member may spend on these steps is the database's scoped figure
+  // (credit_spendable_for), so a starter pack's restricted bonus never counts for a step it can't pay for: a
+  // pack-only member is told up front there isn't enough credit, with no countdown.
+  const actions = runCharged.map((p) => p.action ?? stepLedgerAction(p.step.kind));
+  const [quoter, scoped, face, auto] = await Promise.all([
     quoterFor(m.payerId, m.admin),
-    m.admin ? Promise.resolve(null) : getBalance(m.payerId).catch(() => null),
+    scopedSpendable(m, actions),
+    scopedFace(m, actions),
     m.admin ? Promise.resolve(null) : admin.from('profiles').select('auto_topup_amount_pence').eq('id', m.payerId).maybeSingle(),
   ]);
   const quoteFace = (b: number) => (m.admin ? 0 : quoter.quote(b).facePence);
@@ -214,12 +219,14 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
     facePence: faceOf[i],
     opensDeal: p.opensDeal,
     aboutFacePence: p.aboutBasePence === null ? null : m.admin ? 0 : Math.round(quoteFace(p.aboutBasePence) * 100) / 100,
+    bonusBasePence: m.admin ? 0 : (p.bonusBasePence ?? 0),
   }));
   // The question's hold is base pence: what it takes off the balance is its face (top-up credit at its rate).
-  const balanceFace = Math.max(0, (balance?.totalPence ?? 0) - quoteFace(Math.max(0, input.holdPence)));
+  const balanceFace = Math.max(0, (face ?? 0) - quoteFace(Math.max(0, input.holdPence)));
   const decision = decideSpend({
     steps: priced,
-    spendableBasePence: m.admin ? Number.POSITIVE_INFINITY : (balance?.spendableBasePence ?? 0),
+    spendableBasePence: scoped.all,
+    spendableOtherBasePence: scoped.other,
     balanceFacePence: balanceFace,
     capFacePence: config.instructionCapPence,
     lowCreditPence: config.lowCreditPence,
@@ -244,7 +251,7 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
       status: isLater ? 'deferred' : 'queued',
       quote_base_pence: ci >= 0 ? priced[ci].basePence : 0,
       quote_face_pence: ci >= 0 ? priced[ci].facePence : 0,
-      params: { ...p.row.params, ...(ci >= 0 && p.opensDeal ? { opensDeal: true } : {}), ...(ci >= 0 && priced[ci].aboutFacePence != null ? { aboutFacePence: priced[ci].aboutFacePence } : {}) },
+      params: { ...p.row.params, ...(ci >= 0 && p.opensDeal ? { opensDeal: true } : {}), ...(ci >= 0 && priced[ci].aboutFacePence != null ? { aboutFacePence: priced[ci].aboutFacePence } : {}), ...(ci >= 0 && (priced[ci].bonusBasePence ?? 0) > 0 ? { bonusBasePence: priced[ci].bonusBasePence } : {}) },
     });
   }
   for (const d of dropped) rows.push({ ...d, seq: seq++ });
@@ -272,7 +279,7 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
     },
     rows,
   );
-  if (!inserted) return { ok: false, note: 'Only one plan per answer: the first one stands.' };
+  if (!inserted) return { ok: false, code: 'one_plan', note: 'Only one plan per answer: the first one stands.' };
 
   // ── What the model may say ──
   const will = kept.filter((p) => !CHARGED_KINDS.has(p.step.kind)).map((p) => {
@@ -295,7 +302,10 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
         : decision.kind === 'run' && decision.later.length > 0
           ? `Up to ${formatPence(config.instructionCapPence)} runs now (${formatPence(decision.nowFacePence)}); the other ${decision.later.length} (${formatPence(decision.laterFacePence)}) wait for their yes.`
           : null,
-    not_enough_credit: decision.kind === 'insufficient' ? `It needs ${formatPence(decision.requiredFacePence)} and they don't have enough credit, so nothing that costs anything will run. A top-up offer shows under your answer.` : null,
+    not_enough_credit:
+      decision.kind === 'insufficient'
+        ? `It needs ${formatPence(decision.requiredFacePence)} and they don't have enough credit, so nothing that costs anything will run.${pack?.packOnly && pack.bonusPence > 0 ? ' Their starter pack bonus only pays for opening deals, saved reports and daily picks, so it can’t pay for this.' : ''} A top-up offer shows under your answer.`
+        : null,
     stop: decision.kind === 'run' ? `It starts after a ${config.stopGraceSeconds}-second countdown; they can tap Stop until then.` : null,
     // Only when something was: an empty list had the eye telling the member "Nothing was dropped" (preview test, 16 Oct).
     ...(droppedNotes.some((d) => d.why) ? { dropped: droppedNotes.filter((d) => d.why) } : {}),

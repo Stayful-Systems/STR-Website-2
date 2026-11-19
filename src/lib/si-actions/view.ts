@@ -118,6 +118,12 @@ export interface ActionCardView {
   report: { kind: 'bug' | 'feature'; ref: number } | null;
   /** Something is still going: the page polls the status. */
   live: boolean;
+  /**
+   * Review R4 (R4-11): analyses handed out whose run was never asked for (the reply carrying the hand-out was
+   * lost, or the page reloaded): the card asks the button's own run route for them. Safe to ask twice: the run
+   * is claimed once (deal-analysis.ts claimDealAnalysisRun).
+   */
+  resume: { stepId: string; dealId: string; purchaseId: string }[];
 }
 
 const STAGE_WORDS: Record<string, string> = { watching: 'Kept', contacted: 'Contacted', viewing: 'Viewing', offer: 'Offer', secured: 'Secured', passed: 'Passed' };
@@ -237,7 +243,18 @@ function linkView(steps: readonly StepLike[]): LinkView | null {
 
 const LIVE: ReadonlySet<InstructionStatus> = new Set<InstructionStatus>(['proposed', 'ready', 'running']);
 
-export function cardView(i: InstructionLike, steps: readonly StepLike[], o: { now: Date; undoHours: number; spendableBasePence?: number | null; autoTopupOn?: boolean }): ActionCardView {
+/**
+ * Review R4 (R4-11): the handed-out analyses whose purchase is still waiting for its run (`pendingRuns`: purchase
+ * ids that are pending, ready and never run, read by run-server.ts). Unknown (no set given): none.
+ */
+export function resumableRuns(steps: readonly StepLike[], pendingRuns: ReadonlySet<string> | undefined): ActionCardView['resume'] {
+  if (!pendingRuns || pendingRuns.size === 0) return [];
+  return steps
+    .filter((s) => s.status === 'handed_out' && s.ledger_ref && s.deal_id && pendingRuns.has(s.ledger_ref) && (s.action === 'full_analysis' || (s.action === 'deep_report' && s.params.addOn !== true)))
+    .map((s) => ({ stepId: s.id, dealId: String(s.deal_id), purchaseId: String(s.ledger_ref) }));
+}
+
+export function cardView(i: InstructionLike, steps: readonly StepLike[], o: { now: Date; undoHours: number; spendableBasePence?: number | null; autoTopupOn?: boolean; pendingRuns?: ReadonlySet<string> }): ActionCardView {
   const undoable = steps.filter((s) => undoOpen({ kind: s.action, status: s.status, finishedAt: s.finished_at, undoneAt: s.undone_at, before: s.before }, o.now, o.undoHours));
   const linkKeep = steps.find((s) => s.action === 'check_link' && s.status === 'done' && typeof s.after?.checkedListingId === 'string' && !s.undone_at);
   const until = undoUntil([...undoable.map((s) => s.finished_at), ...(linkKeep ? [String(linkKeep.after?.keptAt ?? linkKeep.finished_at)] : [])], o.undoHours);
@@ -279,6 +296,7 @@ export function cardView(i: InstructionLike, steps: readonly StepLike[], o: { no
     link: linkView(steps),
     report: i.report_ref && i.report_kind ? { kind: i.report_kind, ref: i.report_ref } : null,
     live: LIVE.has(i.status) || steps.some((s) => s.status === 'running' || s.status === 'handed_out'),
+    resume: resumableRuns(steps, o.pendingRuns),
   };
 }
 

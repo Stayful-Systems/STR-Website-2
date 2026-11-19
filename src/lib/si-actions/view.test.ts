@@ -130,3 +130,18 @@ test('blocked: says nothing charged ran', () => {
 test('a report the eye filed shows its ref', () => {
   assert.deepEqual(cardView(instruction({ report_kind: 'bug', report_ref: 42 }), [], { now, undoHours: 24 }).report, { kind: 'bug', ref: 42 });
 });
+
+// Review R4 (R4-11): the reply that carried an analysis's hand-out was lost (a flaky signal), or the page reloaded.
+test('a handed-out analysis step with no run start appears as resumable', () => {
+  const steps = [
+    step({ id: 'a', action: 'full_analysis', deal_id: 'd1', status: 'handed_out', ledger_ref: 'p1', finished_at: null }),
+    step({ id: 'b', action: 'full_analysis', deal_id: 'd2', status: 'handed_out', ledger_ref: 'p2', finished_at: null }),
+    step({ id: 'c', action: 'deep_report', deal_id: 'd3', status: 'handed_out', ledger_ref: 'r3', params: { addOn: true }, finished_at: null }),
+    step({ id: 'd', action: 'full_analysis', deal_id: 'd4', status: 'done', ledger_ref: 'p4' }),
+  ];
+  // p1 is waiting for its run; p2's run has started; the PMI add-on runs through its own route; p4 is finished.
+  const card = cardView(instruction({ status: 'running' }), steps, { now, undoHours: 24, pendingRuns: new Set(['p1', 'r3', 'p4']) });
+  assert.deepEqual(card.resume, [{ stepId: 'a', dealId: 'd1', purchaseId: 'p1' }]);
+  // Not known: nothing is resumed.
+  assert.deepEqual(cardView(instruction({ status: 'running' }), steps, { now, undoHours: 24 }).resume, []);
+});

@@ -169,3 +169,18 @@ test('the bonus line names the date in UK time', () => {
   assert.equal(PACK_COPY.bonusLine(2000, '2026-12-02T10:00:00Z'), '£20 of your balance is bonus credit for opening deals, saved reports and daily picks. It expires on 2 December.');
   assert.equal(PACK_COPY.bonusLine(1250, null), '£12.50 of your balance is bonus credit for opening deals, saved reports and daily picks.');
 });
+
+// Review R4 (R4-06, Zac 19 Nov 2026): Stayful Intelligence's chat and action pre-checks judge what the member may
+// spend with the database's scoped figure (credit_spendable_for, ledger.ts spendableFor), never the whole balance,
+// so a pack-only member's restricted bonus is never counted for something it can't pay for.
+test('affordability before a charge uses spendableFor, never getBalance().spendableBasePence', () => {
+  for (const file of ['../si-actions/plan-server.ts', '../si-actions/run-server.ts', '../chat/turns-server.ts']) {
+    const src = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /getBalance\(/, `${file} reads the whole balance`);
+    assert.doesNotMatch(src, /balance\??\.spendableBasePence/, `${file} uses the unscoped spendable figure`);
+    assert.match(src, /spendableFor\(|scopedSpendable\(/, `${file} must use the scoped figure`);
+  }
+  const run = readFileSync(new URL('../si-actions/run-server.ts', import.meta.url), 'utf8');
+  assert.match(run, /spendableFor\(m\.payerId, BONUS_OK_ACTION\)/, 'the whole is judged as an action the bonus pays for');
+  assert.match(run, /otherActions\.map\(\(a\) => spendableFor\(m\.payerId, a\)/, 'the rest on the steps’ own actions');
+});

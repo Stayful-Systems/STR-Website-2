@@ -20,10 +20,56 @@
  * what the member sees (face); whether they can pay is about spendable base
  * pence, the same test the buttons' own code makes.
  *
+ * Review R4 (R4-06, Zac 19 Nov 2026): "spendable" is the database's scoped
+ * figure (credit_spendable_for, src/lib/credit/ledger.ts spendableFor), never
+ * the whole balance. The starter pack's restricted bonus pays only for an
+ * open, a daily pick and a saved analysis (src/lib/credit/pack-rules.ts), so
+ * each step says how much of it the bonus may pay (`bonusBasePence`), and the
+ * rest must fit what the member may spend on anything else. A pack-only
+ * member with only bonus left is told up front that there isn't enough
+ * credit (no countdown), exactly as the step's own code would refuse it.
+ *
  * Pure: no network, no database, no server-only.
  */
 import { formatPence } from '../credit/deal-pricing.ts';
+import { analysisSteps, BONUS_ACTIONS } from '../credit/pack-rules.ts';
 import type { StepKind } from './config.ts';
+
+/**
+ * Review R4 (R4-06): the ledger action each charged step's own code holds and
+ * charges under, so the pre-check asks credit_spendable_for about the same
+ * action the database will (a Full analysis's analysis part, the PMI add-on,
+ * the deep search, the listing check's quick view, the buy-to-let report).
+ */
+export function stepLedgerAction(kind: StepKind, o: { addOn?: boolean } = {}): string {
+  switch (kind) {
+    case 'full_analysis':
+      return 'full_analysis';
+    case 'deep_report':
+      return o.addOn ? 'pmi_addon' : 'full_analysis';
+    case 'deep_search':
+      return 'deep_search';
+    case 'check_link':
+      return 'quick_view';
+    case 'btl_report':
+      return 'btl_report';
+    default:
+      return kind;
+  }
+}
+
+/** An action the restricted bonus pays for (an open): what credit_spendable_for is asked for the whole. */
+export const BONUS_OK_ACTION: (typeof BONUS_ACTIONS)[number] = 'deal_open';
+
+/**
+ * Review R4 (R4-06): how much of a Full analysis or Deep report purchase the
+ * starter pack's bonus may pay for: the open, and the analysis itself only
+ * when it is a saved one with no PMI (pack-rules.ts analysisSteps, the
+ * allocation the button and the database use).
+ */
+export function analysisBonusBasePence(due: { openBasePence: number; analysisBasePence: number; pmiBasePence: number }, saved: boolean): number {
+  return round2(analysisSteps(due, saved).reduce((a, s) => a + (s.bonusOk ? s.basePence : 0), 0));
+}
 
 /** One charged step, priced, in the order it would run. */
 export interface PricedStep {
@@ -36,11 +82,16 @@ export interface PricedStep {
   opensDeal: boolean;
   /** A deep search: the price is its "up to"; `aboutFacePence` is the likely one. */
   aboutFacePence?: number | null;
+  /** Review R4 (R4-06): the part of basePence the starter pack's restricted bonus may pay for (an open, a saved analysis). 0 when absent. */
+  bonusBasePence?: number;
 }
 
 export interface SpendInput {
   steps: readonly PricedStep[];
+  /** Review R4 (R4-06): credit_spendable_for an action the restricted bonus pays for (an open): what the whole may use. */
   spendableBasePence: number;
+  /** Review R4 (R4-06): credit_spendable_for any other action: what the parts the bonus can't pay for may use. Absent: the same as spendableBasePence. */
+  spendableOtherBasePence?: number;
   /** What the header shows (every kind of credit, face pence). */
   balanceFacePence: number;
   capFacePence: number;
@@ -74,6 +125,24 @@ export function splitAtCap(steps: readonly PricedStep[], capFacePence: number): 
   return { now, later };
 }
 
+/**
+ * Review R4 (R4-06): can these steps be paid, as the database will judge them?
+ * The whole must fit what an action the bonus pays for may spend, and the
+ * parts it can't pay for must fit what any other action may spend (the bonus
+ * is spent first on what it may pay for, as credit_debit's walk does).
+ * `availableBasePence` is the most they could put towards it.
+ */
+export function affordable(steps: readonly Pick<PricedStep, 'basePence' | 'bonusBasePence'>[], spendable: { all: number; other?: number }): { ok: true; basePence: number } | { ok: false; requiredBasePence: number; availableBasePence: number } {
+  const base = round2(steps.reduce((a, s) => a + s.basePence, 0));
+  const bonusPart = round2(steps.reduce((a, s) => a + Math.min(Math.max(0, s.bonusBasePence ?? 0), s.basePence), 0));
+  const otherNeed = round2(base - bonusPart);
+  const other = spendable.other ?? spendable.all;
+  if (base > spendable.all + 0.005 || otherNeed > other + 0.005) {
+    return { ok: false, requiredBasePence: base, availableBasePence: Math.max(0, round2(Math.min(spendable.all, Math.max(0, other) + bonusPart))) };
+  }
+  return { ok: true, basePence: base };
+}
+
 export function decideSpend(input: SpendInput): SpendDecision {
   if (input.steps.length === 0) return { kind: 'free' };
   const sum = (list: readonly PricedStep[], k: 'basePence' | 'facePence') => round2(list.reduce((a, s) => a + s[k], 0));
@@ -86,12 +155,14 @@ export function decideSpend(input: SpendInput): SpendDecision {
   const nowFace = sum(now, 'facePence');
   const laterFace = sum(later, 'facePence');
   // Even the first step is past the cap: nothing runs until the member says yes.
+  const scoped = { all: input.spendableBasePence, other: input.spendableOtherBasePence };
   if (now.length === 0) {
-    const first = sum(later, 'basePence');
-    if (first > input.spendableBasePence + 0.005) return { kind: 'insufficient', requiredBasePence: first, availableBasePence: Math.max(0, input.spendableBasePence), requiredFacePence: laterFace };
+    const pay = affordable(later, scoped);
+    if (!pay.ok) return { kind: 'insufficient', requiredBasePence: pay.requiredBasePence, availableBasePence: pay.availableBasePence, requiredFacePence: laterFace };
     return { kind: 'confirm', reason: 'over_cap', now: [], later: later.map((s) => s.index), nowFacePence: 0, nowBasePence: 0, laterFacePence: laterFace, balanceAfterFacePence: round2(input.balanceFacePence - laterFace) };
   }
-  if (nowBase > input.spendableBasePence + 0.005) return { kind: 'insufficient', requiredBasePence: nowBase, availableBasePence: Math.max(0, input.spendableBasePence), requiredFacePence: nowFace };
+  const pay = affordable(now, scoped);
+  if (!pay.ok) return { kind: 'insufficient', requiredBasePence: pay.requiredBasePence, availableBasePence: pay.availableBasePence, requiredFacePence: nowFace };
   const after = round2(input.balanceFacePence - nowFace);
   const base = { now: now.map((s) => s.index), later: later.map((s) => s.index), nowFacePence: nowFace, nowBasePence: nowBase, laterFacePence: laterFace, balanceAfterFacePence: after };
   if (!input.autoTopupOn && after < input.lowCreditPence) return { kind: 'confirm', reason: 'low_balance', ...base };
@@ -103,10 +174,10 @@ export function decideSpend(input: SpendInput): SpendDecision {
  * and the balance it would leave. Asked as one confirm whatever the balance
  * (the card says the balance after), refused when it can't be paid.
  */
-export function laterCheck(input: { steps: readonly PricedStep[]; spendableBasePence: number; balanceFacePence: number }): { ok: true; facePence: number; balanceAfterFacePence: number } | { ok: false; requiredBasePence: number; availableBasePence: number } {
-  const base = round2(input.steps.reduce((a, s) => a + s.basePence, 0));
+export function laterCheck(input: { steps: readonly PricedStep[]; spendableBasePence: number; spendableOtherBasePence?: number; balanceFacePence: number }): { ok: true; facePence: number; balanceAfterFacePence: number } | { ok: false; requiredBasePence: number; availableBasePence: number } {
   const face = round2(input.steps.reduce((a, s) => a + s.facePence, 0));
-  if (base > input.spendableBasePence + 0.005) return { ok: false, requiredBasePence: base, availableBasePence: Math.max(0, input.spendableBasePence) };
+  const pay = affordable(input.steps, { all: input.spendableBasePence, other: input.spendableOtherBasePence });
+  if (!pay.ok) return { ok: false, requiredBasePence: pay.requiredBasePence, availableBasePence: pay.availableBasePence };
   return { ok: true, facePence: face, balanceAfterFacePence: round2(input.balanceFacePence - face) };
 }
 

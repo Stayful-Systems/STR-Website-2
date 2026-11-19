@@ -34,8 +34,10 @@ export async function savedAnalysisExists(admin: Admin, dealId: string, inputKey
 /**
  * The deals (of these) with a saved analysis young enough to reuse: the
  * "Report ready, opens instantly" badge. Read by deal only (a deal's inputs
- * come from its listing and rarely change); the purchase itself checks the
- * exact inputs. Says nothing about the deal beyond that: no address, no figure.
+ * come from its listing and rarely change; decided, Review R4 §9 D27); the
+ * purchase itself checks the exact inputs, and so does Stayful
+ * Intelligence's planner (si-actions/steps-server.ts savedOnOwnInputs), which
+ * promises what the starter pack's fresh-report cap allows. Says nothing about the deal beyond that: no address, no figure.
  * Empty when unreadable.
  */
 export async function reportReadyDealIds(dealIds: readonly string[], now: Date = new Date()): Promise<Set<string>> {
@@ -45,10 +47,14 @@ export async function reportReadyDealIds(dealIds: readonly string[], now: Date =
   try {
     const reuseDays = (await getBillingSettings()).dealPricing.analysisReuseDays;
     const since = new Date(now.getTime() - reuseDays * 86_400_000).toISOString();
-    const { data, error } = await createAdminClient().from('deal_analyses').select('deal_id, analysed_at, result').in('deal_id', ids.slice(0, 200)).gt('analysed_at', since);
-    if (error) throw new Error(error.message);
-    for (const r of (data ?? []) as Row[]) {
-      if (reusable(r.analysed_at, reuseDays, now) && analysisComplete(r.result?.result ?? null)) out.add(r.deal_id);
+    // Review R4 (R4-09): every id, a page of 200 at a time (it used to read only the first 200).
+    const admin = createAdminClient();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await admin.from('deal_analyses').select('deal_id, analysed_at, result').in('deal_id', ids.slice(i, i + 200)).gt('analysed_at', since);
+      if (error) throw new Error(error.message);
+      for (const r of (data ?? []) as Row[]) {
+        if (reusable(r.analysed_at, reuseDays, now) && analysisComplete(r.result?.result ?? null)) out.add(r.deal_id);
+      }
     }
   } catch (err) {
     console.warn('[saved-analysis] report-ready read failed:', err instanceof Error ? err.message : String(err));

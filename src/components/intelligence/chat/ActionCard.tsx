@@ -106,6 +106,8 @@ export function ActionCard({ initial, update = null }: { initial: ActionCardView
   const pumping = useRef(false);
   const started = useRef(false);
   const failures = useRef(0);
+  // Review R4 (R4-11): the analyses this page has asked the run route for, so a resumable one is asked for once.
+  const ranHere = useRef(new Set<string>());
   // Gone from the page: nothing more is asked for (what already started finishes through its own route).
   const alive = useRef(true);
   const id = card.instructionId;
@@ -148,6 +150,25 @@ export function ActionCard({ initial, update = null }: { initial: ActionCardView
     [apply, id],
   );
 
+  // A hand-out, through its button's own route; when it ends, the card is read again and the next step asked for.
+  const startRun = useCallback(
+    (h: HandOut, next: () => void) => {
+      if (h.kind === "analysis") ranHere.current.add(h.stepId);
+      inFlight.current += 1;
+      const run = h.kind === "analysis" ? runAnalysis(h, (pct, message) => setProgress((p) => ({ ...p, [h.stepId]: { pct, message } }))) : runPmi(h);
+      void run
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight.current -= 1;
+          notifyCreditChanged();
+          if (!alive.current) return;
+          void refresh().then(next);
+          router.refresh();
+        });
+    },
+    [refresh, router, runPmi],
+  );
+
   const pump = useCallback(async (): Promise<void> => {
     if (pumping.current || !alive.current) return;
     pumping.current = true;
@@ -172,22 +193,22 @@ export function ActionCard({ initial, update = null }: { initial: ActionCardView
         notifyCreditChanged();
         const h = r.handOut;
         if (!h) continue;
-        inFlight.current += 1;
-        const run = h.kind === "analysis" ? runAnalysis(h, (pct, message) => setProgress((p) => ({ ...p, [h.stepId]: { pct, message } }))) : runPmi(h);
-        void run
-          .catch(() => undefined)
-          .finally(() => {
-            inFlight.current -= 1;
-            notifyCreditChanged();
-            if (!alive.current) return;
-            void refresh().then(() => pump());
-            router.refresh();
-          });
+        startRun(h, () => void pump());
       }
     } finally {
       pumping.current = false;
     }
-  }, [apply, id, refresh, router, runPmi]);
+  }, [apply, id, startRun]);
+
+  // Review R4 (R4-11): an analysis handed out whose run was never asked for (a lost reply, a reloaded page) is
+  // asked for here, through the same run route; the route claims each run once, so a second ask is refused.
+  useEffect(() => {
+    for (const r of card.resume ?? []) {
+      if (!alive.current || inFlight.current >= ANALYSES_AT_ONCE) break;
+      if (ranHere.current.has(r.stepId)) continue;
+      startRun({ kind: "analysis", stepId: r.stepId, dealId: r.dealId, purchaseId: r.purchaseId }, () => void pump());
+    }
+  }, [card.resume, startRun, pump]);
 
   // The countdown: ticks until it ends, then the charged steps start (once).
   useEffect(() => {

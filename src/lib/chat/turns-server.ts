@@ -25,7 +25,7 @@ import { isAdminEmail } from '../admin';
 import { payerFor } from '../team';
 import { startAction, actionSpend, type StartedAction } from '../credit/action';
 import { meter } from '../credit/meter';
-import { getBalance } from '../credit/ledger';
+import { spendableFor as ledgerSpendableFor } from '../credit/ledger';
 import { getUnitCostTable } from '../credit/unit-costs';
 import { unitKey } from '../credit/costs';
 import { QUICK_MAX_WORDS, speakCharsFor, speakPricePence } from './voice-rules';
@@ -132,11 +132,16 @@ export async function chatMemberFor(user: { id: string; email?: string | null })
   return { userId: user.id, payerId: payer.payerId, admin, teamMember: payer.payerId !== user.id, seatPaused: payer.suspended };
 }
 
-/** The payer's spendable credit, base pence (0 when it can't be read: fail closed). */
-export async function spendableFor(member: ChatMember): Promise<number> {
+/**
+ * The payer's spendable credit for this surface's question, base pence (0 when it can't be read: fail closed).
+ * Review R4 (R4-06, Zac 19 Nov 2026): the database's scoped figure for the question's own action
+ * (credit_spendable_for of si_chat_quick / si_chat_full), the same one its hold is judged on, so a starter pack's
+ * restricted bonus (which can't pay for chat) never sizes the budget.
+ */
+export async function spendableFor(member: ChatMember, surface: ChatSurface): Promise<number> {
   if (member.admin) return Number.POSITIVE_INFINITY;
   try {
-    return (await getBalance(member.payerId)).spendableBasePence;
+    return await ledgerSpendableFor(member.payerId, CHAT_ACTION[surface]);
   } catch (err) {
     console.error('[chat] balance read failed:', (err as Error)?.message ?? err);
     return 0;

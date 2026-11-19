@@ -40,7 +40,13 @@ export const STEP_STAGES: readonly PipelineStatus[] = ['watching', 'contacted', 
  * answerQuestion), plus two list edits that only ever add (or, when the
  * member says so in plain words, remove) one item.
  */
-export const CRITERIA_QUESTIONS = ['bedrooms', 'budget', 'max_rent', 'min_profit', 'r2r_min_profit', 'property_type', 'add_deal_type', 'remove_deal_type', 'add_areas'] as const;
+/*
+ * Review R4 (R4-07, R4-08, Zac 19 Nov 2026): "budget" is a price ceiling only (Buying cash is left as it is);
+ * Buying cash (cash_available), R2R setup cash (setup_budget) and what the member is after from buy to let
+ * (btl_priority) may be changed too, each with Undo. The retired maximum rent (replaced by R2R setup cash) is
+ * no longer one the eye changes; a member who has one can still change it on the profile page.
+ */
+export const CRITERIA_QUESTIONS = ['bedrooms', 'budget', 'cash_available', 'setup_budget', 'btl_priority', 'min_profit', 'r2r_min_profit', 'property_type', 'add_deal_type', 'remove_deal_type', 'add_areas'] as const;
 export type CriteriaQuestion = (typeof CRITERIA_QUESTIONS)[number];
 
 export function isCriteriaQuestion(v: unknown): v is CriteriaQuestion {
@@ -48,10 +54,14 @@ export function isCriteriaQuestion(v: unknown): v is CriteriaQuestion {
 }
 
 /** The Batch 12 question each criteria change is saved through. */
-export const CRITERIA_SAVED_AS: Record<CriteriaQuestion, 'bedrooms' | 'budget' | 'cash_available' | 'max_rent' | 'min_profit' | 'r2r_min_profit' | 'property_type' | 'deal_types' | 'where'> = {
+export type CriteriaSavedAs = 'bedrooms' | 'budget' | 'cash_available' | 'setup_budget' | 'btl_priority' | 'min_profit' | 'r2r_min_profit' | 'property_type' | 'deal_types' | 'where';
+
+export const CRITERIA_SAVED_AS: Record<CriteriaQuestion, CriteriaSavedAs> = {
   bedrooms: 'bedrooms',
   budget: 'budget',
-  max_rent: 'max_rent',
+  cash_available: 'cash_available',
+  setup_budget: 'setup_budget',
+  btl_priority: 'btl_priority',
   min_profit: 'min_profit',
   // Review R4 (R4-05, Zac 19 Nov 2026): the rent-to-rent minimum saves through its own question, so the buying
   // minimum is never touched; a minimum-profit change for a member with two figures saves only the buying one
