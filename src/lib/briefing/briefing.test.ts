@@ -285,3 +285,25 @@ test('a member with no area limit is told "across the UK"; a shouted name is tit
   assert.equal(usableFirstName('HHE'), 'HHE');
   assert.equal(usableFirstName('dixon'), 'Dixon');
 });
+
+// Review R4 (R4-34): the guard for Review R3's R3-11. The Batch 23b tables missing is a deploy step, not a crash.
+test('R3-11: a missing member_briefings table answers 200 with schemaMissing, and nothing else runs', async () => {
+  const { schemaProbe } = await import('./decide.ts');
+  const missing = schemaProbe('relation "public.member_briefings" does not exist', true);
+  assert.equal(missing?.status, 200);
+  assert.equal(missing?.body.schemaMissing, true);
+  assert.equal(missing?.body.dry, true);
+  assert.equal(schemaProbe("Could not find the table 'public.member_briefings' in the schema cache", false)?.body.schemaMissing, true);
+  // A table that is there (no error), or any other error, carries on.
+  assert.equal(schemaProbe(undefined, true), null);
+  assert.equal(schemaProbe(null, false), null);
+  assert.equal(schemaProbe('canceling statement due to statement timeout', false), null);
+  // The run probes first and returns the probe's answer before it reads any settings.
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('./runner.ts', import.meta.url), 'utf8');
+  const probe = src.indexOf("from('member_briefings').select('id').limit(1)");
+  const answer = src.indexOf('schemaProbe(probe.error?.message, opts.dry)');
+  const settings = src.indexOf('getBillingSettings()', src.indexOf('export async function runBriefings'));
+  assert.ok(probe > 0 && answer > probe && settings > answer, 'probe → answer → settings, in that order');
+  assert.match(src.slice(answer, settings), /if \(missing\) \{[\s\S]*return missing;/);
+});

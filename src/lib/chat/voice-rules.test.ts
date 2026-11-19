@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CHARS_PER_WORD, followOnAllowed, listenSeconds, QUICK_MAX_WORDS, speakCharsFor, speakPricePence, VOICE_FOLLOW_ONS_MAX } from './voice-rules.ts';
+import { CHARS_PER_WORD, followOnAllowed, listenSeconds, QUICK_MAX_WORDS, speakCharsFor, speakPricePence, spokenFor, VOICE_FOLLOW_ONS_MAX } from './voice-rules.ts';
 
 // The seed row: 0.01738p a character × 5 (src/lib/credit/costs.ts).
 const ROW = { unitCostPence: 0.01738, markup: 5 };
@@ -32,4 +32,25 @@ test('listening is charged for what was heard, never more than the page declared
   assert.equal(listenSeconds({ declared: 0.2, heard: 0.1, max: 30 }), 1);
   assert.equal(listenSeconds({ declared: 90, heard: 45, max: 30 }), 30);
   assert.equal(listenSeconds({ declared: Number.NaN, heard: null, max: 30 }), 30);
+});
+
+// Review R4 (R4-34): the guard for Review R3's R3-7.
+test('R3-7: only an answer is read aloud; a free outcome is never spoken', () => {
+  assert.equal(spokenFor({ state: 'answer', text: 'Between 50p and £3 to open a deal.' }), 'Between 50p and £3 to open a deal.');
+  for (const state of ['unknown', 'top_up', 'full_view', 'failed', 'out_of_room', 'did_not_finish', 'seat_paused', 'uncharged_cap', 'off']) {
+    assert.equal(spokenFor({ state, text: 'Some line the page shows' }), null, state);
+  }
+  assert.equal(spokenFor({ state: 'answer', text: '' }), null);
+  assert.equal(spokenFor({ state: 'answer', text: null }), null);
+});
+
+test('R3-7: both chat surfaces decide what to speak with spokenFor, and end the spoken turn otherwise', async () => {
+  const { readFileSync } = await import('node:fs');
+  for (const file of ['QuickChat.tsx', 'FullChat.tsx']) {
+    const src = readFileSync(new URL(`../../components/intelligence/chat/${file}`, import.meta.url), 'utf8');
+    assert.match(src, /import \{[^}]*spokenFor[^}]*\} from "@\/lib\/chat\/voice-rules"/, file);
+    assert.match(src, /const spoken = spokenFor\((r|reply)\);\s*if \(spoken\) spokenReply = spoken;\s*else voice\.endConversation\(\);/, file);
+    // Nothing else sets what is spoken.
+    assert.equal(src.match(/spokenReply = /g)?.length, 1, file);
+  }
 });

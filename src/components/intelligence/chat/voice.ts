@@ -86,7 +86,7 @@ export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => vo
   // A spoken conversation is going on: after a spoken answer, listen again.
   const conversation = useRef(false);
   const followOn = useRef<number | null>(null);
-  // R3-9: how many times it has listened again by itself since the last tap (at most VOICE_FOLLOW_ONS_MAX).
+  // R3-8: how many times it has listened again by itself since the last tap (at most VOICE_FOLLOW_ONS_MAX).
   const followOns = useRef(0);
   const handlers = useRef(opts);
   useEffect(() => {
@@ -337,7 +337,7 @@ export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => vo
           if (phaseRef.current !== "speaking") return;
           setPhase("idle");
           // A conversation: listen again once its voice has stopped (never while it plays), at most
-          // VOICE_FOLLOW_ONS_MAX times per tap (R3-9); after that the member taps the microphone again.
+          // VOICE_FOLLOW_ONS_MAX times per tap (R3-8); after that the member taps the microphone again.
           if (finished && conversation.current && followOnAllowed(followOns.current)) {
             followOns.current += 1;
             followOn.current = window.setTimeout(() => {

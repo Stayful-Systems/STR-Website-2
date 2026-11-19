@@ -95,3 +95,19 @@ test('members who joined before the pack keep Batch 22 exactly', () => {
   assert.equal(deep({}).offer, 'welcome_deep');
   assert.equal(deep({}, new Date('2026-10-09T09:00:00Z')).offer, 'first_deep');
 });
+
+// Review R4 (R4-34): the guard for Review R3's R3-4. The PMI label on the report page and the server's charge
+// (pmi-addon.ts) both price from offeredPmiAddonFor, so the member is never shown one price and charged another.
+test('R3-4: the report page label and the PMI add-on charge both price from offeredPmiAddonFor', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = (path: string) => readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const page = read('src/app/reports/[id]/page.tsx');
+  assert.match(page, /import \{[^}]*\bofferedPmiAddonFor\b[^}]*\} from "@\/lib\/analysis\/offers-server"/);
+  assert.match(page, /offeredPmiAddonFor\(user\.id\)/);
+  // The label's price is the offer's, falling back to the list price only when there is no offer to read.
+  assert.match(page, /pmi = quoter\.label\(adminUser \? 0 : offered \? offered\.pmiPence : quoter\.pricing\.pmiAddonPence, "pmi_addon"\)/);
+  const server = read('src/lib/analysis/pmi-addon.ts');
+  assert.match(server, /import \{[^}]*\bofferedPmiAddonFor\b[^}]*\} from '\.\/offers-server'/);
+  assert.match(server, /const offered = input\.adminUser \? null : await offeredPmiAddonFor\(input\.userId\)/);
+  assert.match(server, /const price = input\.adminUser \? 0 : offered \? offered\.pmiPence : /);
+});

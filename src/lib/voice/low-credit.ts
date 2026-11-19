@@ -97,3 +97,27 @@ export function toldSinceLanding(toldAt: string | null | undefined, landing: Lan
   const t = Date.parse(toldAt);
   return Number.isFinite(t) && t >= landing.landedAt.getTime();
 }
+
+export type LowCreditRecheck = { ok: true } | { ok: false; reason: 'topped_up' | 'nudged' };
+
+/**
+ * Review R3 (R3-14 / R2-24, R3-45 / R2-43), made pure in Review R4 (R4-34) so
+ * it is tested: a queued low-credit call is tested again just before it
+ * dials (low-credit-recheck-server.ts reads the facts, queue-server.ts acts).
+ *
+ *   balance unread, or above low_credit_pence   topped_up
+ *   no landing on the call (older rows)         ring
+ *   a newer landing than the call's             topped_up (the call is about credit that is gone)
+ *   a nudge decided for the call's landing      nudged (the nudge is the notice)
+ *
+ * `latestLandingId` undefined or null means the grants couldn't be read or
+ * hold no landing: the queue-time landing stands.
+ */
+export function lowCreditRecheck(i: { balancePence: number | null; lowCreditPence: number; triggerRef: string | null; latestLandingId?: string | null; nudged?: boolean }): LowCreditRecheck {
+  if (i.balancePence === null || i.balancePence > i.lowCreditPence) return { ok: false, reason: 'topped_up' };
+  if (!i.triggerRef) return { ok: true };
+  if (i.latestLandingId && i.latestLandingId !== i.triggerRef) return { ok: false, reason: 'topped_up' };
+  if (i.nudged) return { ok: false, reason: 'nudged' };
+  return { ok: true };
+}
+

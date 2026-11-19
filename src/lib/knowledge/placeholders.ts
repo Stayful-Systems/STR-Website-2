@@ -26,6 +26,9 @@ import { WINDOW_END_HOUR, WINDOW_START_HOUR } from '../sms/uk-time.ts';
 import { callFloorPence } from '../standout/notify.ts';
 import { QUICK_MAX_WORDS, speakCharsFor, speakPricePence } from '../chat/voice-rules.ts';
 import { deepQuote } from '../sourcing-demand/member-search-quote.ts';
+import { ACTION_SETTING_BOUNDS, ACTION_SETTING_KEYS, type ActionSettings } from '../si-actions/settings.ts';
+import { estimateAction } from '../credit/estimate.ts';
+import type { UnitCostTable } from '../credit/costs.ts';
 
 /** One billing_plans row, as read. */
 export interface PlanRow {
@@ -219,6 +222,42 @@ function dealCallFloor(g: GlobalSnapshot): number | null {
   return callFloorPence(setting, perMin, texts * text);
 }
 
+/**
+ * Review R4 (R4-45): one of Batch 27's action limits, read strictly: the row
+ * present, a whole number inside the bounds its reader accepts (outside
+ * them the product falls back to its default, so the answer is stale rather
+ * than quoting a limit nobody enforces). The hourly limit never reads above
+ * the daily one, as parseActionSettings clamps it.
+ */
+function actionLimit(g: GlobalSnapshot, field: Exclude<keyof ActionSettings, 'enabled'>): number | null {
+  const b = ACTION_SETTING_BOUNDS[field];
+  const n = whole(g, ACTION_SETTING_KEYS[field], b.min);
+  if (n === null || n > b.max) return null;
+  if (field === 'ratePerHour') {
+    const day = actionLimit(g, 'ratePerDay');
+    return day === null ? null : Math.min(n, day);
+  }
+  return n;
+}
+
+/**
+ * Review R4 (R4-46): what a listing check typically costs, the quick view's
+ * estimate over the unit_costs rows × their markups (the sum the listing
+ * check reserves against; src/lib/credit/estimate.ts). Null while any of its
+ * usual rows is missing.
+ */
+function listingCheckPence(g: GlobalSnapshot): number | null {
+  const table: UnitCostTable = new Map();
+  for (const [key, row] of g.units) {
+    const [provider, unit] = key.split(':');
+    table.set(key, { provider, unit, label: key, unitCostPence: row.unitCostPence, markup: row.markup, notes: null });
+  }
+  const e = estimateAction(table, 'quick_view');
+  const usual = e.lines.filter((l) => !l.worstCaseOnly);
+  if (usual.length === 0 || usual.some((l) => !g.units.has(`${l.provider}:${l.unit}`))) return null;
+  return e.typicalBasePence > 0 ? e.typicalBasePence : null;
+}
+
 function balanceBand(p: number): string {
   const [low, high] = BALANCE_BANDS_PENCE;
   if (p < low) return `under ${formatPence(low)}`;
@@ -367,6 +406,25 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const n = whole(g, 'si_action_stop_grace_seconds', 1);
     return n === null ? null : String(n);
   }),
+  // Review R4 (R4-45): Batch 27's other limits, each from its billing_settings row (src/lib/si-actions/settings.ts).
+  si_action_rate_per_hour: g_('Instructions a member may give Stayful Intelligence in an hour', 'billing_settings.si_action_rate_per_hour', (g) => {
+    const n = actionLimit(g, 'ratePerHour');
+    return n === null ? null : countWords(n);
+  }),
+  si_action_rate_per_day: g_('Instructions a member may give Stayful Intelligence in a UK day', 'billing_settings.si_action_rate_per_day', (g) => {
+    const n = actionLimit(g, 'ratePerDay');
+    return n === null ? null : countWords(n);
+  }),
+  si_action_max_targets: g_('The most deals one instruction may touch', 'billing_settings.si_action_max_targets', (g) => {
+    const n = actionLimit(g, 'maxTargets');
+    return n === null ? null : countWords(n);
+  }),
+  si_action_confirm_minutes: g_('Minutes a confirm or countdown nobody answers waits before it lapses', 'billing_settings.si_action_confirm_minutes', (g) => {
+    const n = actionLimit(g, 'confirmMinutes');
+    return n === null ? null : String(n);
+  }),
+  // Review R4 (R4-46): "a few pence" in the service facts, as the figure it is.
+  listing_check_cost: g_('About what a listing check costs (its usual provider calls × markup)', 'unit_costs (the quick view: google reverse_geocode, onthemarket listing_page, airbtics bounds) × markup', (g) => money(listingCheckPence(g))),
   // Batch 28: buy-to-let deals (src/lib/btl/config.ts; each read strictly from its billing_settings row)
   btl_report_cost: g_("The buy-to-let report's price", 'billing_settings.btl_report_pence', (g) => money(pence(g, 'btl_report_pence'))),
   btl_ltv: g_('The buy-to-let mortgage, as a share of the price, e.g. 75%', 'billing_settings.btl_finance.ltvPct', (g) => {

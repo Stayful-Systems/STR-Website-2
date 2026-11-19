@@ -20,6 +20,7 @@ import { CONDITIONS, PLACEHOLDERS, type GlobalSnapshot, type MemberValues, type 
 import { checkContent, contentHash, draftContent, draftJson, renderEntry, staleReason, type EntryContent, type LiveEntry } from './render';
 import { KNOWLEDGE_COLUMNS, LIVE_COLUMNS, isLive, liveContent, liveFromRow, type KnowledgeRow } from './rows';
 import { parseKnowledgeSettings, KNOWLEDGE_SETTING_KEYS, type KnowledgeSettings } from './settings';
+import { gapsToClose } from './gap/plan';
 
 export type Admin = ReturnType<typeof createAdminClient>;
 
@@ -218,10 +219,19 @@ export async function approveEntry(o: ApproveInput, admin: Admin = createAdminCl
   if (error) return { ok: false, error: error.message };
   const res = data as { id?: string; version?: number; refused?: string };
   if (res.refused) return { ok: false, error: res.refused === 'changed' ? 'This entry changed since you opened it. Reload and try again.' : `Not approved (${res.refused}).` };
-  // Any gap this entry answers is covered now, wherever it was approved from (Gaps or the entry's page).
+  // A gap this entry answers is covered now, wherever it was approved from (Gaps or the entry's page), but only one
+  // still waiting and asked only on channels the entry is on (Review R4, R4-36: gap/plan.ts gapsToClose).
   const at = new Date().toISOString();
-  const { error: gapError } = await admin.from('si_knowledge_gaps').update({ status: 'covered', match_kind: 'approved', decided_at: at, asked_since_decision: 0, updated_at: at }).eq('entry_id', o.id).neq('status', 'dismissed');
-  if (gapError && !isSchemaMissing(gapError)) console.error('[knowledge] gap close failed:', gapError.message);
+  const { data: linked, error: readError } = await admin.from('si_knowledge_gaps').select('id, status, channels').eq('entry_id', o.id).in('status', ['open', 'drafted']);
+  if (readError) {
+    if (!isSchemaMissing(readError)) console.error('[knowledge] gap close failed:', readError.message);
+  } else {
+    const close = gapsToClose((linked ?? []) as { id: string; status: string; channels: Record<string, number> | null }[], content.channels);
+    if (close.length) {
+      const { error: gapError } = await admin.from('si_knowledge_gaps').update({ status: 'covered', match_kind: 'approved', decided_at: at, asked_since_decision: 0, updated_at: at }).in('id', close).in('status', ['open', 'drafted']);
+      if (gapError && !isSchemaMissing(gapError)) console.error('[knowledge] gap close failed:', gapError.message);
+    }
+  }
   return { ok: true, id: o.id, version: res.version, channels: content.channels };
 }
 

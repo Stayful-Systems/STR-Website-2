@@ -84,3 +84,21 @@ export function cappedTokens(p: { inputTokens: number; outputTokens: number; inp
   const scale = p.capPence / total;
   return { inputTokens: Math.floor(input * scale), outputTokens: Math.floor(output * scale), scaled: true };
 }
+
+/** R3-11: the Batch 23b tables are not on this database (the deploy step not yet done). */
+export function schemaMissing(message: string | null | undefined): boolean {
+  return /does not exist|schema cache/i.test(message ?? '');
+}
+
+/**
+ * Review R3 (R3-11), made pure in Review R4 (R4-34) so it is tested: the
+ * run's first read of member_briefings. With the table missing the run
+ * answers 200 and says so (schemaMissing), and nothing else runs; any other
+ * outcome (no error, or another error the run's own reads will report) is
+ * null: carry on.
+ */
+export function schemaProbe(errorMessage: string | null | undefined, dry: boolean): { status: 200; body: Record<string, unknown> } | null {
+  if (!errorMessage || !schemaMissing(errorMessage)) return null;
+  return { status: 200, body: { dry, schemaMissing: true, error: 'member_briefings is not on this database: run the "Batch 23b: the morning briefing" section of supabase/schema.sql, then check ?dry=1 again' } };
+}
+

@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     heard = await runMetered(action.ctx, () =>
       meter(
         // Not charged when the service fails or hears nothing (failed → logged at £0).
-        // R3-69: charged for the seconds heard (the last word's end), never more than the page declared.
+        // R3-84: charged for the seconds heard (the last word's end), never more than the page declared.
         { provider: 'elevenlabs', unit: 'stt_second', quantity: seconds, quantityFrom: (r: { ok: boolean; text: string; seconds: number }) => r.seconds, description: 'Stayful Intelligence listening', failed: (r: { ok: boolean; text: string; seconds: number }) => !r.ok || !r.text },
         async () => {
           const body = new FormData();
