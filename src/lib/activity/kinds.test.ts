@@ -148,3 +148,9 @@ test("the chat's own actions are registered and record only", () => {
   assert.equal(isQualifying('si_chat_full'), true, 'a full-view question still counts');
   assert.equal(isQualifying('reaction_clear'), true, 'taking back a Pass counts, as the Pass did (R3-107)');
 });
+
+test("Batch 31's website approval is registered and record only", () => {
+  assert.equal(isActivityKind('website_approved'), true);
+  assert.equal(isQualifying('website_approved'), false);
+  assert.equal(isCounted('website_approved'), false);
+});

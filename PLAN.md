@@ -68,11 +68,11 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: source-pin test lists every lookup with the kind filter; `npm test`; every changed line listed in notes.
   Notes: funnels/index.ts (+19/-5): FunnelKind type + `kind` on Funnel, in COLUMNS, parsed in toFunnel; `.eq('kind','form')` on listFunnels, getFunnel, updateFunnel, rotateFunnelToken, funnelByToken, funnelPageByToken, ownPublicFunnelByToken, ownedFunnelByToken, markFirstLive (createFunnel and notifyNewLeadOf untouched). leads/page.tsx (+9/-1): new `ownsWebsite(ownerId)` helper; `&& !(await ownsWebsite(scope.ownerId))` added to the SETUP_PATH redirect. kind-isolation.test.ts 12/12 pass.
 
-- [ ] **Phase 3 — Pure website core** (needs 1)
+- [x] **Phase 3 — Pure website core** (needs 1)
   Files: `src/lib/websites/{types,slug,urls,sources,policy}.ts` + tests; `src/lib/activity/kinds.ts` (add `website_approved`, recordOnly).
   slug: make/validate/reserve. urls: `siteHref(site, path)`, `siteBase(site)`. sources: parse utm_*, fbclid, ad (trimmed, 40 max), landing path (no query). policy: access (management + owner + invited, + paid when gate on); step-2 decision (free → claim; charged → balance check); mode freeze; `qualityOk`; `isSelfSubmit`; free-mode self-submit → `held_self` (no run), charge on → runs and charged; landlord outcome `summary|summary_caveat|held|will_contact`; state machine transitions.
   Check: `npm test` covers invite-only + plan-gate switches; self-submit free → held_self, charge on → runs and charged; charge OFF → no charge decision; charge ON + quality false → no charge; mode frozen across settings flip. Pin: nothing under `src/lib/websites` or `src/app/api/s` imports `funnels/charge-server` or `funnels/tiers`.
-  Notes:
+  Notes: types, slug, urls, sources, policy (+ tests, 75 pass); kinds.ts +2 (`website_approved`, recordOnly) and kinds.test.ts +6 (outside the file list). Pin test (no charge-server/tiers import under src/lib/websites, src/app/api/s, src/app/s) lives in policy.test.ts. Assumptions: held_credit shows the landlord will_contact (only held_cap shows the 24-hour message); free-mode price_pence is 0; over-long utm/ad values are truncated, not rejected; access takes plain booleans with purposes invite|go_live|keep_live.
 
 - [ ] **Phase 4 — Page model, checks, colours, summary** (needs 3)
   Files: `src/lib/websites/{page-model,checks,colour,summary}.ts` + tests.
