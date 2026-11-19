@@ -17,6 +17,7 @@ import { alertGapLine, cashBuyerOf, memberFinance, mostYouCanPay } from '../mark
 import { widthFor } from '../marketplace/profit-range';
 import { getBillingSettings } from '../credit/unit-costs';
 import { dealTypeListsByIds, projectCardsFor } from '../marketplace/queries';
+import { profitEndsFor } from '../tailoring/profit-end-server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -137,10 +138,12 @@ async function attachPayGaps(admin: Admin, out: Map<string, Settled>, incomes: R
     for (const r of (data ?? []) as { id: string; market_goals: unknown }[]) goalsByUser.set(r.id, parseMarketGoals(r.market_goals));
   }
   const { dealPricing } = await getBillingSettings();
+  // Review R4 (R4-03): "Most you can pay" sized for the end of the range each member is judged on.
+  const ends = await profitEndsFor(admin, [...new Set(drops.map((d) => d.userId))]).catch(() => new Map<string, 'low' | 'mid' | 'high'>());
   for (const { userId, c } of drops) {
     const income = incomes.get(c.dealId!)!;
     const goals = c.profileId ? goalsByProfile.get(c.profileId) ?? null : goalsByUser.get(userId) ?? null;
-    const pay = mostYouCanPay({ kind: income.kind, grossRevenue: income.grossRevenue, bedrooms: income.bedrooms, finance: memberFinance(goals), cashBuyer: cashBuyerOf(goals), widthPct: widthFor(income.confidence, dealPricing.profitRangePct) });
+    const pay = mostYouCanPay({ kind: income.kind, grossRevenue: income.grossRevenue, bedrooms: income.bedrooms, finance: memberFinance(goals), cashBuyer: cashBuyerOf(goals), widthPct: widthFor(income.confidence, dealPricing.profitRangePct), end: ends.get(userId) ?? 'low' });
     const amount = c.newAmount === null || c.newAmount === undefined ? null : Number(c.newAmount);
     c.payGap = pay ? alertGapLine(amount, pay) : null;
   }

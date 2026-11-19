@@ -133,13 +133,32 @@ export function isAnswered(id: QuestionId, answered: AnsweredMap): boolean {
   return markFor(id, answered) !== null;
 }
 
+/**
+ * Review R4 (R4-41): questions Batch 30 began asking of every member that an older member who had already
+ * finished the quiz was never asked (an R2R-only member was never asked the property, a BTL-only member neither
+ * that nor a minimum profit). A quiz finished before Batch 30 went out counts them as answered, so it stays
+ * finished; a quiz finished since was asked them (and Start again asks them again as before).
+ */
+export const ASKED_OF_ALL_SINCE_BATCH_30: readonly QuestionId[] = ['property', 'min_profit'];
+/** When Batch 30 (the shorter quiz) was merged, #163: no quiz finished before this was asked those questions. */
+export const BATCH_30_MERGED_AT = '2026-11-14T14:04:21Z';
+
+/** Answered, or one of those questions on a quiz finished before they were asked. */
+function countsAnswered(id: QuestionId, quiz: Pick<QuizRecord, 'answered' | 'completedAt'>): boolean {
+  if (isAnswered(id, quiz.answered)) return true;
+  const done = quiz.completedAt ? Date.parse(quiz.completedAt) : Number.NaN;
+  return Number.isFinite(done) && done < Date.parse(BATCH_30_MERGED_AT) && ASKED_OF_ALL_SINCE_BATCH_30.includes(id);
+}
+
 export function progress(a: Answers, quiz: QuizRecord): Progress {
   const qs = questionsFor(a);
-  const answered = qs.filter((q) => isAnswered(q.id, quiz.answered)).map((q) => q.id);
-  const next = qs.find((q) => !isAnswered(q.id, quiz.answered))?.id ?? null;
+  const answered = qs.filter((q) => countsAnswered(q.id, quiz)).map((q) => q.id);
+  const next = qs.find((q) => !countsAnswered(q.id, quiz))?.id ?? null;
   const remaining = qs.length - answered.length;
   const mandatory = qs.filter((q) => q.mandatory).map((q) => q.id);
   const notSure = answered.filter((id) => markFor(id, quiz.answered)?.notSure).length;
+  // Counted as answered on a finished quiz without a mark: never a real answer (Review R4, R4-41).
+  const implicit = answered.filter((id) => !isAnswered(id, quiz.answered)).length;
   return {
     types: dealTypesFor({ goals: a.goals, about: a.about }),
     questions: qs.map((q) => q.id),
@@ -149,8 +168,8 @@ export function progress(a: Answers, quiz: QuizRecord): Progress {
     minutesLeft: remaining === 0 ? 0 : Math.max(1, Math.ceil((remaining * SECONDS_PER_QUESTION) / 60)),
     complete: next === null,
     mandatory,
-    mandatoryDone: mandatory.every((id) => isAnswered(id, quiz.answered)),
-    real: answered.length - notSure,
+    mandatoryDone: mandatory.every((id) => countsAnswered(id, quiz)),
+    real: answered.length - notSure - implicit,
     notSure,
   };
 }

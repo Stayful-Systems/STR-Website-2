@@ -548,7 +548,8 @@ const DEFINITIONS: readonly Question[] = [
     section: 'about',
     kind: 'property',
     title: 'What kind of property?',
-    why: 'Some people only want flats, some only houses, and bigger places earn more but cost more to run.',
+    // Review R4 (R4-41): flat or house judges purchases only, so a rent-to-rent-only member is told so.
+    why: (a) => (typesOf(a).length > 0 && typesOf(a).every((t) => t === 'r2r') ? 'Bigger places earn more but cost more to run. Flat or house only matters for deals you buy, so for rent-to-rent it’s the bedrooms that count.' : 'Some people only want flats, some only houses, and bigger places earn more but cost more to run.'),
     image: 'cards',
     short: 'Property',
     options: [opt('flat', 'Flat', undefined, 'property_flat'), opt('house', 'House', undefined, 'property_house'), opt('either', 'Either', undefined, 'plain')],
@@ -888,6 +889,19 @@ export const PREDECESSORS: Readonly<Partial<Record<QuestionId, readonly Question
   min_profit: ['r2r_min_profit'],
 };
 
+/**
+ * Review R4 (R4-42): what "Use today's average" saves: the member's deposit, the cached live average and its
+ * day, back on the daily average. Null when the cache has no average yet: the save is refused and nothing
+ * changes (never the member's own rate kept under the "average" label).
+ */
+export function averageRateValue(finance: { depositPct: number }, today: { ratePct: number; asOf: string } | null | undefined): { depositPct: number; mortgageRatePct: number; useAverage: true; rateAsOf: string } | null {
+  if (!today || !Number.isFinite(today.ratePct)) return null;
+  return { depositPct: finance.depositPct, mortgageRatePct: today.ratePct, useAverage: true, rateAsOf: today.asOf };
+}
+
+/** The words when today's average isn't in the cache yet. */
+export const NO_AVERAGE_YET = 'Today’s average isn’t available yet. Please try again later.';
+
 // ── Answering ──
 
 /** What the quiz posts for a "where" answer. */
@@ -1141,8 +1155,29 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
     }
     case 'min_profit':
     case 'r2r_min_profit': {
+      const bad = () => fail(`Enter a monthly profit between £0 and £${MIN_PROFIT_RANGE.max.toLocaleString('en-GB')}.`);
+      const inRange = (v: number | null): v is number => v !== null && v >= MIN_PROFIT_RANGE.min && v <= MIN_PROFIT_RANGE.max;
+      // Review R4 (R4-05, Zac 19 Nov 2026): an older member's two minimums stay separate. Stayful Intelligence and
+      // the what-if save only the figure a change is about ({ pcm, only: 'buy' }), and Undo puts both back exactly
+      // ({ buy, r2r }, minimumsOf in si-actions/undo.ts). A plain number is the quiz's one answer, as before.
+      if (id === 'min_profit' && raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const o = raw as Record<string, unknown>;
+        if (o.only === 'buy') {
+          const pcm = num(o.pcm);
+          if (!inRange(pcm)) return bad();
+          return { ok: true, answers: { ...a, goals: { ...goals, finance: { ...goals.finance, targetMarginPcm: Math.round(pcm) } } } };
+        }
+        if ('buy' in o && 'r2r' in o) {
+          const buy = num(o.buy);
+          const r2r = o.r2r === null ? null : num(o.r2r);
+          if (!inRange(buy) || (o.r2r !== null && !inRange(r2r))) return bad();
+          const back = setR2r(a, { minMarginPcm: r2r === null ? null : Math.round(r2r) });
+          return { ok: true, answers: { ...back, goals: { ...back.goals, finance: { ...back.goals.finance, targetMarginPcm: Math.round(buy) } } } };
+        }
+        return bad();
+      }
       const n = num(raw);
-      if (n === null || n < MIN_PROFIT_RANGE.min || n > MIN_PROFIT_RANGE.max) return fail(`Enter a monthly profit between £0 and £${MIN_PROFIT_RANGE.max.toLocaleString('en-GB')}.`);
+      if (!inRange(n)) return bad();
       // Batch 30: one minimum profit for everyone writes both fields; the retired rent-to-rent one still saves just its own.
       if (id === 'r2r_min_profit') return { ok: true, answers: setR2r(a, { minMarginPcm: Math.round(n) }) };
       const both = setR2r(a, { minMarginPcm: Math.round(n) });
@@ -1423,7 +1458,9 @@ export function answerLabel(id: QuestionId, a: Answers): string | null {
       const o = optionsOf(q, a).find((x) => x.value === String(v));
       if (!o) return null;
       // Batch 30: a cash band worked out from an older budget says so.
-      return id === 'cash_available' && a.goals.buyer.cashFromBudget ? `${o.label} (worked out from your budget)` : o.label;
+      // Review R4 (R4-43): worked out from a budget, or (an older Buy to let member) from their Buy to let cash band.
+      if (id === 'cash_available' && a.goals.buyer.cashFromBudget) return `${o.label} (worked out from your ${a.goals.budget || a.goals.brrr.budget ? 'budget' : 'Buy to let cash'})`;
+      return o.label;
     }
     case 'property': {
       const p = v as { type: string; bedrooms: string };

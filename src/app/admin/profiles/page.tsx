@@ -155,7 +155,7 @@ function QuizV2Backfill({ dry, done, written, left, already, outOfTime }: { dry:
     <section id="quiz-v2" className="rounded-xl border border-border bg-card p-5">
       <h2 className="text-base font-semibold text-foreground">Shorter quiz: move existing profiles (Batch 30)</h2>
       <p className="mt-1 text-xs text-muted-foreground">
-        Keeps what existing members already told us working under the shorter quiz: an old rent-to-rent setup answer moves onto the new bands and stays a nice-to-have (as it was), a buyer with a budget but no Buying cash gets the band that budget points to (shown as “worked out from your budget”, never a filter), and a mortgage rate a member chose is kept as theirs. Run it before 7am UK. Press Dry run first: it changes nothing. Running twice is safe: the second run writes 0.
+        Keeps what existing members already told us working under the shorter quiz: an old rent-to-rent setup answer moves onto the new bands and stays a nice-to-have (as it was), a buyer with a budget but no Buying cash gets the band that budget points to (and an older Buy to let member the band their Buy to let cash points to; shown as worked out, never a filter), and a mortgage rate a member chose is kept as theirs. Run it before 04:45 UK (the daily rate sync, which waits until this has finished with nothing left). Press Dry run first: it changes nothing. Running twice is safe: the second run writes 0.
       </p>
       {done === "done" && (
         <p role="status" className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">

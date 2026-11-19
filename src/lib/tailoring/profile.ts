@@ -93,6 +93,11 @@ export interface TailoringProfile {
   /** Newest first, inside the signal window. */
   signals: Signal[];
   widths: RangeWidths;
+  /**
+   * Review R4 (R4-03): when the member joined and when the shorter quiz went live, which decide the end of the
+   * profit range they are judged on (criteria.ts profitEndChoice). Absent: unknown, read as before Batch 30.
+   */
+  profitEndDates?: { joinedAt: string | null; shorterFrom: string | null };
 }
 
 /**

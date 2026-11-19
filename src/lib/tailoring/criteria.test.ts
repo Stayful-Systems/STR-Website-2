@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NO_WANTS, activeCriteria, checksFor, criterionForQuestion, factsFromRow, judge, judgeDeal, memberFigures, type MemberFigures, modeOf, mustHaveTest, profitAt, profitEndFor, profitEndNote, tenureOf, wantsFor, type DealFacts } from './criteria.ts';
+import { NO_WANTS, activeCriteria, checksFor, criterionForQuestion, factsFromRow, judge, judgeDeal, memberFigures, type MemberFigures, modeOf, mustHaveTest, profitAt, profitEndChoice, profitEndFor, profitEndNote, tenureOf, wantsFor, type DealFacts } from './criteria.ts';
 import { plainProfile, type TailoringProfile } from './profile.ts';
-import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
+import { DEFAULT_GOALS, parseMarketGoals, type MarketGoals } from '../market/goals.ts';
+import { applyAnswer } from '../profile/questions.ts';
 import { DEFAULT_ABOUT } from '../profile/about.ts';
 import { profitRange } from '../marketplace/profit-range.ts';
 import { purchaseDeal } from '../listing/deal.ts';
@@ -11,6 +12,11 @@ const WIDTHS = { high: 10, medium: 15, low: 25 };
 const AT = '2026-09-20T10:00:00Z';
 const real = { at: AT, notSure: false };
 const shrug = { at: AT, notSure: true };
+/** Review R4 (R4-03): the shorter quiz went live on 14 Nov 2026; a member who joined, and answered, after it. */
+const SHORTER_FROM = '2026-11-14T14:30:00Z';
+const NEW_MARK = { at: '2026-11-16T09:00:00Z', notSure: false };
+const NEW_MEMBER = { joinedAt: '2026-11-16T08:00:00Z', shorterFrom: SHORTER_FROM };
+const OLD_MEMBER = { joinedAt: '2026-09-01T08:00:00Z', shorterFrom: SHORTER_FROM };
 const goals = (over: Partial<MarketGoals> = {}): MarketGoals => ({ ...DEFAULT_GOALS, ...over });
 const profile = (g: Partial<MarketGoals>, over: Partial<TailoringProfile> = {}, areas: string[] = []) => plainProfile(goals(g), areas, WIDTHS, over);
 
@@ -139,17 +145,17 @@ test('bedrooms: an exact match, "4 or more" for four', () => {
 
 test('rent-to-rent checks read the stored figures; no payback at all is a miss', () => {
   const p = profile({ path: 'r2r', r2r: { ...DEFAULT_GOALS.r2r, setupBudget: 'u10k', breakEvenOccupancyPct: 50, paybackMonths: 12 } });
-  assert.deepEqual(keys(p, rental()), { setup: 'must:pass' }, 'Batch 30: setup cash is a must-have; break-even and payback are never checked');
+  assert.deepEqual(keys(p, rental()), { setup: 'nice:pass' }, 'Review R4 (R4-02): setup cash is a nice-to-have; break-even and payback are never checked');
   const losing = rental({ deal: { kind: 'rent-to-rent', setupCost: 5_000, breakevenOccupancyPct: 90, paybackMonths: null, monthlyMargin: -40 } as never });
-  assert.deepEqual(keys(p, losing), { setup: 'must:pass' }, 'a deal that never pays back is not hidden by an answer that is no longer asked');
-  assert.deepEqual(keys(p, rental({ deal: null })), { setup: 'must:unknown' });
+  assert.deepEqual(keys(p, losing), { setup: 'nice:pass' }, 'a deal that never pays back is not hidden by an answer that is no longer asked');
+  assert.deepEqual(keys(p, rental({ deal: null })), { setup: 'nice:unknown' });
   assert.equal(wantsFor(p).breakEvenMax, null);
   assert.equal(wantsFor(p).paybackMax, null);
   assert.ok(!activeCriteria(wantsFor(p)).has('breakeven') && !activeCriteria(wantsFor(p)).has('payback'), 'no switch is offered for them');
-  // Over the band top: out, unless the member (or the backfill, for an old answer) made it a nice-to-have.
+  // Over the band top: ranked lower, never hidden, unless the member makes it a must-have themselves.
   const big = rental({ deal: { kind: 'rent-to-rent', setupCost: 13_000, breakevenOccupancyPct: 55, paybackMonths: 14, monthlyMargin: 650 } as never });
-  assert.equal(keys(p, big).setup, 'must:fail', 'a 2-bed at £13k is over "Under £10k"');
-  assert.equal(keys({ ...p, modes: { setup: 'nice' } }, big).setup, 'nice:fail');
+  assert.equal(keys(p, big).setup, 'nice:fail', 'a 2-bed at £13k is over "Under £10k": it only moves down');
+  assert.equal(keys({ ...p, modes: { setup: 'must' } }, big).setup, 'must:fail');
   const bands = (b: 'u10k' | '10-15k' | '15-20k' | '20k+') => wantsFor(profile({ path: 'r2r', r2r: { ...DEFAULT_GOALS.r2r, setupBudget: b } }, { answered: { setup_budget: real } })).setupTop;
   assert.deepEqual([bands('u10k'), bands('10-15k'), bands('15-20k'), bands('20k+')], [10_000, 15_000, 20_000, null]);
 });
@@ -161,15 +167,16 @@ test('Batch 30: minimum profit is judged on the end of the range the member chos
   const range = memberFigures(f, base).range!;
   // A minimum that the low end misses but the top end clears.
   const minimum = Math.round((range.lowPcm + range.highPcm) / 2 / 50) * 50;
-  const p = (risk: 'avoid' | 'consider' | 'go' | null) => ({ ...base, goals: { ...base.goals!, finance: { ...finance, targetMarginPcm: minimum } }, about: { ...DEFAULT_ABOUT, risk } });
+  // A member who joined after the shorter quiz went live, answering the new question (Review R4, R4-03).
+  const p = (risk: 'avoid' | 'consider' | 'go' | null) => ({ ...base, goals: { ...base.goals!, finance: { ...finance, targetMarginPcm: minimum } }, about: { ...DEFAULT_ABOUT, risk }, answered: { ...base.answered, ...(risk ? { risk: NEW_MARK } : {}) }, profitEndDates: NEW_MEMBER });
   assert.ok(range.lowPcm < minimum && minimum <= range.highPcm, 'the minimum sits inside the range');
   assert.equal(keys(p('avoid'), f).profit, 'must:fail', 'play it safe: the low end');
   assert.equal(keys(p('go'), f).profit, 'must:pass', 'the top end');
   assert.equal(keys(p('consider'), f).profit, range.midPcm >= minimum ? 'must:pass' : 'must:fail', 'the middle');
-  assert.equal(keys(p(null), f).profit, keys(p('consider'), f).profit, 'unanswered reads as the middle');
+  assert.equal(keys(p(null), f).profit, keys(p('consider'), f).profit, 'unanswered (a new member) reads as the middle');
   assert.deepEqual((['avoid', 'consider', null, 'go'] as const).map((r) => wantsFor(p(r)).profitEnd), ['low', 'mid', 'mid', 'high']);
-  assert.equal(profitEndFor({ risk: 'avoid' }), 'low');
-  assert.equal(profitEndFor(null), 'mid');
+  assert.equal(profitEndFor(p('avoid')), 'low');
+  assert.equal(profitEndFor(null), 'low', 'nothing known: the low end');
   const r = { lowPcm: 450, midPcm: 575, highPcm: 700 };
   assert.deepEqual([profitAt(r, 'low'), profitAt(r, 'mid'), profitAt(r, 'high')], [450, 575, 700]);
   // £450–£700 against a £500 minimum: fails on the low end, passes on the middle and the top.
@@ -321,4 +328,70 @@ test('a pool row with a Project estimate reads as a BRRR deal; without, as its k
   assert.equal(plain.project, null);
   assert.equal(factsFromRow({ ...row, project: { junk: true } }, null, { qualifies: undefined, score: 0 }).dealType, 'buy_str', 'an unusable estimate is not a Project deal');
   assert.equal(factsFromRow({ ...row, kind: 'rent', price_period: 'pcm', price_amount: 900, project: PROJECT }, null, { qualifies: undefined, score: 0 }).dealType, 'r2r');
+});
+
+// ── Review R4 (Zac's rules, 19 Nov 2026) ──
+
+test('R4-02: an R2R member with Under £10k setup and 3 bedrooms still has matches; setup only ranks', () => {
+  const p = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', bedrooms: 3, r2r: { ...DEFAULT_GOALS.r2r, setupBudget: 'u10k' } }, { answered: { setup_budget: real, property: real } });
+  // A 3-bed's setup is £16.5k (6000 + 3 × 3500): over "Under £10k".
+  const threeBed = rental({ bedrooms: 3, deal: { kind: 'rent-to-rent', setupCost: 16_500, breakevenOccupancyPct: 55, paybackMonths: 20, monthlyMargin: 800 } as never });
+  const { judgement } = judgeDeal(threeBed, p);
+  assert.equal(judgement.checks.find((c) => c.key === 'setup')?.verdict, 'fail', 'the setup is over the band');
+  assert.deepEqual(judgement.mustFails, [], 'but it is never a must-have miss: the deal is shown');
+  assert.equal(judgement.niceMissed, 1, 'it only moves down');
+  assert.equal(mustHaveTest(p)!({ listing: { kind: 'rent', bedrooms: 3, price: { amount: 1_100, period: 'pcm' }, postcodeArea: 'NG', title: 'House', rawType: 'House' } as never, deal: threeBed.deal }), true, 'the daily picks run keeps it too');
+});
+
+test('R4-40: an old £10k+ setup answer adds no must-have', () => {
+  const old = parseMarketGoals({ ...DEFAULT_GOALS, dealTypes: ['r2r'], sourcingKind: 'rent', r2r: { ...DEFAULT_GOALS.r2r, setupBudget: '10k+' } })!;
+  const p = plainProfile(old, [], WIDTHS, { answered: { setup_budget: real } });
+  const fourBed = rental({ bedrooms: 4, deal: { kind: 'rent-to-rent', setupCost: 20_000, breakevenOccupancyPct: 55, paybackMonths: 20, monthlyMargin: 900 } as never });
+  const { judgement } = judgeDeal(fourBed, p);
+  assert.equal(modeOf('setup', p), 'nice');
+  assert.deepEqual(judgement.mustFails, [], 'no must-have from an old setup band, with no switch written');
+});
+
+test('R4-03: a risk answer stored before quiz_shorter_from judges the low end', () => {
+  const oldMark = { at: '2026-10-01T10:00:00Z', notSure: false };
+  for (const risk of ['avoid', 'consider', 'go'] as const) {
+    const p = profile({}, { about: { ...DEFAULT_ABOUT, risk }, answered: { risk: oldMark }, profitEndDates: OLD_MEMBER });
+    assert.equal(wantsFor(p).profitEnd, 'low', `an old "${risk}" answer: the low end until they answer the new question`);
+    assert.equal(wantsFor(p).profitEndAsked, false);
+  }
+  // The same member answers the new question: their answer counts.
+  const now = profile({}, { about: { ...DEFAULT_ABOUT, risk: 'go' }, answered: { risk: NEW_MARK }, profitEndDates: OLD_MEMBER });
+  assert.equal(wantsFor(now).profitEnd, 'high');
+  assert.equal(wantsFor(now).profitEndAsked, true);
+  // A £150–£520 deal against a £500 minimum: an old "Go for it" no longer passes it.
+  const f = sale();
+  const fixed: MemberFigures = { range: { kind: 'purchase', lowPcm: 150, midPcm: 335, highPcm: 520 } as never, cashRequired: null, cashOnCashPct: null, setupCost: null, breakEvenPct: null, paybackMonths: null };
+  const oldGo = profile({}, { about: { ...DEFAULT_ABOUT, risk: 'go' }, answered: { risk: oldMark }, profitEndDates: OLD_MEMBER });
+  assert.equal(checksFor(f, fixed, { ...wantsFor(oldGo), minProfit: 500 }, () => 'must').find((c) => c.key === 'profit')?.verdict, 'fail');
+});
+
+test('R4-03: no answer: low end if joined before Batch 30, middle if after', () => {
+  assert.equal(wantsFor(profile({}, { about: { ...DEFAULT_ABOUT, risk: null }, profitEndDates: OLD_MEMBER })).profitEnd, 'low');
+  assert.equal(wantsFor(profile({}, { about: { ...DEFAULT_ABOUT, risk: null }, profitEndDates: NEW_MEMBER })).profitEnd, 'mid');
+  // "Not sure" on the new question stores no answer: the same rule.
+  assert.equal(wantsFor(profile({}, { about: { ...DEFAULT_ABOUT, risk: null }, answered: { risk: { ...NEW_MARK, notSure: true } }, profitEndDates: OLD_MEMBER })).profitEnd, 'low');
+  assert.equal(wantsFor(profile({}, { about: { ...DEFAULT_ABOUT, risk: null }, answered: { risk: { ...NEW_MARK, notSure: true } }, profitEndDates: NEW_MEMBER })).profitEnd, 'mid');
+  // Dates unknown: the low end (the stricter end).
+  assert.equal(wantsFor(profile({}, { about: { ...DEFAULT_ABOUT, risk: null } })).profitEnd, 'low');
+  assert.equal(profitEndChoice({ risk: 'go' }, NEW_MARK, { joinedAt: NEW_MEMBER.joinedAt, shorterFrom: null }).end, 'low', 'no go-live date known: the low end');
+});
+
+test('R4-44: a Buying cash answer adds one check, not two', () => {
+  const answered = applyAnswer('cash_available', 'u30', { goals: goals({ path: 'buy', dealTypes: ['buy_str'] }), about: DEFAULT_ABOUT, savedAreas: [] });
+  assert.ok(answered.ok);
+  assert.ok(answered.answers.goals.budget, 'the cash answer still writes the older budget as a ceiling');
+  const p = plainProfile(answered.answers.goals, [], WIDTHS, { answered: { cash_available: real } });
+  const w = wantsFor(p);
+  assert.equal(w.cashTop, 30_000);
+  assert.equal(w.budget, null, 'the budget it wrote makes no second check');
+  const { judgement } = judgeDeal(sale({ amount: 150_000 }), p);
+  assert.deepEqual(judgement.checks.filter((c) => c.key === 'budget' || c.key === 'cash').map((c) => c.key), ['cash']);
+  // A budget the member set themselves still judges.
+  const own = plainProfile({ ...answered.answers.goals, budget: '200-350' }, [], WIDTHS, { answered: { cash_available: real } });
+  assert.ok(wantsFor(own).budget);
 });

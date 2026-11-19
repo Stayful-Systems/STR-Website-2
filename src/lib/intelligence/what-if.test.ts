@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { bestWhatIfs, changeQuestionFor, isWhatIfKey, whatIfAnswer, whatIfChanges, whatIfLine, whatIfResults, type WhatIfResult } from './what-if.ts';
 import { plainProfile, type TailoringProfile } from '../tailoring/profile.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
+import { applyAnswer } from '../profile/questions.ts';
+import { DEFAULT_ABOUT } from '../profile/about.ts';
 import type { ChooseInput, ChooseReads } from '../today/choose.ts';
 import type { PoolRow } from '../today/candidates.ts';
 import { btlDeal } from '../btl/deal.ts';
@@ -153,10 +155,31 @@ test('Batch 30: the minimum profit what-if saves through the one minimum profit,
   const a = whatIfAnswer(profit, { goals: rent.goals!, savedAreas: [] })!;
   assert.equal(a.questionId, 'min_profit');
   assert.equal(a.value, profit.goals.r2r.minMarginPcm, 'a rent-to-rent-only member lowers the rent-to-rent figure, saved as the one minimum');
-  assert.equal(a.undo, 800, 'and Undo goes back to what it was');
+  assert.deepEqual(a.undo, { buy: 800, r2r: 800 }, 'and Undo puts both figures back exactly (Review R4, R4-05)');
   assert.ok((a.value as number) < 800);
   // A member with a stored maximum rent still gets the rent variants.
   const stored = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', maxRentPcm: 1_500 });
   assert.ok(whatIfChanges(stored, { nearbyAreas: [] }).some((x) => x.key === 'rent_10'));
   assert.equal(whatIfAnswer(whatIfChanges(stored, { nearbyAreas: [] }).find((x) => x.key === 'rent_10')!, { goals: stored.goals!, savedAreas: [] })!.questionId, 'max_rent');
+});
+
+// Review R4 (R4-05, Zac 19 Nov 2026): the two minimum-profit figures stay separate.
+test('the profit what-if never raises the rent-to-rent minimum', () => {
+  // An older Buy + R2R member: buying minimum £800, rent-to-rent minimum £300.
+  const g = { dealTypes: ['buy_str', 'r2r'] as MarketGoals['dealTypes'], sourcingKind: 'both' as const, path: 'buy' as const, finance: { ...DEFAULT_GOALS.finance, targetMarginPcm: 800 }, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 300 } };
+  const two = profile(g, { answered: { deals_done: real, main_goal: real, min_profit: real, r2r_min_profit: real } });
+  const v = whatIfChanges(two, { nearbyAreas: [] }).find((x) => x.key === 'profit');
+  assert.ok(v, 'the profit variant is offered');
+  assert.equal(v.goals.r2r.minMarginPcm, 300, 'the variant lowers the buying minimum only');
+  const a = whatIfAnswer(v, { goals: two.goals!, savedAreas: [] })!;
+  const saved = applyAnswer(a.questionId as never, a.value, { goals: two.goals!, about: DEFAULT_ABOUT, savedAreas: [] });
+  assert.ok(saved.ok);
+  assert.ok(saved.answers.goals.r2r.minMarginPcm! <= 300, `rent-to-rent minimum ${saved.answers.goals.r2r.minMarginPcm} must never rise above £300`);
+  assert.equal(saved.answers.goals.r2r.minMarginPcm, 300, 'left exactly as it was');
+  assert.ok(saved.answers.goals.finance.targetMarginPcm < 800, 'the buying minimum is lowered');
+  // Undo puts both back exactly.
+  const back = applyAnswer('min_profit', a.undo, saved.answers);
+  assert.ok(back.ok);
+  assert.equal(back.answers.goals.finance.targetMarginPcm, 800);
+  assert.equal(back.answers.goals.r2r.minMarginPcm, 300);
 });

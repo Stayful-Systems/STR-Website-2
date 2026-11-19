@@ -10,8 +10,8 @@
  *   cash             cash available (top of the band)      deposit + stamp duty + setup at      must     buy
  *                                                          the member's deposit
  *   rent             max rent (or a client's rent)         the rent a month                     must     rent
- *   profit           minimum profit (a real answer only)   the LOW end of Batch 10's profit     must     both
- *                                                          range at the member's finance
+ *   profit           minimum profit (a real answer only)   the member's end of Batch 10's       must     both
+ *                                                          profit range at their finance (profitEndChoice)
  *   bedrooms         bedrooms (4 = 4 or more)              bedrooms                             nice     both
  *   type             flat or house                         the listing's type                   nice     buy
  *   leasehold        "Leasehold OK?" = no                  tenure                               nice     buy
@@ -51,7 +51,7 @@ import { getLicensing, type LicensingStatus } from '../data/str-licensing.ts';
 import { goalAreas } from '../onboarding/deal-filters.ts';
 import { placedForPreview } from '../profile/matching.ts';
 import type { QuestionId } from '../profile/questions.ts';
-import { buyingCashTop } from '../profile/buying-power.ts';
+import { budgetFromCash, buyingCashTop } from '../profile/buying-power.ts';
 import { profitRange, type ProfitRange } from '../marketplace/profit-range.ts';
 import { memberFinance } from '../marketplace/most-you-can-pay.ts';
 import type { DealCard } from '../marketplace/grid.ts';
@@ -84,8 +84,9 @@ export const CRITERIA: Record<CriterionKey, CriterionSpec> = {
   type: { label: 'Flat or house', kinds: ['sale'], defaultMode: 'nice', questions: ['property_type'] },
   leasehold: { label: 'No leasehold', kinds: ['sale'], defaultMode: 'nice', questions: ['short_let_rules', 'leasehold'] },
   restricted: { label: 'No short-let restrictions', kinds: ['sale'], defaultMode: 'nice', questions: ['restricted_areas'] },
-  // Batch 30: R2R setup cash is a must-have for new members; the backfill keeps it a nice-to-have for those who answered the old question.
-  setup: { label: 'Setup budget', kinds: ['rent'], defaultMode: 'must', questions: ['setup_budget'] },
+  // Review R4 (R4-02, Zac 19 Nov 2026): R2R setup cash is a nice-to-have for everyone: it ranks deals, never hides them
+  // (Under £10k against a 2-bed's setup would otherwise hide every rental with 2 or more bedrooms).
+  setup: { label: 'Setup budget', kinds: ['rent'], defaultMode: 'nice', questions: ['setup_budget'] },
   breakeven: { label: 'Break-even occupancy', kinds: ['rent'], defaultMode: 'nice', questions: ['break_even'] },
   payback: { label: 'Payback', kinds: ['rent'], defaultMode: 'nice', questions: ['payback'] },
   motivation: { label: 'Motivated sellers', kinds: ['sale', 'rent'], defaultMode: 'nice', questions: ['motivated_sellers'] },
@@ -117,11 +118,12 @@ export interface Wants {
   /** Batch 17: the rent-to-rent minimum, its own answer now (it used to overwrite the buyer's): judges rentals. */
   minProfitR2r: number | null;
   /**
-   * Batch 30: which end of a deal's profit range has to reach the minimum. "Play it safe"
-   * (the answer 'avoid') is the low end, as it always was; 'consider' and unanswered the
-   * middle; 'go' the top end. One place: only checksFor reads it.
+   * Batch 30: which end of a deal's profit range has to reach the minimum (profitEndChoice).
+   * One place: checksFor, standout and "Most you can pay" all read it.
    */
   profitEnd: ProfitEnd;
+  /** Review R4 (R4-04): the end is the member's own answer to the new question, so the card may say "as you asked". */
+  profitEndAsked: boolean;
   bedrooms: 1 | 2 | 3 | 4 | null;
   propertyType: 'flat' | 'house' | null;
   noLeasehold: boolean;
@@ -145,6 +147,7 @@ export const NO_WANTS: Wants = {
   minProfit: null,
   minProfitR2r: null,
   profitEnd: 'low',
+  profitEndAsked: false,
   bedrooms: null,
   propertyType: null,
   noLeasehold: false,
@@ -160,10 +163,46 @@ const set = (codes: string[]): ReadonlySet<string> | null => (codes.length > 0 ?
 /** Which end of the profit range a deal must reach (Batch 30). */
 export type ProfitEnd = 'low' | 'mid' | 'high';
 
-/** The end a member's answer picks: "Play it safe" the low end, "Consider it" or no answer the middle, "Go for it" the top end. */
-export function profitEndFor(about: Pick<TailoringProfile['about'], 'risk'> | null | undefined): ProfitEnd {
+/** When a member joined, and when the shorter quiz (Batch 30) went live (billing_settings.quiz_shorter_from). */
+export interface ProfitEndDates {
+  joinedAt: string | null;
+  shorterFrom: string | null;
+}
+
+const atOrAfter = (iso: string | null | undefined, from: string | null | undefined): boolean => {
+  const at = iso ? Date.parse(iso) : Number.NaN;
+  const f = from ? Date.parse(from) : Number.NaN;
+  return Number.isFinite(at) && Number.isFinite(f) && at >= f;
+};
+
+/**
+ * The end of the profit range a member is judged on, and whether it is their own answer (Review R4, R4-03; Zac,
+ * 19 Nov 2026). The stored values avoid / consider / go were first given to an older question about risk, so:
+ *   - an answer to the new question (its mark on or after quiz_shorter_from): avoid the low end, consider the
+ *     middle, go the top end, "as you asked";
+ *   - an answer given before Batch 30: the low end, until they answer the new question;
+ *   - no answer (or "Not sure"): the low end for a member who joined before Batch 30, the middle for one who
+ *     joined since.
+ * Unknown dates read as before Batch 30 (the low end: the stricter end, as every check was before it).
+ * The one helper: Today, Browse, the email, the reveal, match counts, standout and "Most you can pay" all
+ * read it through wantsFor.
+ */
+export function profitEndChoice(
+  about: Pick<TailoringProfile['about'], 'risk'> | null | undefined,
+  riskMark: { at: string; notSure: boolean } | null | undefined,
+  dates: ProfitEndDates | null | undefined,
+): { end: ProfitEnd; asked: boolean } {
   const risk = about?.risk ?? null;
-  return risk === 'avoid' ? 'low' : risk === 'go' ? 'high' : 'mid';
+  if (risk !== null) {
+    if (riskMark && !riskMark.notSure && atOrAfter(riskMark.at, dates?.shorterFrom)) return { end: risk === 'avoid' ? 'low' : risk === 'go' ? 'high' : 'mid', asked: true };
+    return { end: 'low', asked: false };
+  }
+  return { end: atOrAfter(dates?.joinedAt, dates?.shorterFrom) ? 'mid' : 'low', asked: false };
+}
+
+/** The end a profile is judged on (profitEndChoice). */
+export function profitEndFor(p: Pick<TailoringProfile, 'about' | 'answered' | 'profitEndDates'> | null | undefined): ProfitEnd {
+  return profitEndChoice(p?.about, p?.answered.risk, p?.profitEndDates).end;
 }
 
 /** The figure of a profit range at this end, £ a month. */
@@ -171,9 +210,13 @@ export function profitAt(range: Pick<ProfitRange, 'lowPcm' | 'midPcm' | 'highPcm
   return end === 'low' ? range.lowPcm : end === 'high' ? range.highPcm : range.midPcm;
 }
 
-/** "Low end used, as you asked" for the deal card and page (Batch 30); null for no profit check. */
-export function profitEndNote(end: ProfitEnd): string {
-  return end === 'low' ? 'Low end used, as you asked' : end === 'high' ? 'Top end used, as you asked' : 'Middle of the range used, as you asked';
+/**
+ * "Low end used, as you asked" for the deal card and page (Batch 30). Review R4 (R4-04): "as you asked" only
+ * when the end is the member's own answer; a default (no answer, or one given before Batch 30) is just named.
+ */
+export function profitEndNote(end: ProfitEnd, asked = true): string {
+  const name = end === 'low' ? 'Low end used' : end === 'high' ? 'Top end used' : 'Middle of the range used';
+  return asked ? `${name}, as you asked` : name;
 }
 
 export function wantsFor(p: TailoringProfile): Wants {
@@ -197,20 +240,27 @@ export function wantsFor(p: TailoringProfile): Wants {
   const r2rProfit = asked(p, 'r2r_min_profit') && (realAnswer(p, 'r2r_min_profit') || realAnswer(p, 'min_profit'));
   const b = g.buyer;
   const r = g.r2r;
+  const end = profitEndChoice(p.about, p.answered.risk, p.profitEndDates);
+  const cashTop = asked(p, 'cash_available') && realAnswer(p, 'cash_available') ? buyingCashTop(g) : null;
+  // Review R4 (R4-44): a Buying cash answer writes the older budget as a ceiling (budgetFromCash); that budget is the
+  // cash answer's, so it makes no second check. A budget the member set themselves still judges.
+  const cashWrote = cashTop !== null ? budgetFromCash(b.cashAvailable, b.funding) : undefined;
+  const ownBudget = (v: typeof g.budget) => (v && !(cashTop !== null && v === cashWrote) ? budgetBounds(v) : null);
   return {
     areas,
     localAreas,
     home,
-    budget: g.budget ? budgetBounds(g.budget) : null,
-    brrrBudget: g.brrr.budget ? budgetBounds(g.brrr.budget) : null,
+    budget: ownBudget(g.budget),
+    brrrBudget: ownBudget(g.brrr.budget),
     brrrWork: asked(p, 'brrr_work') && g.brrr.work === 'light' ? 'light' : null,
     // A real Buying cash answer only: a band worked out from an older budget never filters (buyingCashTop, Batch 30).
-    cashTop: asked(p, 'cash_available') && realAnswer(p, 'cash_available') ? buyingCashTop(g) : null,
+    cashTop,
     rentMax: g.maxRentPcm,
     minProfit: buyProfit ? g.finance.targetMarginPcm : null,
     // Answered before the split, the one figure stood for both.
     minProfitR2r: r2rProfit ? (g.r2r.minMarginPcm ?? g.finance.targetMarginPcm) : null,
-    profitEnd: profitEndFor(p.about),
+    profitEnd: end.end,
+    profitEndAsked: end.asked,
     bedrooms: g.bedrooms,
     propertyType: asked(p, 'property_type') && (b.propertyType === 'flat' || b.propertyType === 'house') ? b.propertyType : null,
     noLeasehold: asked(p, 'leasehold') && b.leaseholdOk === 'no',
@@ -421,6 +471,15 @@ export function memberFigures(f: DealFacts, p: Pick<TailoringProfile, 'goals' | 
   }
   const d = f.deal?.kind === 'rent-to-rent' ? f.deal : null;
   return { range, cashRequired: null, cashOnCashPct: null, setupCost: d ? d.setupCost : null, breakEvenPct: d ? d.breakevenOccupancyPct : null, paybackMonths: d ? d.paybackMonths : null };
+}
+
+/**
+ * Review R4 (R4-44): the cash a purchase at this price needs for this member: memberFigures' own cashRequired
+ * (their deposit, the deal's bedrooms), so the "I've noticed" nudges and the cash check can never disagree.
+ */
+export function saleCashRequired(amount: number, bedrooms: number | null, p: Pick<TailoringProfile, 'goals' | 'widths'>): number | null {
+  const f: DealFacts = { kind: 'sale', area: null, bedrooms, amount, propertyKind: 'unknown', tenure: 'unknown', licensing: getLicensing(null).status, grossRevenue: null, confidence: null, deal: null, motivationQualifies: undefined, motivationScore: 0, needsWork: false };
+  return memberFigures(f, p).cashRequired;
 }
 
 /**

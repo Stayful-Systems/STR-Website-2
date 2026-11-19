@@ -247,3 +247,25 @@ test('R3-52: "beats everything shown" compares within a deal type', () => {
   assert.equal(bestAtLeast(known, 90, 'buy_str'), 1_400);
   assert.equal(bestAtLeast([{ matchPct: 100, profitLow: 700, dealType: null }], 100, 'buy_str'), 700);
 });
+
+// Review R4 (R4-03): standout reads the profit at the member's own end of the range (wantsFor), as Today does.
+test('standout profit uses the member’s end', () => {
+  // £1,000 minimum: the bar is £1,250. The range £1,100–£1,500: the low end is short, the middle and top clear it.
+  const range = { kind: 'rent-to-rent' as const, midPcm: 1300, lowPcm: 1100, highPcm: 1500, pct: 15, label: '', basis: '' };
+  const at = (profitEnd: 'low' | 'mid' | 'high') => judgeStandout(input({ figures: { range }, wants: { minProfit: null, minProfitR2r: 1000, profitEnd } }));
+  assert.equal(at('low').reason, 'profit_short');
+  assert.equal(at('mid').outcome, 'standout', 'a member judged on the middle: £1,300 clears the £1,250 bar');
+  assert.equal(at('high').outcome, 'standout');
+  assert.equal(at('mid').profitJudged, 1300);
+  assert.equal(at('mid').profitLow, 1100, 'the low end is still what is stored and worded');
+  // No end given: the low end, as before.
+  assert.equal(judgeStandout(input({ figures: { range } })).reason, 'profit_short');
+  // Through wantsFor: an older member's old "Go for it" is the low end; a new member's answer is theirs.
+  const shorterFrom = '2026-11-14T14:30:00Z';
+  const g: MarketGoals = { ...DEFAULT_GOALS, dealTypes: ['r2r'], sourcingKind: 'rent', finance: { ...DEFAULT_GOALS.finance, targetMarginPcm: 1000 }, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 1000 } };
+  const member = (markAt: string, joinedAt: string): TailoringProfile => ({ profileId: null, goals: g, savedAreas: [], about: { ...DEFAULT_ABOUT, risk: 'go', roles: ['r2r'] }, answered: { min_profit: { at: markAt, notSure: false }, risk: { at: markAt, notSure: false } }, modes: {}, signals: [], widths: { high: 10, medium: 15, low: 25 }, profitEndDates: { joinedAt, shorterFrom } });
+  const oldGo = wantsFor(member('2026-10-01T00:00:00Z', '2026-09-01T00:00:00Z'));
+  const newGo = wantsFor(member('2026-11-16T00:00:00Z', '2026-11-16T00:00:00Z'));
+  assert.equal(judgeStandout(input({ figures: { range }, wants: oldGo })).reason, 'profit_short');
+  assert.equal(judgeStandout(input({ figures: { range }, wants: newGo })).outcome, 'standout');
+});

@@ -53,8 +53,10 @@ export const CRITERIA_SAVED_AS: Record<CriteriaQuestion, 'bedrooms' | 'budget' |
   budget: 'budget',
   max_rent: 'max_rent',
   min_profit: 'min_profit',
-  // Batch 30: one minimum profit for everyone, so the rent-to-rent figure saves through it.
-  r2r_min_profit: 'min_profit',
+  // Review R4 (R4-05, Zac 19 Nov 2026): the rent-to-rent minimum saves through its own question, so the buying
+  // minimum is never touched; a minimum-profit change for a member with two figures saves only the buying one
+  // (undo.ts minimumWrite).
+  r2r_min_profit: 'r2r_min_profit',
   property_type: 'property_type',
   add_deal_type: 'deal_types',
   remove_deal_type: 'deal_types',

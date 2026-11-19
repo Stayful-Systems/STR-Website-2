@@ -33,7 +33,7 @@ import { isAdminEmail } from '../admin';
 import { DEFAULT_GOALS, parseMarketGoals, type MarketGoals } from '../market/goals';
 import { areaCodeFrom } from '../market/lead-goals';
 import { parseAboutYou } from './about';
-import { applyAnswer, clearAnswer, emptyAnswers, MARKS_WRITTEN, questionById, questionsFor, SECTION_TOKENS, type Answers, type QuestionId, type WhereAnswer } from './questions';
+import { applyAnswer, averageRateValue, clearAnswer, NO_AVERAGE_YET, emptyAnswers, MARKS_WRITTEN, questionById, questionsFor, SECTION_TOKENS, type Answers, type QuestionId, type WhereAnswer } from './questions';
 import { EMPTY_QUIZ, parseQuizRow, progress, seedFromGoals, type AnsweredMap, type Progress, type QuizRecord } from './state';
 import { profileFilters, profileFiltersByType } from './matching';
 import { typesShown } from './deal-types';
@@ -283,12 +283,14 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   if (input.notSure) next = clearAnswer(q.id, s.answers);
   else {
     let value = input.value;
-    // Batch 30: "Use today's average" on the rate screen: their deposit stays, the rate is the cached live average
-    // (or what they have, if the cache has none), and they are back on the daily average (rateSet false).
+    // Batch 30: "Use today's average" on the rate screen: their deposit stays, the rate is the cached live average,
+    // and they are back on the daily average (rateSet false). Review R4 (R4-42): with no average in the cache yet,
+    // nothing changes and the member is told so.
     if (q.id === 'finance' && value && typeof value === 'object' && (value as { useAverage?: unknown }).useAverage === true) {
-      const finance = s.answers.goals.finance;
       const today = rateToSync((await ask(pdMortgageRates, {}, { mode: 'cron', cacheOnly: true }).catch(() => null))?.value ?? null, new Date());
-      value = { depositPct: finance.depositPct, mortgageRatePct: today?.ratePct ?? finance.mortgageRatePct, useAverage: true, rateAsOf: today?.asOf ?? null };
+      const average = averageRateValue(s.answers.goals.finance, today);
+      if (!average) return fail(NO_AVERAGE_YET);
+      value = average;
     }
     const r = applyAnswer(q.id, value, s.answers);
     if (!r.ok) return fail(r.error);

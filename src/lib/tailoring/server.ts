@@ -171,6 +171,7 @@ export async function tailoringForSeats(admin: Admin, seats: readonly SeatInput[
   const since = signalSince(now);
 
   const about = new Map<string, AboutYou>();
+  const joined = new Map<string, string | null>();
   const marks = new Map<string, AnsweredMap>();
   const [settings, modes, raw, restarts] = await Promise.all([
     getBillingSettings(),
@@ -180,9 +181,12 @@ export async function tailoringForSeats(admin: Admin, seats: readonly SeatInput[
     latestRestartsFor(admin, profileIds, since),
     (async () => {
       for (const some of chunks(userIds)) {
-        const [aboutRes, quizRes] = await Promise.all([admin.from('profiles').select('id, about_you').in('id', some), admin.from('profile_quiz').select('user_id, answered').in('user_id', some)]);
+        const [aboutRes, quizRes] = await Promise.all([admin.from('profiles').select('id, about_you, created_at').in('id', some), admin.from('profile_quiz').select('user_id, answered').in('user_id', some)]);
         if (aboutRes.error) warn(`about_you unreadable: ${aboutRes.error.message}`);
-        for (const r of (aboutRes.data ?? []) as { id: string; about_you: unknown }[]) about.set(r.id, parseAboutYou(r.about_you) ?? DEFAULT_ABOUT);
+        for (const r of (aboutRes.data ?? []) as { id: string; about_you: unknown; created_at?: string | null }[]) {
+          about.set(r.id, parseAboutYou(r.about_you) ?? DEFAULT_ABOUT);
+          joined.set(r.id, r.created_at ?? null);
+        }
         if (quizRes.error) warn(`quiz marks unreadable: ${quizRes.error.message}`);
         for (const r of (quizRes.data ?? []) as { user_id: string; answered: unknown }[]) marks.set(r.user_id, parseAnswered(r.answered));
       }
@@ -218,6 +222,8 @@ export async function tailoringForSeats(admin: Admin, seats: readonly SeatInput[
       modes: profile ? modes.get(profile.id) ?? {} : {},
       signals,
       widths: settings.dealPricing.profitRangePct,
+      // Review R4 (R4-03): which end of the profit range they are judged on depends on these (criteria.ts profitEndChoice).
+      profitEndDates: { joinedAt: joined.get(seat.userId) ?? null, shorterFrom: settings.lifecycle.quizShorterFrom },
     });
   }
   return out;

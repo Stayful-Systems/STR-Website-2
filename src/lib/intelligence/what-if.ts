@@ -40,6 +40,7 @@ import { formatRange } from '../marketplace/profit-range.ts';
 import type { PoolRow } from '../today/candidates.ts';
 import type { BtlCard } from '../btl/card.ts';
 import { inBudget } from '../btl/deal.ts';
+import { minimumsOf, twoMinimums } from '../si-actions/undo.ts';
 
 export type WhatIfKey = 'budget' | 'brrr_budget' | 'cash' | 'rent_10' | 'rent_20' | 'areas' | 'miles' | 'beds_down' | 'beds_up' | 'type_either' | 'profit' | `add_${DealType}`;
 
@@ -137,8 +138,11 @@ export function whatIfChanges(p: TailoringProfile, extra: { nearbyAreas: readonl
   if ((w.minProfit ?? 0) > 0 || (w.minProfitR2r ?? 0) > 0) {
     const lower = (n: number) => Math.round((n * (1 - WHAT_IF_MIN_PROFIT_STEP)) / 25) * 25;
     const buy = w.minProfit !== null && w.minProfit > 0 ? lower(w.minProfit) : null;
-    const r2r = w.minProfitR2r !== null && w.minProfitR2r > 0 ? lower(w.minProfitR2r) : null;
-    add('profit', `set your minimum profit at ${gbp((buy ?? r2r)!)} a month`, 'profit', {
+    // Review R4 (R4-05, Zac 19 Nov 2026): a member with two different minimums (from before Batch 30) is offered the
+    // buying one lowered on its own (their rent-to-rent one is left as it is), so the change is one figure, saved alone.
+    const separate = twoMinimums(minimumsOf(g)) && buy !== null;
+    const r2r = !separate && w.minProfitR2r !== null && w.minProfitR2r > 0 ? lower(w.minProfitR2r) : null;
+    add('profit', `set your ${separate ? 'buying ' : ''}minimum profit at ${gbp((buy ?? r2r)!)} a month`, 'profit', {
       ...g,
       finance: buy !== null ? { ...g.finance, targetMarginPcm: buy } : g.finance,
       r2r: r2r !== null ? { ...g.r2r, minMarginPcm: r2r } : g.r2r,
@@ -278,11 +282,17 @@ export function whatIfAnswer(v: WhatIf, before: { goals: MarketGoals; savedAreas
       return { questionId: 'bedrooms', value: String(g.bedrooms), undo: b.bedrooms === null ? null : String(b.bedrooms) };
     case 'type_either':
       return { questionId: 'property_type', value: 'either', undo: b.buyer.propertyType };
-    case 'profit':
-      // Batch 30: one minimum profit for everyone: the rent-to-rent figure saves through it too.
-      return g.finance.targetMarginPcm !== b.finance.targetMarginPcm
-        ? { questionId: 'min_profit', value: g.finance.targetMarginPcm, undo: b.finance.targetMarginPcm }
-        : { questionId: 'min_profit', value: g.r2r.minMarginPcm, undo: b.r2r.minMarginPcm ?? b.finance.targetMarginPcm };
+    case 'profit': {
+      // Review R4 (R4-05, Zac 19 Nov 2026): it writes only the figure it lowered, so it can never raise the
+      // rent-to-rent minimum; Undo puts both figures back exactly (si-actions/undo.ts). A member whose two figures
+      // are equal (a new member's one answer) lowers the one minimum, as Batch 30 built it.
+      const undo = minimumsOf(b);
+      const buyLowered = g.finance.targetMarginPcm !== b.finance.targetMarginPcm;
+      if (twoMinimums(undo)) {
+        return buyLowered ? { questionId: 'min_profit', value: { pcm: g.finance.targetMarginPcm, only: 'buy' }, undo } : { questionId: 'r2r_min_profit', value: g.r2r.minMarginPcm, undo };
+      }
+      return { questionId: 'min_profit', value: buyLowered ? g.finance.targetMarginPcm : g.r2r.minMarginPcm, undo };
+    }
     default:
       // add_<type>: the deal types with one added.
       return { questionId: 'deal_types', value: g.dealTypes, undo: b.dealTypes };

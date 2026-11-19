@@ -10,10 +10,12 @@
  *   Batch 30's shorter quiz gives it fewer checks to make), and a match (met ÷ checked, the %
  *   the member sees) of at least minMatchPct and at least their signup
  *   reveal's #1 (no reveal: the floor alone);
- *   the profit the profit check reads — the LOW end of the range, or for a
- *   BRRR project Batch 17's profit after the works (after refinance for a
- *   full project) — at least profitOverMinPct above the member's minimum
- *   for that deal type. No real minimum-profit answer: never standout.
+ *   the profit the profit check reads — the member's END of the range
+ *   (Review R4, R4-03: wantsFor(...).profitEnd, the same helper as Today), or
+ *   for a BRRR project Batch 17's profit after the works (after refinance for
+ *   a full project) at that end — at least profitOverMinPct above the
+ *   member's minimum for that deal type. No real minimum-profit answer: never
+ *   standout.
  *
  * The run (run.ts) then adds what needs the database: the deal is new to the
  * member, confirmed live recently, beats what they've already been shown,
@@ -21,7 +23,7 @@
  *
  * Pure.
  */
-import { forTypes, minProfitFor, typeOfFacts, type DealFacts, type Judgement, type MemberFigures, type Wants } from '../tailoring/criteria.ts';
+import { forTypes, minProfitFor, profitAt, typeOfFacts, type DealFacts, type Judgement, type MemberFigures, type Wants } from '../tailoring/criteria.ts';
 import type { DealType } from '../profile/deal-types.ts';
 import type { StandoutSettings } from './settings.ts';
 import type { StandoutReason } from './reasons.ts';
@@ -46,14 +48,16 @@ export interface StandoutJudgement {
   matchPct: number | null;
   met: number;
   checked: number;
-  /** The profit figure the profit check reads, £ a month (low end). */
+  /** The low end of the range, £ a month (stored as profit_low_pcm: the wording and "beats what's shown" read it). */
   profitLow: number | null;
+  /** Review R4 (R4-03): the profit the profit check reads: the member's end of the same range, £ a month. */
+  profitJudged: number | null;
   /** The top of the same range, £ a month (for the wording, never judged). */
   profitHigh: number | null;
   profitBasis: ProfitBasis;
   /** The member's minimum for this deal type, £ a month. */
   minProfit: number | null;
-  /** What profitLow must reach: the minimum plus profitOverMinPct. */
+  /** What profitJudged must reach: the minimum plus profitOverMinPct. */
   profitBar: number | null;
 }
 
@@ -61,7 +65,8 @@ export interface StandoutInput {
   judgement: Judgement;
   facts: Pick<DealFacts, 'kind' | 'dealType' | 'dealTypes' | 'project'>;
   figures: Pick<MemberFigures, 'range'>;
-  wants: Pick<Wants, 'minProfit' | 'minProfitR2r'>;
+  /** profitEnd: the end the member is judged on (wantsFor); the low end when absent. */
+  wants: Pick<Wants, 'minProfit' | 'minProfitR2r'> & Partial<Pick<Wants, 'profitEnd'>>;
   chosenTypes: readonly DealType[];
   /** The member's signup reveal #1's match % now, or null (no reveal, or it has gone). */
   revealPct: number | null;
@@ -113,9 +118,10 @@ export function judgeStandout(i: StandoutInput): StandoutJudgement {
   const matchPct = matchPctOf(j);
   const profitLow = i.figures.range ? i.figures.range.lowPcm : null;
   const profitHigh = i.figures.range ? i.figures.range.highPcm : null;
+  const profitJudged = i.figures.range ? profitAt(i.figures.range, i.wants.profitEnd ?? 'low') : null;
   const minProfit = minProfitFor(facts, i.wants);
   const profitBar = minProfit === null ? null : profitBarFor(minProfit, i.settings.profitOverMinPct);
-  const base = { dealType, matchPct, met: j.met, checked: j.checked, profitLow, profitHigh, profitBasis: profitBasisOf(facts), minProfit, profitBar };
+  const base = { dealType, matchPct, met: j.met, checked: j.checked, profitLow, profitJudged, profitHigh, profitBasis: profitBasisOf(facts), minProfit, profitBar };
   const no = (reason: StandoutReason, inPool = true): StandoutJudgement => ({ outcome: 'not_standout', reason, inPool, ...base });
 
   if (!i.chosenTypes.includes(dealType)) return no('type_not_chosen', false);
@@ -127,14 +133,14 @@ export function judgeStandout(i: StandoutInput): StandoutJudgement {
   if (j.checked < (dealType === 'r2r' ? i.settings.minCheckedRent : i.settings.minChecked)) return no('too_few_checks');
   if (matchPct === null || matchPct < i.settings.minMatchPct) return no('match_below_floor');
   if (i.revealPct !== null && matchPct < i.revealPct) return no('below_reveal_match');
-  if (profitLow === null) return no('profit_unknown');
-  if (profitBar === null || profitLow < profitBar) return no('profit_short');
+  if (profitJudged === null) return no('profit_unknown');
+  if (profitBar === null || profitJudged < profitBar) return no('profit_short');
   return { outcome: 'standout', reason: 'standout', inPool: true, ...base };
 }
 
 function judgeBtlStandout(i: StandoutInput, base: Omit<StandoutJudgement, 'outcome' | 'reason' | 'inPool'>): StandoutJudgement {
   const c = i.btl?.card ?? null;
-  const b = { ...base, matchPct: null, met: 0, checked: 0, profitLow: c ? c.cashflowMonthly.low : null, profitHigh: c ? c.cashflowMonthly.high : null, profitBasis: 'btl_cashflow' as const, minProfit: null, profitBar: null };
+  const b = { ...base, matchPct: null, met: 0, checked: 0, profitLow: c ? c.cashflowMonthly.low : null, profitJudged: c ? c.cashflowMonthly.low : null, profitHigh: c ? c.cashflowMonthly.high : null, profitBasis: 'btl_cashflow' as const, minProfit: null, profitBar: null };
   const no = (reason: StandoutReason, inPool = true): StandoutJudgement => ({ outcome: 'not_standout', reason, inPool, ...b });
   if (!i.btl || !c) return no('btl_no_figures', false);
   if (i.judgement.mustFails.includes('location')) return no('must_have_missed', false);
