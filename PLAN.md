@@ -92,11 +92,11 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: `npm test` ("step 1 saves a lead even when step 2 never happens": source pin + policy test). Manual curl on dev server: step 1 twice → one lead; step 2 twice → one run; no address in any response or log line.
   Notes:
 
-- [ ] **Phase 7 — Held-report cron** (needs 5)
+- [x] **Phase 7 — Held-report cron** (needs 5)
   Files: `src/app/api/internal/website-reports/route.ts` (+ pin test), `vercel.json` (hourly cron).
   `authoriseInternal`, `?dry=1` (lists what would run, no lease, no spend). Runs due `held_cap` first, then `held_credit` retries (while balance allows), then stale running leases. Expires after 14 days. Backlog > cap → one admin email per day.
   Check: `npm test`; smoke + pin prove "21st report is held and runs next day exactly once".
-  Notes:
+  Notes: api/internal/website-reports/route.ts (authoriseInternal; `?dry=1` read-only: counts + lead ids, no lease/spend/write/email; order held_cap → held_credit → stale leases → 14-day expiry → one admin email per UK day, key `website-backlog:<day>`); held-cron.test.ts (12 pins). vercel.json: one entry added after the `standout` cron, `{ "path": "/api/internal/website-reports", "schedule": "47 * * * *" }`, plus a comma on the previous entry. Extras: held_cap skipped while today's slots are full; reports older than 14 days are expired not run; a short owner is skipped for the rest of the run; maxDuration 60, no report starts after 15s. Smoke SQL already asserted the 21st-claim and next-day-once cases, so it was not changed.
 
 - [x] **Phase 8 — Templates and AI copy** (needs 4)
   Files: `src/lib/websites/templates/SiteShell.tsx`, `templates/pages.tsx`, `copy-prompt.ts` (+ test), `copy-server.ts`.
