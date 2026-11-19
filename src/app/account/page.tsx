@@ -32,6 +32,7 @@ import { AccountHeader, GoalsSection, MoreSection, NotificationsSection, Remembe
 import { rememberedFactsFor } from '@/lib/knowledge/facts-server';
 import { logActivity } from '@/lib/activity/log';
 import { START_PATH } from '@/lib/management/stamp';
+import { academyTrialView } from '@/lib/academy/account-view';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +42,7 @@ export const metadata: Metadata = {
 };
 
 // market_goals is for "What you're looking for"; it is not, and must not become, one of ACCESS_COLUMNS.
-const PROFILE_COLUMNS = `${ACCESS_COLUMNS}, email, full_name, created_at, reports_total, stripe_customer_id, subscription_current_period_end, subscription_started_at, market_goals`;
+const PROFILE_COLUMNS = `${ACCESS_COLUMNS}, email, full_name, created_at, reports_total, stripe_customer_id, subscription_current_period_end, subscription_started_at, market_goals, stripe_default_payment_method_id`;
 
 /**
  * Account (Batch 11): the plan, billing, notifications and what the member is
@@ -103,6 +104,7 @@ export default async function AccountPage({
 
   const profile = (row ?? {}) as Record<string, string | number | null>;
   const subscriptionId = (profile.stripe_subscription_id as string | null) ?? null;
+  const academyPromise = academyTrialView(user.id, profile); // Batch 31a: runs alongside the loads below
 
   let periodEnd = (profile.subscription_current_period_end as string | null) ?? null;
 
@@ -207,7 +209,7 @@ export default async function AccountPage({
           </p>
         )}
 
-        <ManagePlan view={view} topupRate={credit?.rates.topup} />
+        <ManagePlan view={view} topupRate={credit?.rates.topup} academy={await academyPromise} />
 
         <section className="mt-6 rounded-2xl border border-[#e4e7dc] bg-white p-5">
           <h2 className="text-base font-semibold">Credit and usage</h2>

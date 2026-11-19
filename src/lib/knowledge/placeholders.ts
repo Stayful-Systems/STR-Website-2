@@ -22,6 +22,7 @@
 import { formatPence } from '../credit/deal-pricing.ts';
 import { BALANCE_BANDS_PENCE, PRODUCT_FACTS, TEAM_EMAIL } from './config.ts';
 import { SEAT_PERIOD_DAYS, SEAT_PRICE_PENCE } from '../team/rules.ts';
+import { ACADEMY_FACTS } from '../academy/rules.ts';
 import { WINDOW_END_HOUR, WINDOW_START_HOUR } from '../sms/uk-time.ts';
 import { callFloorPence } from '../standout/notify.ts';
 import { QUICK_MAX_WORDS, speakCharsFor, speakPricePence } from '../chat/voice-rules.ts';
@@ -183,6 +184,12 @@ function topupRate(g: GlobalSnapshot): number | null {
   if (!v || typeof v !== 'object') return null;
   const r = num((v as Record<string, unknown>).topup);
   return r !== null && r > 0 ? r : null;
+}
+
+/** Batch 31a: the Pro plan's monthly price (billing_plans 'pro', active, monthly); what an Academy trial costs once its free months end. */
+function proMonthlyPlan(g: GlobalSnapshot): number | null {
+  const p = g.plans.find((x) => x.code === 'pro' && x.active && x.interval === 'month' && Number.isFinite(x.pricePence) && x.pricePence > 0);
+  return p ? p.pricePence : null;
 }
 
 function lowestMonthlyPlan(g: GlobalSnapshot): number | null {
@@ -497,6 +504,10 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   ledger_properties: g_('Properties in the methodology ledger, in words', 'config PRODUCT_FACTS.ledgerProperties', () => countWords(PRODUCT_FACTS.ledgerProperties)),
   ledger_year: g_('The year the ledger covers', 'config PRODUCT_FACTS.ledgerYear', () => String(PRODUCT_FACTS.ledgerYear)),
   team_email: g_('The Stayful team’s email address', 'config TEAM_EMAIL', () => TEAM_EMAIL),
+  // Batch 31a: the Stayful Academy's free Pro months (src/lib/academy/rules.ts: a code constant, so a change is a reviewed code change)
+  pro_plan_cost: g_("The Pro plan's monthly price (what an Academy trial costs after its free months)", "billing_plans ('pro', monthly)", (g) => money(proMonthlyPlan(g))),
+  academy_trial_months: g_('Free months of Pro the Stayful Academy gives, in words', 'code ACADEMY_FACTS.trialMonths (src/lib/academy/rules.ts)', () => countWords(ACADEMY_FACTS.trialMonths)),
+  academy_reminder_days: g_('Days before the first Academy charge the reminder email goes', 'code ACADEMY_FACTS.reminderDaysBefore (src/lib/academy/rules.ts)', () => String(ACADEMY_FACTS.reminderDaysBefore)),
 
   // The member's own (view and chat only, never a call)
   balance: m_('Their exact credit balance', 'the member’s credit', (m) => money(m.balancePence)),

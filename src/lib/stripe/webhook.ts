@@ -16,6 +16,7 @@ import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 import { planActivityKind, type ActivityKind } from '../activity/kinds.ts';
 import type { InvoiceFacts, PackFacts, RepeatFacts } from '../meta/events.ts';
 import { invoicePaymentIntentId, paymentFromIntent, paymentFromInvoice, type PaymentRecord, type RefundRecord } from '../payments/rules.ts';
+import { trialSlotKey, trialSlots } from '../academy/rules.ts';
 
 export interface WebhookUser {
   id: string;
@@ -121,7 +122,46 @@ export interface WebhookDeps {
    * from a top-up or a starter pack. Returns the pence restored; idempotent.
    */
   restoreDisputedCredit?(userId: string, paymentIntentId: string): Promise<number>;
+  /**
+   * Batch 31a: the Stayful Academy (src/lib/academy). Optional: without it an
+   * Academy payment is still kept off the generic one-off path (it is never
+   * treated as a top-up, nor its customer written to a profile).
+   */
+  academy?: AcademyWebhookDeps;
   log?: (msg: string) => void;
+}
+
+/** Batch 31a: one Academy purchase as the webhook records it (academy_purchases). */
+export interface AcademyPurchaseInput {
+  /** The checkout email, lower-case (emailKey). */
+  email: string;
+  customerId: string | null;
+  paymentIntentId: string;
+  /** The card saved for off-session use, from the payment intent. */
+  paymentMethodId: string | null;
+  /** What was charged (the payment intent's amount_received). */
+  amountPence: number | null;
+  paidAt: string;
+  checkoutSessionId: string | null;
+  /** Set when the checkout terms box was ticked (session.consent.terms_of_service = 'accepted'). */
+  termsAcceptedAt: string | null;
+}
+
+export interface AcademyWebhookDeps {
+  /**
+   * Write the purchase once per payment intent (on conflict do nothing) and
+   * return its row id, the existing row's on a replay; null if it could not
+   * be written or found.
+   */
+  recordPurchase(input: AcademyPurchaseInput): Promise<{ id: string } | null>;
+  /**
+   * Link the purchase to this account and start its trial
+   * (linkAcademyPurchase(purchaseId, userId, 'auto')); a note for the log.
+   * Idempotent: a replay answers "already".
+   */
+  linkAfterPurchase(purchaseId: string, userId: string): Promise<string>;
+  /** A refund of the Academy payment (cancelTrialForRefund); a note for the log. */
+  cancelTrialForRefund(paymentIntentId: string, fullyRefunded: boolean): Promise<string>;
 }
 
 export type WebhookConversion =
@@ -408,6 +448,71 @@ async function clawbackPackIfPack(event: Stripe.Event, deps: WebhookDeps): Promi
   return { handled: true, note: 'starter pack credit clawed back' };
 }
 
+// ── Batch 31a: Stayful Academy ──
+// The Academy is a one-off payment (metadata kind 'academy' on the Checkout
+// session and its payment intent) that gives 3 months of Intelligence Pro free
+// (src/lib/academy). Its checkout is handled before the generic one-off path
+// and returns: it never writes the profile's Stripe customer, saves a card or
+// grants a top-up; linking (src/lib/academy/link.ts) decides all of that. Its
+// trial's £0 first invoice credits month 1 only (the credit sweep grants months
+// 2 and 3), and its refund cancels the trial instead of touching Total paid.
+
+/** The Academy checkout: record the purchase, then link it to the buyer's account if there is one. */
+async function handleAcademyCheckout(session: Stripe.Checkout.Session, prefetchedPi: Stripe.PaymentIntent | null, deps: WebhookDeps): Promise<HandleResult> {
+  if (!deps.academy) return { handled: false, note: 'academy not configured' };
+  // Card only, so it should be paid; anything else is left for a person to look at.
+  if (session.payment_status !== 'paid') return { handled: true, note: `academy checkout ${session.payment_status ?? 'unknown'}: not recorded` };
+  const piId = id(session.payment_intent);
+  if (!piId) return { handled: false, note: 'academy checkout without payment intent' };
+  const rawEmail = session.customer_details?.email ?? session.customer_email ?? null;
+  if (!rawEmail) return { handled: false, note: 'academy checkout without email' };
+  const email = rawEmail.trim().toLowerCase();
+  // Strict: a Stripe outage throws (the route answers 500 and Stripe retries) rather than saving the
+  // purchase without its card.
+  const pi = prefetchedPi ?? (deps.retrievePaymentIntentStrict ? await deps.retrievePaymentIntentStrict(piId) : await deps.retrievePaymentIntent(piId));
+  const purchase = await deps.academy.recordPurchase({
+    email,
+    customerId: id(session.customer) ?? id(pi?.customer),
+    paymentIntentId: piId,
+    paymentMethodId: id(pi?.payment_method),
+    amountPence: pi?.amount_received ?? session.amount_total ?? null,
+    paidAt: isoFromUnix(session.created) ?? new Date().toISOString(),
+    checkoutSessionId: session.id ?? null,
+    termsAcceptedAt: session.consent?.terms_of_service === 'accepted' ? new Date().toISOString() : null,
+  });
+  if (!purchase) return { handled: false, note: 'academy purchase not recorded' };
+  let user = session.client_reference_id ? await deps.findUserById(session.client_reference_id) : null;
+  if (!user) user = await deps.findUserByEmail(email);
+  if (!user) return { handled: true, note: 'academy purchase recorded; no account yet' };
+  const linked = await deps.academy.linkAfterPurchase(purchase.id, user.id);
+  return { handled: true, note: `academy purchase recorded; ${linked}` };
+}
+
+/**
+ * The Academy trial's £0 first invoice: month 1 of the trial's credit, keyed
+ * and expiring exactly as the credit sweep's slot 0 (trialSlots), or null
+ * when the invoice is not that.
+ */
+function academyTrialFirstMonth(sub: Stripe.Subscription | null, subId: string, reason: string | null): { sourceRef: string; expiresAt: Date } | null {
+  if (!sub || sub.metadata?.source !== 'academy' || sub.status !== 'trialing' || reason !== 'subscription_create') return null;
+  if (!sub.trial_start || !sub.trial_end) return null;
+  const first = trialSlots(new Date(sub.trial_start * 1000), new Date(sub.trial_end * 1000))[0];
+  return first ? { sourceRef: trialSlotKey(subId, first.key), expiresAt: first.to } : null;
+}
+
+/** A refund of the Academy payment cancels its trial (a full one) and is kept off Total paid; null when not the Academy's. */
+async function academyRefund(charge: Stripe.Charge, deps: WebhookDeps): Promise<HandleResult | null> {
+  if (!deps.academy) return null;
+  const piId = id(charge?.payment_intent);
+  if (!piId) return null;
+  // As for a pack: "could not tell" throws so Stripe sends it again, rather than booking it as a member refund.
+  const pi = deps.retrievePaymentIntentStrict ? await deps.retrievePaymentIntentStrict(piId) : await deps.retrievePaymentIntent(piId);
+  if (pi?.metadata?.kind !== 'academy') return null;
+  const fully = charge.refunded === true || (Number(charge.amount_refunded) || 0) >= (Number(charge.amount) || 0);
+  const note = await deps.academy.cancelTrialForRefund(piId, fully);
+  return { handled: true, note: `academy refund (${fully ? 'full' : 'partial'}): ${note}` };
+}
+
 export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps): Promise<HandleResult> {
   const env = deps.env ?? process.env;
   const log = deps.log ?? ((m: string) => console.log(`[stripe/webhook] ${m}`));
@@ -415,6 +520,13 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;
+      // Batch 31a: the Academy first, before any profile is looked up or written.
+      if (session.metadata?.kind === 'academy') return handleAcademyCheckout(session, null, deps);
+      let academyPi: Stripe.PaymentIntent | null = null;
+      if (deps.academy && session.mode === 'payment' && id(session.payment_intent)) {
+        academyPi = await deps.retrievePaymentIntent(id(session.payment_intent)!);
+        if (academyPi?.metadata?.kind === 'academy') return handleAcademyCheckout(session, academyPi, deps);
+      }
       const customerId = id(session.customer);
       const email = session.customer_details?.email ?? session.customer_email ?? null;
       let user = session.client_reference_id ? await deps.findUserById(session.client_reference_id) : null;
@@ -466,7 +578,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       await deps.updateProfile(user.id, patch);
       const piId = id(session.payment_intent);
       if (piId) {
-        const pi = await deps.retrievePaymentIntent(piId);
+        const pi = academyPi ?? (await deps.retrievePaymentIntent(piId));
         const pm = id(pi?.payment_method);
         if (pm) await deps.savePaymentMethod(user.id, customerId, pm);
         const amount = Number(pi?.metadata?.amount_pence ?? session.amount_total ?? 0) || Number(session.amount_total ?? 0);
@@ -545,6 +657,14 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         log(`invoice ${invoice.id}: price ${priceId} is not a known plan`);
         return { handled: false, note: 'unknown price' };
       }
+      // Batch 31a: an Academy trial's first invoice arriving once the trial is no longer running (refunded,
+      // unlinked or cancelled meanwhile) grants nothing and leaves the profile alone. Without this it
+      // fell through to the generic inv:<id> grant: 90 days of Pro for a trial that has ended.
+      const academyMeta = sub?.metadata ?? invoice.parent?.subscription_details?.metadata ?? null;
+      if (academyMeta?.source === 'academy' && invoice.billing_reason === 'subscription_create' && sub?.status !== 'trialing') {
+        log(`invoice ${invoice.id}: academy trial ${subId} is ${sub?.status ?? 'unknown'}; nothing granted`);
+        return { handled: true, note: `academy trial ${sub?.status ?? 'unknown'}: nothing granted` };
+      }
       const lineEnd = invoice.lines?.data?.[0]?.period?.end;
       const periodEnd = periodEndOf(sub) ?? (lineEnd ? new Date(lineEnd * 1000) : null);
       const patch: Record<string, unknown> = {
@@ -582,7 +702,11 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       // A £0 invoice (a 100%-off code, a trial's first invoice) grants the full
       // cycle: a promotion is a promotion (Batch 21 review, question 5).
       if (reason === 'subscription_create' || reason === 'subscription_cycle' || reason === 'manual' || reason === null) {
-        if (planCode === 'pro_annual') {
+        // Batch 31a: the Academy trial's £0 first invoice is month 1 of three, not the whole 90 days.
+        const academyMonth = academyTrialFirstMonth(sub, subId, reason);
+        if (academyMonth) {
+          await deps.grantPlanCycle(user.id, 'pro', academyMonth.sourceRef, academyMonth.expiresAt, user.email);
+        } else if (planCode === 'pro_annual') {
           // Annual: the first month now; the sweep cron grants the rest month by month.
           const start = new Date();
           // Batch 21 (B8): a month added with the day clamped, as the sweep's slots are (src/lib/stripe/annual.ts).
@@ -768,6 +892,11 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
 
     case 'charge.refunded':
     case 'charge.dispute.created': {
+      // Batch 31a: an Academy refund cancels its trial and is not the member's money in Total paid.
+      if (event.type === 'charge.refunded') {
+        const academy = await academyRefund(event.data.object as Stripe.Charge, deps);
+        if (academy) return academy;
+      }
       // Batch 20: every refund comes off Total paid, whatever the charge was for.
       if (event.type === 'charge.refunded') await recordChargeRefund(deps, event.data.object as Stripe.Charge);
       else await recordDisputeMark(deps, event.data.object as Stripe.Dispute, true);
