@@ -122,11 +122,11 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: `npm test` and `npm run build`; dry run writes nothing (pin).
   Notes:
 
-- [ ] **Phase 12 — Lead view** (needs 5)
+- [x] **Phase 12 — Lead view** (needs 5)
   Files: `src/app/leads/[id]/page.tsx` (2 lines), `src/app/leads/website/LeadPanel.tsx`, `src/app/leads/page.tsx` (entry card for invited members; no new nav item), `src/app/leads/lead-actions.ts` (refuse manual CRM push of a website lead with no report).
   Panel shows source values, report state (awaiting address, held until, not run because self-submit, done, low confidence), self-submit flag.
   Check: `npm run build`; another member's lead id → 404 (existing scope check).
-  Notes:
+  Notes: DEVIATION: the manual CRM push is `pushLeadAction` in src/app/leads/integrations/actions.ts (lead-actions.ts has no push), so the refusal is there (+5: `websitePushRefusal` import, comment, website_reports state read, refusal + early return); lead-actions.ts untouched. leads/[id]/page.tsx +2 (LeadPanel import and `<LeadPanel leadId={lead.id} />` after the lead's </section>). leads/page.tsx +12 (WebsiteEntryCard import, `ownWebsite()` helper, `const website = isOwner ? await ownWebsite(scope.ownerId) : null`, `{website ? <WebsiteEntryCard site={website} /> : null}`). New: website/LeadPanel.tsx (LeadPanel, WebsiteEntryCard), lib/websites/lead-panel.ts (wording; extra file), website/lead-panel.test.ts (7 pass). LeadPanel selects only state, due_day, quality_ok, self_submit from website_reports and the utm/fbclid/ad/landing columns from lead_sources; renders nothing without a report row. tsc clean, build passed. NOT RUN: another member's lead id → 404 (relies on the page's existing scope check; Zac's click-through).
 
 - [x] **Phase 13 — Knowledge drafts** (needs 1)
   Files: `src/lib/knowledge/{seed,placeholders,service-facts}.ts`.

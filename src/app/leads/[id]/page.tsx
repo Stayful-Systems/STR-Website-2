@@ -14,6 +14,7 @@ import type { LeadVerdict } from "@/lib/leads/rules";
 import { siteUrl } from "@/lib/url";
 import { PushLeadButton } from "../PushLeadButton";
 import { LeadDetailActions, MarkLeadOpened } from "./LeadDetailActions";
+import { LeadPanel } from "../website/LeadPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -181,6 +182,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             ) : null}
           </div>
         </section>
+        <LeadPanel leadId={lead.id} />
       </div>
 
       {hasReport ? (

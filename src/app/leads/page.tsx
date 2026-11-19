@@ -15,6 +15,7 @@ import { archivingSoon, archiveDueAt, retentionDate } from "@/lib/leads/retentio
 import { saturationBand } from "@/lib/market/competition";
 import { WallBanner, type WallNotice } from "./WallBanner";
 import { LeadList, type LeadListRow } from "./LeadList";
+import { WebsiteEntryCard } from "./website/LeadPanel";
 
 export const metadata: Metadata = {
   title: "Leads — Stayful Intelligence",
@@ -88,6 +89,13 @@ async function ownsWebsite(ownerId: string): Promise<boolean> {
   return (count ?? 0) > 0;
 }
 
+/** Batch 31 phase 12: the owner's website (slug and status) for the entry card, or null. Fails closed. */
+async function ownWebsite(ownerId: string): Promise<{ slug: string; status: string } | null> {
+  if (!hasServiceRole()) return null;
+  const { data } = await createAdminClient().from("websites").select("slug, status").eq("user_id", ownerId).maybeSingle();
+  return (data as { slug: string; status: string } | null) ?? null;
+}
+
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const filters = parseLeadFilters(await searchParams);
 
@@ -108,6 +116,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   // Batch 22f: a management company that lands here before its form exists carries on with the setup.
   // Batch 31: a website counts as set up too, so that owner is not sent to funnel setup.
   if (isOwner && funnels.length === 0 && (await isManagementAccount(user.id)) && !(await ownsWebsite(scope.ownerId))) redirect(SETUP_PATH);
+  const website = isOwner ? await ownWebsite(scope.ownerId) : null;
   const countFor = (tab: LeadTab) => counts[LEAD_TABS.findIndex((t) => t.key === tab)] ?? 0;
   const now = new Date();
   const rows = page.leads.map((r) => toRow(r, now));
@@ -147,6 +156,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             </Link>
           ) : null}
         </div>
+
+        {website ? <WebsiteEntryCard site={website} /> : null}
 
         {isOwner ? <WallBanner notices={notices} showFunnelName={funnels.length > 1} /> : null}
 
