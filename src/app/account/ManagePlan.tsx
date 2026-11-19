@@ -19,7 +19,11 @@ const SECONDARY =
   'rounded-full border border-[#e4e7dc] bg-white px-5 py-2 text-sm font-semibold text-[#2e3d2b] transition hover:bg-[#f1f3ec] disabled:opacity-60';
 const QUIET = 'text-sm text-[#7a8274] underline underline-offset-2 hover:text-[#2e3d2b]';
 
-export function ManagePlan({ view, topupRate = 1.3 }: { view: PlanView; topupRate?: number }) {
+// Batch 31a: set for a live Academy trial (src/lib/academy/account-view.ts).
+type AcademyLine = { freeUntil: string; amount: string; last4: string | null };
+
+export function ManagePlan({ view, topupRate = 1.3, academy }: { view: PlanView; topupRate?: number; academy?: AcademyLine | null }) {
+  const academyTrial = academy && view.status === 'subscription_trial' && !view.cancelScheduled && !view.managedByUs ? academy : null;
   const [cancelOpen, setCancelOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
   const [notice, setNotice] = useState<BillingState>(IDLE);
@@ -38,7 +42,7 @@ export function ManagePlan({ view, topupRate = 1.3 }: { view: PlanView; topupRat
   return (
     <section className={`mt-6 ${CARD}`}>
       <h2 className="text-base font-semibold">Your plan</h2>
-      <PlanSummary view={view} topupRate={topupRate} />
+      {academyTrial ? <p className="mt-2 text-sm">{`Academy: Pro free until ${academyTrial.freeUntil}. Then ${academyTrial.amount}/month${academyTrial.last4 ? ` on card ending ${academyTrial.last4}` : ''}.`}</p> : <PlanSummary view={view} topupRate={topupRate} />}
 
       {notice.success && (
         <p className="mt-3 rounded-lg bg-[#eef3ea] px-3 py-2 text-sm text-[#3f5c3a]">{notice.success}</p>
@@ -47,12 +51,12 @@ export function ManagePlan({ view, topupRate = 1.3 }: { view: PlanView; topupRat
         <p className="mt-3 rounded-lg bg-[#fbeceb] px-3 py-2 text-sm text-[#b3261e]">{notice.error}</p>
       )}
 
-      <PlanActions
+      {academyTrial ? <div className="mt-4"><a href="/account/billing" className={SECONDARY}>Manage or cancel</a></div> : <PlanActions
         view={view}
         onCancel={() => open('cancel')}
         onPause={() => open('pause')}
         onResult={setNotice}
-      />
+      />}
 
       <PauseDialog
         key={`pause-${opened}`}

@@ -15,7 +15,8 @@ import { recordConversion } from '../meta/conversions';
 import { recordDispute, recordPayment, recordRefund } from '../payments/server';
 import { clawbackStarterPack, grantStarterPack, settleStarterPack } from '../starter-pack/grant-server';
 import { monthlyPence } from '../billing/churn';
-import type { WebhookDeps } from './webhook';
+import { cancelTrialForRefund, linkAcademyPurchase } from '../academy/deps';
+import type { AcademyWebhookDeps, WebhookDeps } from './webhook';
 
 type UserRow = {
   id: string;
@@ -46,6 +47,60 @@ async function takenUnder(userId: string, base: string): Promise<number> {
   if (exact.error) throw new Error(exact.error.message);
   if (later.error) throw new Error(later.error.message);
   return [...(exact.data ?? []), ...(later.data ?? [])].reduce((sum, r) => sum + Math.max(0, -(Number((r as { amount_pence: unknown }).amount_pence) || 0)), 0);
+}
+
+/**
+ * Batch 31a: the Stayful Academy's webhook wiring. The purchase is written
+ * once per payment intent (on conflict do nothing; a replay reads the existing
+ * row and fills its card, customer and consent where they are empty); linking and refunds are src/lib/academy/deps.ts. Logs carry ids only.
+ */
+function liveAcademyWebhookDeps(): AcademyWebhookDeps {
+  const admin = createAdminClient();
+  return {
+    recordPurchase: async (p) => {
+      const { error } = await admin.from('academy_purchases').upsert(
+        {
+          email: emailKey(p.email),
+          stripe_customer_id: p.customerId,
+          stripe_payment_intent_id: p.paymentIntentId,
+          stripe_payment_method_id: p.paymentMethodId,
+          amount_pence: p.amountPence,
+          paid_at: p.paidAt,
+          stripe_checkout_session_id: p.checkoutSessionId,
+          terms_accepted_at: p.termsAcceptedAt,
+        },
+        { onConflict: 'stripe_payment_intent_id', ignoreDuplicates: true },
+      );
+      if (error) throw new Error(`academy purchase write failed: ${error.message}`);
+      // A row an earlier delivery wrote without some of these (e.g. Stripe could not be asked) gets them
+      // now; a value already there is never overwritten.
+      const fill: Array<[string, string | null]> = [
+        ['stripe_payment_method_id', p.paymentMethodId],
+        ['stripe_customer_id', p.customerId],
+        ['terms_accepted_at', p.termsAcceptedAt],
+      ];
+      for (const [col, value] of fill) {
+        if (!value) continue;
+        const { error: fillError } = await admin
+          .from('academy_purchases')
+          .update({ [col]: value, updated_at: new Date().toISOString() })
+          .eq('stripe_payment_intent_id', p.paymentIntentId)
+          .is(col, null);
+        if (fillError) throw new Error(`academy purchase write failed: ${fillError.message}`);
+      }
+      const { data, error: readError } = await admin.from('academy_purchases').select('id').eq('stripe_payment_intent_id', p.paymentIntentId).maybeSingle();
+      if (readError) throw new Error(`academy purchase read failed: ${readError.message}`);
+      return data ? { id: String((data as { id: string }).id) } : null;
+    },
+    linkAfterPurchase: async (purchaseId, userId) => {
+      const r = await linkAcademyPurchase(purchaseId, userId, 'auto');
+      return `academy link ${r.outcome} (${r.decision})${r.subscriptionId ? ` ${r.subscriptionId}` : ''}`;
+    },
+    cancelTrialForRefund: async (paymentIntentId, fullyRefunded) => {
+      const r = await cancelTrialForRefund(paymentIntentId, fullyRefunded);
+      return `academy refund ${r.outcome}${r.purchaseId ? ` (purchase ${r.purchaseId})` : ''}`;
+    },
+  };
 }
 
 /** The real dependencies for handleStripeEvent (the tests inject fakes). */
@@ -173,6 +228,8 @@ export function liveWebhookDeps(): WebhookDeps {
     settleStarterPack: (paymentIntentId) => settleStarterPack(paymentIntentId),
     grantStarterPack: (input) => grantStarterPack(input),
     clawbackStarterPack: (input) => clawbackStarterPack(input),
+    // Batch 31a: the Stayful Academy (src/lib/academy).
+    academy: liveAcademyWebhookDeps(),
     recordSubscriptionEvent: async (input) => {
       // The price is resolved HERE rather than in the handler, so the handler
       // stays pure and testable and only this file needs the plan table.

@@ -8743,6 +8743,65 @@ on conflict (key) do nothing;
 notify pgrst, 'reload schema';
 
 -- =========================
+-- Batch 31a: academy_purchases
+-- =========================
+-- One row per Stayful Academy purchase (a one-off Stripe payment). Buying the
+-- Academy gives 3 months of Intelligence Pro free on the card the buyer paid
+-- with, starting when the purchase is linked to an account (automatically when
+-- the sign-in email matches and is confirmed, or by admin by hand); then the
+-- Pro price monthly unless they cancel. The rules live in
+-- src/lib/academy/rules.ts. One purchase gives one trial, ever.
+--   email                     the checkout email, stored lower-case (the key auto-linking matches on)
+--   stripe_customer_id        the customer the buyer paid as; the saved card lives on it, so the trial runs on it
+--   stripe_payment_intent_id  the payment: the row's idempotency key (a replayed webhook finds the row)
+--   stripe_payment_method_id  the card saved for off-session use at checkout
+--   terms_accepted_at         when the checkout terms box was ticked (the saved-card consent; no consent, no trial)
+--   user_id, linked_at/by     the account it is linked to, when, and how ('auto' | 'admin')
+--   trial_subscription_id     the Pro trial subscription, once started (unique: one purchase per trial)
+--   trial_started_at/ends_at  the trial's 90 days, from linking
+--   previous_customer_id      the profile's old Stripe customer, when linking moved the profile onto this one
+--   flag_reason               why it was not linked or needs a look in admin (live plan, team member, repeat, …)
+--   reminder_sent_at          the "free months end on…" email, sent once
+--   refunded_at               a refund (a full refund while trialing cancels the trial)
+--   trial_cancelled_at        when the trial was cancelled (refund, admin unlink)
+-- Service role only. Additive and re-runnable; nothing is added to ACCESS_COLUMNS.
+create table if not exists public.academy_purchases (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  stripe_customer_id text,
+  stripe_payment_intent_id text not null,
+  stripe_payment_method_id text,
+  amount_pence integer,
+  paid_at timestamptz,
+  user_id uuid references public.profiles(id) on delete set null,
+  linked_at timestamptz,
+  linked_by text,
+  trial_subscription_id text,
+  refunded_at timestamptz,
+  stripe_checkout_session_id text,
+  terms_accepted_at timestamptz,
+  trial_started_at timestamptz,
+  trial_ends_at timestamptz,
+  previous_customer_id text,
+  flag_reason text,
+  reminder_sent_at timestamptz,
+  trial_cancelled_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists academy_purchases_payment_intent_uidx on public.academy_purchases (stripe_payment_intent_id);
+create unique index if not exists academy_purchases_checkout_session_uidx on public.academy_purchases (stripe_checkout_session_id);
+create unique index if not exists academy_purchases_trial_sub_uidx on public.academy_purchases (trial_subscription_id) where trial_subscription_id is not null;
+create index if not exists academy_purchases_unlinked_email_idx on public.academy_purchases (email) where user_id is null;
+create index if not exists academy_purchases_user_idx on public.academy_purchases (user_id) where user_id is not null;
+do $$ begin
+  alter table public.academy_purchases drop constraint if exists academy_purchases_email_check;
+  alter table public.academy_purchases add constraint academy_purchases_email_check check (email = lower(email));
+  alter table public.academy_purchases drop constraint if exists academy_purchases_linked_by_check;
+  alter table public.academy_purchases add constraint academy_purchases_linked_by_check check (linked_by is null or linked_by in ('auto', 'admin'));
+end $$;
+alter table public.academy_purchases enable row level security;  -- no policies: service role only
+revoke all on public.academy_purchases from anon, authenticated;
 -- Batch 31: customer websites (Phase 1: schema and settings)
 -- =========================
 -- A member who is invited gets a small white-label website at /s/<slug> whose

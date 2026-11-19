@@ -79,6 +79,10 @@
 			"schedule": "55 6 * * *"
 		},
 		{
+			"path": "/api/internal/academy-reminders",
+			"schedule": "47 6 * * *"
+		},
+		{
 			"path": "/api/internal/sourcing",
 			"schedule": "0 7 * * *"
 		},

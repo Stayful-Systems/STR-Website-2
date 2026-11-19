@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 import { expireDueGrants, previewDueGrants } from "@/lib/credit/ledger";
 import { syncUnitCosts } from "@/lib/credit/unit-costs";
-import { ensureAnnualMonthlyGrant } from "@/lib/stripe/grants";
+import { academyTrialSlotDue, ensureAnnualMonthlyGrant, ensureAcademyTrialMonthlyGrant, type AcademyTrialPurchase } from "@/lib/stripe/grants";
 
 // ─── Daily credit sweep ────────────────────────────────────────────────
 // Vercel cron (vercel.json, 03:00 UTC). Writes 'expire' rows for plan credit
@@ -17,6 +17,39 @@ import { ensureAnnualMonthlyGrant } from "@/lib/stripe/grants";
 // pack_bonus_expiry_days, unless the member paid again by then (then the bonus
 // is lifted and never expires). ?dry=1 lists what would expire or be lifted
 // and writes nothing (no annual grants, no unit-cost seeding either).
+//
+// Batch 31a: it also grants Stayful Academy trials their monthly Pro credit
+// (months 2 and 3; the webhook grants month 1), keyed `trial:<sub>:<YYYY-MM>`.
+// The dry run lists the trial months it would grant (academyTrialDue).
+
+type AcademyTrialRow = AcademyTrialPurchase & { id: string };
+
+/** Academy purchases whose trial is still running (linked, not refunded, not ended). */
+async function liveAcademyTrials(admin: ReturnType<typeof createAdminClient>): Promise<AcademyTrialRow[]> {
+  const { data, error } = await admin
+    .from("academy_purchases")
+    .select("id, user_id, trial_subscription_id, trial_started_at, trial_ends_at, refunded_at")
+    .not("trial_subscription_id", "is", null)
+    .is("refunded_at", null)
+    .gt("trial_ends_at", new Date().toISOString());
+  if (error) throw new Error(error.message);
+  return (data ?? []) as AcademyTrialRow[];
+}
+
+/** What the academy loop would grant now: the due month of each trial not yet granted (the profile check is the grant's own). */
+async function academyTrialDue(admin: ReturnType<typeof createAdminClient>): Promise<Array<{ purchaseId: string; userId: string; sourceRef: string }>> {
+  const out: Array<{ purchaseId: string; userId: string; sourceRef: string }> = [];
+  for (const row of await liveAcademyTrials(admin)) {
+    const due = academyTrialSlotDue(row);
+    if (!due) continue;
+    const { data: profile } = await admin.from("profiles").select("stripe_subscription_id, stripe_subscription_status").eq("id", due.userId).maybeSingle();
+    if (!profile || profile.stripe_subscription_id !== due.subscriptionId || profile.stripe_subscription_status !== "trialing") continue;
+    const { data: existing } = await admin.from("credit_grants").select("id").eq("source_ref", due.sourceRef).maybeSingle();
+    if (existing) continue;
+    out.push({ purchaseId: row.id, userId: due.userId, sourceRef: due.sourceRef });
+  }
+  return out;
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -33,12 +66,18 @@ export async function GET(request: Request) {
   if (new URL(request.url).searchParams.get("dry") === "1") {
     try {
       const due = await previewDueGrants();
-      return Response.json({ dry: true, wouldExpire: due.expire, wouldLift: due.lift, annual: "not run on a dry run", seed: "not run on a dry run" });
+      let academy: Awaited<ReturnType<typeof academyTrialDue>> | { error: string };
+      try {
+        academy = await academyTrialDue(admin);
+      } catch (err) {
+        academy = { error: (err as Error).message };
+      }
+      return Response.json({ dry: true, wouldExpire: due.expire, wouldLift: due.lift, annual: "not run on a dry run", seed: "not run on a dry run", academyTrialDue: academy });
     } catch (err) {
       return Response.json({ dry: true, error: (err as Error).message }, { status: 500 });
     }
   }
-  const summary = { expired: 0, annualGranted: 0, seeded: 0, errors: [] as string[] };
+  const summary = { expired: 0, annualGranted: 0, academyTrialGranted: 0, seeded: 0, errors: [] as string[] };
 
   try {
     summary.expired = await expireDueGrants();
@@ -57,6 +96,19 @@ export async function GET(request: Request) {
     }
   } catch (err) {
     summary.errors.push(`annual: ${(err as Error).message}`);
+  }
+
+  // Batch 31a: Stayful Academy trials, one month of Pro credit at a time.
+  try {
+    for (const row of await liveAcademyTrials(admin)) {
+      try {
+        if (await ensureAcademyTrialMonthlyGrant(row)) summary.academyTrialGranted += 1;
+      } catch (err) {
+        summary.errors.push(`academy ${row.id}: ${(err as Error).message}`);
+      }
+    }
+  } catch (err) {
+    summary.errors.push(`academy: ${(err as Error).message}`);
   }
 
   try {

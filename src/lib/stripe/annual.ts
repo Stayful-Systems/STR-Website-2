@@ -22,8 +22,8 @@ export function addMonthsClamped(date: Date, n: number): Date {
   return new Date(Date.UTC(year, month, Math.min(date.getUTCDate(), lastDay), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds(), date.getUTCMilliseconds()));
 }
 
-export interface AnnualSlot {
-  /** 0 to 11. */
+export interface MonthSlot {
+  /** 0 to count - 1. */
   slot: number;
   from: Date;
   /** The next slot's start, or the period end for the last slot. */
@@ -32,20 +32,38 @@ export interface AnnualSlot {
   key: string;
 }
 
-/** The twelve slots of the period [start, end). */
-export function annualSlots(start: Date, end: Date): AnnualSlot[] {
-  const out: AnnualSlot[] = [];
-  for (let slot = 0; slot < 12; slot++) {
+/** An annual plan's slot: 0 to 11. */
+export type AnnualSlot = MonthSlot;
+
+/**
+ * The `count` monthly slots of the period [start, end) (Batch 31a: an
+ * Academy trial is 3 slots over 90 days). Slot n starts n calendar months
+ * after `start` (day clamped); the last slot always ends at `end`, so the
+ * slots cover the whole period whatever the month lengths.
+ */
+export function monthSlots(start: Date, end: Date, count: number): MonthSlot[] {
+  const out: MonthSlot[] = [];
+  for (let slot = 0; slot < count; slot++) {
     const from = addMonthsClamped(start, slot);
     const next = addMonthsClamped(start, slot + 1);
-    const to = slot === 11 || next.getTime() > end.getTime() ? end : next;
+    const to = slot === count - 1 || next.getTime() > end.getTime() ? end : next;
     out.push({ slot, from, to, key: from.toISOString().slice(0, 7) });
   }
   return out;
 }
 
+/** The slot of `monthSlots(start, end, count)` that `now` falls in, or null before the period starts or once it has ended. */
+export function monthSlotAt(start: Date, end: Date, now: Date, count: number): MonthSlot | null {
+  if (now.getTime() < start.getTime() || now.getTime() >= end.getTime()) return null;
+  return monthSlots(start, end, count).find((s) => now.getTime() >= s.from.getTime() && now.getTime() < s.to.getTime()) ?? null;
+}
+
+/** The twelve slots of the period [start, end). */
+export function annualSlots(start: Date, end: Date): AnnualSlot[] {
+  return monthSlots(start, end, 12);
+}
+
 /** The slot `now` falls in, or null before the period starts or once it has ended. */
 export function annualSlotAt(start: Date, end: Date, now: Date): AnnualSlot | null {
-  if (now.getTime() < start.getTime() || now.getTime() >= end.getTime()) return null;
-  return annualSlots(start, end).find((s) => now.getTime() >= s.from.getTime() && now.getTime() < s.to.getTime()) ?? null;
+  return monthSlotAt(start, end, now, 12);
 }

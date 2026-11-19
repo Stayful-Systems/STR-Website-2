@@ -36,6 +36,14 @@ export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
       .single()
     if (!profile) return
 
+    // Batch 31a: a confirmed email links any Academy purchase bought with it (after the response).
+    if (user.email_confirmed_at && hasServiceRole()) {
+      const userId = user.id
+      after(async () => {
+        try { await (await import('@/lib/academy/deps')).linkPendingForUser(userId) } catch (err) { console.warn('[auth] academy link failed:', (err as Error)?.message ?? err) }
+      })
+    }
+
     if (profile.lead_source && !profile.lead_activated_at && hasServiceRole()) {
       const activatedAt = new Date().toISOString()
       const source = profile.lead_source as Record<string, unknown>

@@ -53,6 +53,11 @@ test('one-click unsubscribe turns off every switch behind that email, and only t
   const { SWITCHES_BEHIND } = await import('./cap.ts');
   const { isNotificationKey } = await import('../notifications/registry.ts');
   for (const [kind, keys] of Object.entries(SWITCHES_BEHIND)) {
+    // The Academy reminder is a billing notice: capped, but no unsubscribe (Batch 31a).
+    if (kind === 'academy_reminder') {
+      assert.deepEqual(keys, []);
+      continue;
+    }
     assert.ok(keys.length > 0, `${kind} has a switch`);
     for (const k of keys) assert.ok(isNotificationKey(k), `${kind}: ${k} is registered`);
   }

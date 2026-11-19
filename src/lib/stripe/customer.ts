@@ -41,6 +41,12 @@ export async function ensureStripeCustomer(profile: BillingProfileRow, email: st
       /* fall through and create */
     }
   }
+  // Batch 31a: an Academy buyer's own customer (their saved card lives on it) before a new one.
+  const academy = await import('../academy/deps').then((m) => m.academyCustomerFor(profile.id, email ?? profile.email)).catch(() => null);
+  if (academy) {
+    await createAdminClient().from('profiles').update({ stripe_customer_id: academy }).eq('id', profile.id);
+    return academy;
+  }
   const customer = await stripe.customers.create({
     email: email ?? profile.email ?? undefined,
     name: profile.full_name ?? undefined,
