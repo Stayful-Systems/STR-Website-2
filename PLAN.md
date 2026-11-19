@@ -6,8 +6,13 @@ Branch: batch-31a-academy-trial. Full detail for every phase is below the checkl
 ## Progress
 - [x] Phase 0 — Setup (npm ci, baseline tests + lint)
   Notes: main still a0fa9c2. Baseline: npm test 3343/3343 pass; lint 0 errors, 79 existing warnings. Schema-twice check script: /tmp/claude-0/-home-user-STR-Website-2/9f47ba7d-c597-516e-8b28-449ceff23206/scratchpad/schema-check.sh (passes on baseline).
-- [ ] Phase 1 — Pure rules + schema
-  Notes:
+- [x] Phase 1 — Pure rules + schema
+  Notes: tests 3359 pass; schema-check OK. rules.ts exports: ACADEMY_FACTS, emailKey, maskEmail, academyTrialEnd(start),
+  trialSlotKey(subId,'YYYY-MM'), trialSlots(start,end), trialMonthDue(start,end,now), linkDecision({purchase, profile,
+  profileCustomerHasLivePlan, purchaseCustomerHasLivePlan, emailHadEarlierTrial, by}) → start{customer, customerId,
+  previousCustomerId} | already{userId} | refuse_* (incl. extra refuse_no_card: no customer/saved card on the purchase),
+  daysBeforeTrialEnd(end,now), reminderDecision(end,now,{slotFree,sentAt,trialing,cancelling,refunded}) →
+  skip|not_yet|wait|send|send_anyway. annual.ts adds monthSlots/monthSlotAt (annual = count 12). Extra index on user_id.
 - [ ] Phase 2 — Linking + starting the trial
   Notes:
 - [ ] Phase 3 — Webhook + monthly trial credit
