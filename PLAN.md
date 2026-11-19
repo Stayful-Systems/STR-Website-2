@@ -24,8 +24,11 @@ Branch: batch-31a-academy-trial. Full detail for every phase is below the checkl
   Notes: tests 3391 pass. deps.academy {recordPurchase, linkAfterPurchase(purchaseId,userId), cancelTrialForRefund};
   purchase upsert lives in src/lib/stripe/deps.ts. grants.ts: ensureAcademyTrialMonthlyGrant + pure academyTrialSlotDue.
   Sweep returns academyTrialGranted / dry academyTrialDue. Dispute path left unchanged (harmless for academy).
-- [ ] Phase 4 — Checkout + pages
-  Notes:
+- [x] Phase 4 — Checkout + pages
+  Notes: tests 3403 pass, build OK; proxy leaves /academy public, not in sitemap. src/lib/academy/cancel-link.ts exports
+  academyCancelUrl(subId, trialEndsAt) (falls back to /account/billing without a signing key) and
+  verifyAcademyCancelToken(token). Checkout params builder in checkout-params.ts; 503 if Pro price isn't monthly GBP.
+  Welcome page has extra short messages for refunded / flagged / linked-elsewhere purchases (flag to Zac in the PR).
 - [ ] Phase 5 — Reminder email + daily cron
   Notes:
 - [ ] Phase 6 — Admin panel
