@@ -128,11 +128,11 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: `npm run build`; another member's lead id → 404 (existing scope check).
   Notes:
 
-- [ ] **Phase 13 — Knowledge drafts** (needs 1)
+- [x] **Phase 13 — Knowledge drafts** (needs 1)
   Files: `src/lib/knowledge/{seed,placeholders,service-facts}.ts`.
   Drafts: what a website is; who can get one (invite-only); the two-step form; what reports cost `{#website_report_charge_on}{website_report_price}{/…}{^…}free for now`; privacy (operator is data controller). Placeholders `website_report_price`, `website_free_reports_per_site`. Conditions `website_report_charge_on`, `website_plan_gate_on`.
   Check: `npm test`; every placeholder resolves against schema seeds; no answer types a figure.
-  Notes:
+  Notes: seed.ts +62 (six draft entries: what a website is, who can get one, the landlord form, report cost with the charge-on condition, the daily limit, privacy); placeholders.ts +15; service-facts.ts +8 ("Customer websites" block). DEVIATION: placeholder `website_report_price` renamed `website_report_cost` because existing tests forbid "price" in global placeholder names. `website_free_reports_per_site` renders in words. Conditions `website_report_charge_on` and `website_plan_gate_on` added. Knowledge tests 82/82 pass; no typed figures.
 
 - [ ] **Phase 14 — Final checks** (coordinator)
   `npm test`, `npm run lint`, `npm run build`. Review: credit charged wrongly; free/paid leaks; address leaks (responses, emails, logs); dry runs on admin actions and cron; schema idempotent; `git diff` on `access.ts` empty; cross-member access. Then push and open a draft PR.
