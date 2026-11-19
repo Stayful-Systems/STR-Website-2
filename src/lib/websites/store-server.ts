@@ -361,3 +361,25 @@ export async function setStatus(ownerId: string, to: WebsiteStatus): Promise<Sta
   }
   return data ? { ok: true, site: toRow(data as Record<string, unknown>) } : { ok: false, reason: 'conflict' };
 }
+
+/**
+ * Batch 31, Phase 10: Approve's rollback. A site that went live and failed the
+ * public-page checks goes straight back to preview (the one move STATUS_TRANSITIONS
+ * does not allow, so it is its own function), and approved_at / live_at go back to
+ * what they were before the attempt (null for a first go-live). Conditional on the
+ * site still being live, scoped by the owner's id; never touches the funnel row.
+ */
+export async function rollbackToPreview(ownerId: string, restore: { approvedAt: string | null; liveAt: string | null }): Promise<boolean> {
+  if (!hasServiceRole() || !UUID.test(ownerId)) return false;
+  const { data, error } = await createAdminClient()
+    .from('websites')
+    .update({ status: 'preview', approved_at: restore.approvedAt, live_at: restore.liveAt, updated_at: new Date().toISOString() })
+    .eq('user_id', ownerId)
+    .eq('status', 'live')
+    .select('id');
+  if (error) {
+    console.error('[websites] rollback to preview failed:', error.message);
+    return false;
+  }
+  return (data?.length ?? 0) > 0;
+}
