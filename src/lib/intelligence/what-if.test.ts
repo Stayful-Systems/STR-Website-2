@@ -183,3 +183,25 @@ test('the profit what-if never raises the rent-to-rent minimum', () => {
   assert.equal(back.answers.goals.finance.targetMarginPcm, 800);
   assert.equal(back.answers.goals.r2r.minMarginPcm, 300);
 });
+
+// ── Review R4 (R4-22, Zac 19 Nov 2026) ──
+
+test('R4-22: btlAdmissible keeps a £56k deal for Buying cash 30-60 (Today’s ceiling), on Zac’s band tops without an answer', async () => {
+  const { btlAdmissible } = await import('./what-if.ts');
+  const { DEFAULT_BTL_SETTINGS } = await import('../btl/config.ts');
+  const rent = rentRangeFor({ bedrooms: 3, kind: 'house', postcodeArea: 'NG', lat: 52.95, lng: -1.15, districtRentPcm: 1_000, districtYieldPct: 7 }, [])!;
+  const deal = btlDeal(175_000, rent, { ratePct: 5.13, country: 'england', buyingCosts: 2_500, flat: null, epc: null })!;
+  const base = buildBtlCard({ computedAt: AT, bedrooms: 3, kind: 'house', country: 'england', outcode: 'NG7', region: 'east_midlands', rent, deal, growth: null, rateDate: null, band: '50k_100k', serviceChargeConfirmed: null, epc: null, shortLease: false });
+  const card56 = { ...base, cashIn: { low: 56_000, mid: 56_000, high: 61_000 } };
+  const card61 = { ...base, cashIn: { low: 61_000, mid: 61_000, high: 66_000 } };
+  const rows = [row('a', { band: 'unqualified', btl_pass: true, btl: card56 }), row('b', { band: 'unqualified', btl_pass: true, btl: card61 })];
+  // Member A: Buying cash £30–60k, written to the older band one step down (£25k–£50k).
+  const g = { ...DEFAULT_GOALS, path: 'buy' as const, where: 'near' as const, home, maxDistanceMiles: 10, dealTypes: ['btl' as const], btl: { priority: 'income' as const, cashBand: '25k_50k' as const }, buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '30-60' as const, cashFromBudget: false } };
+  const p = profile(g);
+  const input = { feedback: [], exclude: new Set<string>(), btlSettings: DEFAULT_BTL_SETTINGS };
+  assert.deepEqual(btlAdmissible(rows, input, g, p).map((x) => x.dealId), ['a'], '£56k is within £60k; £61k is not');
+  // No Buying cash answer: the older band's top, on the stored tops (Zac's £60k top for the second band here).
+  const older = { ...g, buyer: { ...DEFAULT_GOALS.buyer } };
+  assert.deepEqual(btlAdmissible(rows, input, older, profile(older)).map((x) => x.dealId), [], 'the £25k–£50k band on the decided tops');
+  assert.deepEqual(btlAdmissible(rows, { ...input, btlSettings: { ...DEFAULT_BTL_SETTINGS, bands: [25_000, 60_000, 100_000] } }, older, profile(older)).map((x) => x.dealId), ['a'], 'Zac’s tops, not the built-in ones');
+});

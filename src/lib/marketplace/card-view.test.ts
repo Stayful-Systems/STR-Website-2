@@ -112,3 +112,29 @@ test('Batch 16, Part C: the caption names the deal’s own comparables once chec
   assert.equal(before.caption, 'area estimate');
   assert.equal(before.pay?.basis, 'area');
 });
+
+// ── Review R4 (R4-26, R4-28) ──
+
+test('R4-26: a buy-to-let card’s Value in 5 years carries "History, not a forecast"; its cashflow and ROI say "before tax"', async () => {
+  const { btlDeal } = await import('../btl/deal.ts');
+  const { growthRange } = await import('../btl/growth.ts');
+  const { rentRangeFor } = await import('../btl/rent.ts');
+  const { buildBtlCard } = await import('../btl/card.ts');
+  const rent = rentRangeFor({ bedrooms: 3, kind: 'house', postcodeArea: 'B', lat: 52.54, lng: -1.86, districtRentPcm: 1_155.64, districtYieldPct: 6.2 }, [])!;
+  const deal = btlDeal(160_000, rent, { ratePct: 5.13, country: 'england', buyingCosts: 2_500, flat: null, epc: null })!;
+  const btl = buildBtlCard({ computedAt: '2026-10-16T04:50:00Z', bedrooms: 3, kind: 'house', country: 'england', outcode: 'B44', region: 'west_midlands', rent, deal, growth: growthRange(160_000, 28.9, 3.9, 'B44', '2026-09-27'), rateDate: 'Sep 2026', band: '50k_100k', serviceChargeConfirmed: null, epc: null, shortLease: false });
+  const card = { kind: 'sale' as const, price_amount: 160_000, price_period: 'total', bedrooms: 3, annual_profit: 1_000, uplift_pct: null, screening_gross: null, screening_confidence: null, band: 'unqualified', btl_pass: true, btl, postcode_area: 'B' };
+  const growth = cardView({ card, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly), btl: { types: ['btl'], priority: 'growth' } });
+  const value = growth.numbers!.find((n) => n.label === 'Value in 5 years')!;
+  assert.ok(value, 'the growth plan shows Value in 5 years');
+  assert.match(value.help ?? '', /History, not a forecast/);
+  const income = cardView({ card, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly), btl: { types: ['btl'], priority: 'income' } });
+  assert.match(income.numbers!.find((n) => n.label === 'A month')!.help ?? '', /before tax/);
+  // A tailored member who is not a beginner still sees the short note (tailoring/numbers.ts btlNumbersFor).
+  const { btlNumbersFor } = await import('../tailoring/numbers.ts');
+  const tailored = btlNumbersFor(card as never, { about: { dealsDone: '3-5' } } as never, { types: ['btl'], priority: 'growth' });
+  assert.equal(tailored.find((n) => n.label === 'Value in 5 years')!.help, 'History, not a forecast.');
+  // R4-28: and a national benchmark is flagged on the card itself.
+  const flagged = cardView({ card, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly), btl: { types: ['btl'], priority: 'growth' }, btlBench: { band: '50k_100k', step: 'national', radiusMiles: null, count: 157, steps: [], roiMedianPct: 0.8, roiP40Pct: 0.2, growthMedianPct: 1.8, growthP40Pct: 1.4, thin: false, none: false } });
+  assert.ok(flagged.btl!.flags.includes('Compared across the UK'));
+});

@@ -58,6 +58,14 @@ export function btlDistrictRows(rows: readonly KeyStatsRow[], buyingCosts: numbe
   return out;
 }
 
+/**
+ * Review R4 (R4-24): the view's rows from the stored settings read (settings-server.ts readBtlSettings): Zac's
+ * loan-to-value and Batch 17's buying costs, never the built-in 75%.
+ */
+export function btlDistrictRowsFor(rows: readonly KeyStatsRow[], stored: { settings: { finance: BtlFinance }; buyingCosts: number }): BtlDistrictRow[] {
+  return btlDistrictRows(rows, stored.buyingCosts, stored.settings.finance);
+}
+
 export type BtlDistrictSort = 'yield' | 'growth5y' | 'growth1y' | 'price' | 'cash';
 
 /** Best first on the chosen figure (cheapest first for price and cash in); "Not enough data" last. */

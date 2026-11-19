@@ -269,3 +269,13 @@ test('standout profit uses the member’s end', () => {
   assert.equal(judgeStandout(input({ figures: { range }, wants: oldGo })).reason, 'profit_short');
   assert.equal(judgeStandout(input({ figures: { range }, wants: newGo })).outcome, 'standout');
 });
+
+// ── Review R4 (R4-27, Zac 19 Nov 2026) ──
+
+test('R4-27: a buy-to-let standout must beat the buy-to-let deals already shown on low-end cashflow; untyped entries never set its bar', () => {
+  assert.equal(bestAtLeast([{ matchPct: null, profitLow: 420, dealType: 'btl' }], null, 'btl'), 420);
+  assert.equal(beatsBest(180, bestAtLeast([{ matchPct: null, profitLow: 420, dealType: 'btl' }], null, 'btl')), false, 'a £180 deal does not beat the £420 one kept on Monday');
+  assert.equal(bestAtLeast([{ matchPct: 100, profitLow: 2_000, dealType: null }, { matchPct: null, profitLow: 300, dealType: null }], null, 'btl'), null, 'an entry with no deal type is ignored');
+  assert.equal(bestAtLeast([{ matchPct: 100, profitLow: 2_000, dealType: 'buy_str' }, { matchPct: null, profitLow: 250, dealType: 'btl' }, { matchPct: null, profitLow: 310, dealType: 'btl' }], null, 'btl'), 310, 'only buy-to-let deals, the best of them');
+  assert.equal(bestAtLeast([{ matchPct: null, profitLow: 420, dealType: 'btl' }], 80, 'buy_str'), null, 'a buy-to-let entry never sets a short-let bar');
+});

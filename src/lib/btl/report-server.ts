@@ -56,7 +56,7 @@ import { parseMarketGoals } from '../market/goals';
 import { btlContextFor } from './context-server';
 import { screenForBtl, valuationPropertyType } from './screen';
 import { listingKind } from './listing';
-import { isEpcRating } from './deal';
+import { btlBenchmarkBand, isEpcRating } from './deal';
 import { buildBtlReport, reportTitle, soldSummary, BTL_REPORT_MAX_CALLS, type BtlReport } from './report';
 import { readBtlBenchmark, readBtlSettingsCached } from './settings-server';
 import { btlLookerFor } from './view';
@@ -156,7 +156,9 @@ export async function runBtlReport(input: { userId: string; adminUser: boolean; 
   if (!l.postcode || l.bedrooms === null) return fail('no_postcode');
   // Charged once: a report the member already has on this listing opens again (a stale tab, Back, or asking the eye twice).
   const had = await reportIdsFor(admin, input.userId, { urls: [l.canonicalUrl] });
-  const already = had?.values().next().value;
+  // Review R4 (R4-29): "couldn't look" is not "none": never sell a second copy on a failed read.
+  if (had === null) return fail('failed');
+  const already = had.values().next().value;
   if (already) return { ...fail('already_done'), reportId: already } as BtlReportResult;
 
   const payer = await payerFor(input.userId);
@@ -208,6 +210,13 @@ export async function runBtlReport(input: { userId: string; adminUser: boolean; 
         await finish('failed', { failure: 'insufficient_credit' });
         return fail('insufficient_credit', { requiredPence: price, availablePence: Math.max(0, Math.round(err.availablePence)) });
       }
+      // Review R4 (R4-30): with charges enforced, no hold means no run: nothing is bought, nothing is charged, and the
+      // debit after it can never overdraw.
+      if (mustAfford) {
+        console.warn('[btl-report] reservation failed, not run:', (err as Error)?.message ?? err);
+        await finish('failed', { failure: 'reservation' });
+        return fail('failed');
+      }
       console.warn('[btl-report] reservation not held:', (err as Error)?.message ?? err);
     }
   }
@@ -254,7 +263,8 @@ export async function runBtlReport(input: { userId: string; adminUser: boolean; 
     const goals = parseMarketGoals((prof as { market_goals?: unknown } | null)?.market_goals ?? null);
     const { data: areas } = await admin.from('saved_areas').select('postcode_area').eq('user_id', input.userId);
     const looker = btlLookerFor(goals, ((areas ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area));
-    const band = looker.cashBand ?? screen.card.band;
+    // Review R4 (R4-22, Zac 19 Nov 2026): compared with the band that holds the top of their Buying cash, as Today is.
+    const band = btlBenchmarkBand(goals, ctx.settings.bands) ?? screen.card.band;
     const centre = looker.centre ?? (l.postcodeArea ? l.postcodeArea.toUpperCase() : null);
     const benchmark = centre && band ? await readBtlBenchmark(admin, centre, band) : null;
     const report: BtlReport = buildBtlReport({

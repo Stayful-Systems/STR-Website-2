@@ -25,6 +25,7 @@ import { BackfillPanel, RetentionCheck } from "./BackfillPanel";
 import { setExclusionAction } from "./actions";
 import { AnalysisTakeUp } from "./AnalysisTakeUp";
 import { PackToPaying } from "./PackToPaying";
+import { PackExpiryPreview } from "./PackExpiryPreview";
 import type { PackFilter } from "@/lib/admin/pack-paying";
 
 const MESSAGES: Record<string, { text: string; ok: boolean }> = {
@@ -212,6 +213,9 @@ export function WeeklyActiveView({ status, message, report, msg, showAll, packFi
         Pack → paying
       </h2>
       <PackToPaying filter={packFilter ?? {}} />
+
+      <h3 className="mt-6 mb-2 text-sm font-semibold text-foreground">Starter-pack bonuses due to expire</h3>
+      <PackExpiryPreview />
 
       <h2 id="members" className="mt-10 mb-1 text-lg font-semibold text-foreground">
         Members

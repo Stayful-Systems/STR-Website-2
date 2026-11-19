@@ -49,6 +49,13 @@ export interface DealFilters {
   minProfit: number | null;
   /** Uplift floor, %. Sales only: rentals have no uplift figure. */
   minUplift: number | null;
+  /**
+   * Review R4 (R4-25): a buy-to-let read's cash ceiling, £: only rows whose
+   * stored buy-to-let card's middle cash in is at most this. Never from the
+   * URL; Today's buy-to-let pool sets it (btl/today.ts) so its row limit
+   * never cuts an affordable deal. Absent or null: no ceiling.
+   */
+  btlMaxCashIn?: number | null;
   sort: DealSort;
   view: DealView;
   page: number;

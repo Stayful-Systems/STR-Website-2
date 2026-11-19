@@ -24,6 +24,7 @@ import { DEFAULT_LOW_ENTRY, type LowEntrySettings } from '../deal-quality/config
 import type { DealCard } from './grid.ts';
 import { projectNumbersFor, projectOf, projectSummary } from '../project/display.ts';
 import { btlViewFor, openProfitFor, showsAsBtl, type BtlLooker, type BtlView } from '../btl/view.ts';
+import type { Benchmark } from '../btl/benchmark.ts';
 
 export interface CardState {
   /** Open to the member's account (theirs or a teammate's open). */
@@ -167,6 +168,8 @@ export function cardView(input: {
   freeOpen?: boolean;
   /** Batch 28: who is looking, so a deal is shown as the type they chose (a buy-to-let-only deal is always Buy to let). */
   btl?: BtlLooker | null;
+  /** Review R4 (R4-28): the benchmark this deal is judged against for the member, so a national or thin one is flagged before Open. */
+  btlBench?: Benchmark | null;
   /** Batch 30: the rate and range-end lines (marketplace/card-display.ts). */
   display?: CardDisplay | null;
 }): CardView {
@@ -227,13 +230,14 @@ export function cardView(input: {
  */
 function btlCardView(input: Parameters<typeof cardView>[0]): CardView {
   const { card, state } = input;
-  const btl = btlViewFor(card, input.btl);
+  const btl = btlViewFor(card, input.btl, input.btlBench ?? null);
   const ladderPence = input.freeOpen ? 0 : openPricePence(openProfitFor(card), input.ladder);
   return {
     range: null,
     caption: btl.caption,
     pay: null,
-    numbers: btl.numbers.map((n) => ({ ...n, help: null })),
+    // Review R4 (R4-26): the help stays: it says the cashflow and ROI are before tax and growth is history, not a forecast.
+    numbers: btl.numbers,
     uplift: null,
     cash: btl.cash,
     lowEntry: false,

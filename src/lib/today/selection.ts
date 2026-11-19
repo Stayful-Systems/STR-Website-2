@@ -465,7 +465,7 @@ async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<str
     },
     opts,
   );
-  return { chosen, tally: { ...tally.result(chosen.mustMatches, chosen.capped === true), btlWiden: chosen.btlWiden ?? null } };
+  return { chosen, tally: { ...tally.result(chosen.mustMatches, chosen.capped === true), btlWiden: chosen.btlWiden ?? null, btlBench: chosen.btlBench ?? null } };
 }
 
 /** Of these deals, the ones the member has kept, passed or opened: a re-choose never takes those off. */
@@ -616,8 +616,10 @@ export async function whatIfsForMember(member: MemberContext, now: Date = new Da
     const nearby = member.goals.where === 'near' ? [] : nearestAreas(referencePoint(member.goals, member.savedAreas), own, WHAT_IF_NEARBY_AREAS);
     const p = member.tailoring;
     const variants = whatIfChanges(p, { nearbyAreas: nearby });
+    // Review R4 (R4-22): a buy-to-let variant is judged within Today's ceiling, on the stored band tops.
+    const btl = typesShown({ goals: member.goals, about: p.about }).includes('btl') || variants.some((v) => v.key === 'add_btl') ? await readBtlSettingsCached(admin) : null;
     const results = await whatIfResults(
-      { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: p },
+      { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: p, ...(btl ? { btlSettings: btl.settings } : {}) },
       p,
       // Every deal type: a variant may add one the profile does not show yet.
       { pool: (filters, limit) => rankingPool({ ...filters, types: [] }, member.visibility, { userId: member.userId }, limit) },

@@ -11,6 +11,10 @@ import { CASH_BAND_LABELS } from "@/lib/btl/sheet";
 import type { CashBand } from "@/lib/btl/deal";
 import { DEAL_TYPE_LABELS } from "@/lib/profile/deal-types";
 import { weekLabel } from "@/lib/activity/week";
+import { readBtlSettings } from "@/lib/btl/settings-server";
+import { BTL_FINANCE_FIELDS, BTL_REPORT_FIELD } from "@/lib/btl/admin-form";
+import type { BtlFinance } from "@/lib/btl/config";
+import { saveBtlSettingsAction } from "./actions";
 
 export const metadata: Metadata = { title: "Buy-to-let admin — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -60,7 +64,7 @@ function FunnelRow({ label, f, strong = false }: { label: string; f: Funnel; str
  * out admin, staff and "Exclude from metrics" accounts. No member or deal is
  * named.
  */
-export default async function BtlAdminPage() {
+export default async function BtlAdminPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -68,7 +72,9 @@ export default async function BtlAdminPage() {
   if (!user) redirect("/login?redirect=/admin/deals/btl");
   if (!isAdminEmail(user.email)) notFound();
 
-  const v = await btlAdminView(createAdminClient());
+  const params = await searchParams;
+  const one = (k: string) => (typeof params[k] === "string" ? (params[k] as string) : null);
+  const [v, stored] = await Promise.all([btlAdminView(createAdminClient()), readBtlSettings(createAdminClient())]);
   const btl = v.funnel?.btl ?? null;
   const others = v.funnel ? othersThan(v.funnel, "btl") : null;
   const spendKnown = v.spend.pence >= 0;
@@ -150,6 +156,31 @@ export default async function BtlAdminPage() {
             Launch email line: {v.launch.from ? `from ${new Date(v.launch.from).toLocaleString("en-GB", { timeZone: "Europe/London" })}` : "not switched on (billing_settings.btl_launch_from)"} · sent to {dash(v.launch.sent)} member{v.launch.sent === 1 ? "" : "s"} so far.
           </p>
         </div>
+      </section>
+
+      <section id="settings" className="mt-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Settings: the report price and the finance</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          The buy-to-let report&apos;s price, and the mortgage every buy-to-let figure is worked out with. Deal cards change at the next nightly screen; the report, the Full analysis&apos;s &quot;Buy to let instead?&quot; and the Explorer use the new figures within the hour. The rate is always the live 2-year fixed rate; the last field is only for a day with no live rate. The other buy-to-let settings are changed in SQL (README).
+        </p>
+        {one("settings") === "saved" && <p className="mt-3 rounded-md border border-border bg-muted p-2 text-sm text-foreground">Saved.</p>}
+        {one("settings") === "error" && <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm text-destructive">Not saved. {one("why") ?? "A field is out of range."}</p>}
+        <form action={saveBtlSettingsAction} className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="text-sm">
+              <span className="text-muted-foreground">{BTL_REPORT_FIELD.label}</span>
+              <input name="reportPence" type="number" step={1} min={BTL_REPORT_FIELD.min} max={BTL_REPORT_FIELD.max} defaultValue={stored.settings.reportPence} className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-1 text-sm" />
+              <span className="mt-0.5 block text-xs text-muted-foreground">Now {pence(stored.settings.reportPence)}.</span>
+            </label>
+            {(Object.keys(BTL_FINANCE_FIELDS) as (keyof BtlFinance)[]).map((k) => (
+              <label key={k} className="text-sm">
+                <span className="text-muted-foreground">{BTL_FINANCE_FIELDS[k].label}</span>
+                <input name={k} type="number" step="any" min={BTL_FINANCE_FIELDS[k].min} max={BTL_FINANCE_FIELDS[k].max} defaultValue={stored.settings.finance[k]} className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-1 text-sm" />
+              </label>
+            ))}
+          </div>
+          <button type="submit" className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90">Save</button>
+        </form>
       </section>
     </div>
   );

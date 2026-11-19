@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "../supabase/admin";
-import { btlWidenLine } from "../btl/today";
+import { btlDayLine } from "../btl/today";
 import { BTL_BADGE, showsAsBtl } from "../btl/view";
 import { btlFigureLine } from "../btl/card";
 import { getAreaCardsWithin } from "../market/cached";
@@ -1552,7 +1552,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           // A near miss's advice, or a tailored day's "only N met your must-haves" (Batch 14).
           advice: plan?.advice ?? null,
           // Batch 28: the day looked further for its buy-to-let deals.
-          btlLine: plan?.btlWiden ? btlWidenLine(plan.btlWiden) : null,
+          btlLine: btlDayLine(plan?.btlWiden, plan?.btlBench),
           todayUrl: links?.today,
           // Batch 10: each deal's profit as a range at this profile's finance.
           // Batch 28: a deal this profile is shown as Buy to let gives its own line and badge, never a short-let range.

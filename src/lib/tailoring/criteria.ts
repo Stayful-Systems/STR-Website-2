@@ -52,6 +52,7 @@ import { goalAreas } from '../onboarding/deal-filters.ts';
 import { placedForPreview } from '../profile/matching.ts';
 import type { QuestionId } from '../profile/questions.ts';
 import { budgetFromCash, buyingCashTop } from '../profile/buying-power.ts';
+import { btlCashTop } from '../btl/deal.ts';
 import { profitRange, type ProfitRange } from '../marketplace/profit-range.ts';
 import { memberFinance } from '../marketplace/most-you-can-pay.ts';
 import type { DealCard } from '../marketplace/grid.ts';
@@ -112,6 +113,11 @@ export interface Wants {
   /** Batch 17: "Light refresh" only; null for "Full project" and "Either", which take both levels (Q24). */
   brrrWork: 'light' | null;
   cashTop: number | null;
+  /**
+   * Review R4 (R4-23): the cash ceiling a deal judged as Buy to let is held to: Today's own (btl/deal.ts btlCashTop,
+   * the exact top of their Buying cash, else their older Buy to let band). Null: none.
+   */
+  btlCashTop: number | null;
   rentMax: number | null;
   /** The buyer's minimum profit a month: judges Short-let and BRRR deals. */
   minProfit: number | null;
@@ -143,6 +149,7 @@ export const NO_WANTS: Wants = {
   brrrBudget: null,
   brrrWork: null,
   cashTop: null,
+  btlCashTop: null,
   rentMax: null,
   minProfit: null,
   minProfitR2r: null,
@@ -255,6 +262,7 @@ export function wantsFor(p: TailoringProfile): Wants {
     brrrWork: asked(p, 'brrr_work') && g.brrr.work === 'light' ? 'light' : null,
     // A real Buying cash answer only: a band worked out from an older budget never filters (buyingCashTop, Batch 30).
     cashTop,
+    btlCashTop: btlCashTop(g),
     rentMax: g.maxRentPcm,
     minProfit: buyProfit ? g.finance.targetMarginPcm : null,
     // Answered before the split, the one figure stood for both.
@@ -330,6 +338,8 @@ export interface DealFacts {
   dealTypes?: DealType[];
   /** Batch 17: a Project (BRRR) deal's card numbers; null or absent for any other deal. */
   project?: ProjectCardData | null;
+  /** Review R4 (R4-23): the middle cash in of its stored buy-to-let card (btl_pass rows only); absent or null otherwise. */
+  btlCashIn?: number | null;
 }
 
 /** The deal's type: its own, else its kind's. */
@@ -371,6 +381,8 @@ type RowForFacts = Pick<DealCard, 'kind' | 'postcode_area' | 'bedrooms' | 'price
   /** Batch 28: the short-let band and the buy-to-let lens, which tell the deal's types apart (dealTypesOf). */
   band?: string | null;
   btl_pass?: unknown;
+  /** Review R4 (R4-23): the stored buy-to-let card, where the read carried it (its middle cash in judges a buy-to-let deal's cash). */
+  btl?: { cashIn?: { mid?: unknown } | null } | null;
 };
 
 /** A marketplace row (Today's pool, the grid) as facts. */
@@ -398,6 +410,7 @@ export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { 
     dealType: dealTypeOf({ kind: row.kind, project, band: row.band, btl_pass: row.btl_pass }),
     ...(row.kind === 'sale' ? { dealTypes: dealTypesOf({ kind: row.kind, project, band: row.band, btl_pass: row.btl_pass }) } : {}),
     project,
+    ...(row.kind === 'sale' && row.btl_pass === true && row.btl ? { btlCashIn: num(row.btl.cashIn?.mid) } : {}),
   };
 }
 
@@ -527,13 +540,18 @@ export function checksFor(f: DealFacts, fig: MemberFigures, w: Wants, mode: (key
   const out: Check[] = [];
   const push = (key: CriterionKey, verdict: Verdict) => out.push({ key, mode: mode(key), verdict });
   if (w.areas) push('location', f.area === null ? 'unknown' : w.areas.has(f.area) ? 'pass' : 'fail');
+  // Review R4 (R4-23): a deal judged as Buy to let is held to Today's buy-to-let ceiling on its own card's cash in (no
+  // furnishing), and never to the short-let profit check (its own rules judge it, on the rent).
+  const asBtl = f.kind === 'sale' && typeOfFacts(f) === 'btl';
   if (f.kind === 'sale') {
     const budget = budgetFor(f, w);
     if (budget) push('budget', f.amount === null ? 'unknown' : within(f.amount, budget) ? 'pass' : 'fail');
-    if (w.cashTop !== null) push('cash', atMost(fig.cashRequired, w.cashTop));
+    if (asBtl) {
+      if (w.btlCashTop !== null) push('cash', atMost(f.btlCashIn ?? null, w.btlCashTop));
+    } else if (w.cashTop !== null) push('cash', atMost(fig.cashRequired, w.cashTop));
     if (w.brrrWork === 'light' && typeOfFacts(f) === 'brrr') push('work', f.project ? (f.project.level === 'light' ? 'pass' : 'fail') : 'unknown');
   } else if (w.rentMax !== null) push('rent', atMost(f.amount, w.rentMax));
-  const minProfit = minProfitFor(f, w);
+  const minProfit = asBtl ? null : minProfitFor(f, w);
   if (minProfit !== null) push('profit', fig.range === null ? 'unknown' : profitAt(fig.range, w.profitEnd) >= minProfit ? 'pass' : 'fail');
   if (w.bedrooms !== null) push('bedrooms', f.bedrooms === null ? 'unknown' : (w.bedrooms === 4 ? f.bedrooms >= 4 : f.bedrooms === w.bedrooms) ? 'pass' : 'fail');
   if (f.kind === 'sale') {

@@ -148,6 +148,8 @@ function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, op
   if (f.minProfit !== null) q = q.gte('annual_profit', f.minProfit);
   // Rentals carry no uplift figure, so an uplift floor only ever narrows sales.
   if (f.minUplift !== null && f.kind === 'sale') q = q.gte('uplift_pct', f.minUplift);
+  // Review R4 (R4-25): the buy-to-let cash ceiling, on the stored card's middle cash in, before any row limit.
+  if (f.btlMaxCashIn !== undefined && f.btlMaxCashIn !== null && Number.isFinite(f.btlMaxCashIn) && !btlColumnMissing) q = q.lte('btl->cashIn->mid', f.btlMaxCashIn);
   if (opts.countOnly) return q;
   switch (f.sort) {
     case 'uplift':

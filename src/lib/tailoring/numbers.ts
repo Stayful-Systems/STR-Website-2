@@ -44,7 +44,7 @@ import { jobRole } from '../profile/about.ts';
 import type { DealType } from '../profile/deal-types.ts';
 import { valueAddedLabel } from '../project/headline.ts';
 import { shortMoney } from '../deal-quality/streams.ts';
-import { BTL_NUMBER_HELP, type BtlNumberKey } from '../btl/card.ts';
+import { BTL_NUMBER_HELP, BTL_NUMBER_NOTE, type BtlNumberKey } from '../btl/card.ts';
 import { btlViewFor, showsAsBtl, type BtlLooker } from '../btl/view.ts';
 import { typesShown } from '../profile/deal-types.ts';
 
@@ -56,7 +56,7 @@ export interface CardNumber {
   key: NumberKey;
   label: string;
   value: string;
-  /** One plain line for a beginner; null for everyone else. */
+  /** One plain line for a beginner; null for everyone else (a buy-to-let number keeps its "before tax" / "history" note). */
   help: string | null;
 }
 
@@ -248,7 +248,8 @@ export function numbersFor(i: NumbersInput, p: TailoringProfile | null | undefin
  */
 export function btlNumbersFor(card: DealCard, p: TailoringProfile | null | undefined, looker: BtlLooker): CardNumber[] {
   const beginner = p?.about.dealsDone === '0';
-  return btlViewFor(card, looker).numbers.map((n) => ({ ...n, help: beginner ? n.help : null }));
+  // Review R4 (R4-26): everyone else still sees "Before tax." / "History, not a forecast." under those numbers.
+  return btlViewFor(card, looker).numbers.map((n) => ({ ...n, help: beginner ? n.help : (BTL_NUMBER_NOTE[n.key] ?? null) }));
 }
 
 /** A card (CARD_COLUMNS) as the numbers read it, for this profile. */

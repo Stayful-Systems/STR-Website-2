@@ -50,3 +50,41 @@ test('the welcome price: 50% on a revealed deal, inside the window, once, never 
   assert.equal(at({ floorPence: 150 }).pence, 150, 'never under the worst-case raw cost');
   assert.equal(at({ floorPence: 250 }).offer, null, 'no cheaper than the list: no offer');
 });
+
+// ── Review R4 (R4-29, R4-30, R4-22) ──
+// SOURCE-TEXT PINS: report-server.ts imports server-only and the Supabase client, so the run cannot execute under node --test.
+
+const reportServer = async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('./report-server.ts', import.meta.url).pathname, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  return src.slice(src.indexOf('export async function runBtlReport'), src.indexOf('const SOLD_MONTHS'));
+};
+
+test('R4-29: runBtlReport refuses when reportIdsFor is null (a failed read is never "none"), before any claim or charge', async () => {
+  const run = await reportServer();
+  const read = run.indexOf('const had = await reportIdsFor(');
+  const refuse = run.indexOf("if (had === null) return fail('failed');");
+  assert.ok(read > 0 && refuse > read, 'the null check follows the read');
+  assert.ok(refuse < run.indexOf('const already'), 'before the "already have one" check');
+  assert.ok(refuse < run.indexOf("from('analysis_purchases')"), 'before the claim');
+  assert.ok(refuse < run.indexOf('await debit('), 'before any charge');
+  assert.doesNotMatch(run, /had\?\.values\(\)/, 'no optional read that treats null as none');
+});
+
+test('R4-30: after a reserve error, with charges enforced, the run stops before any provider call (no charge, no report)', async () => {
+  const run = await reportServer();
+  const reserveCatch = run.slice(run.indexOf('reservationId = await reserve('), run.indexOf('const failNoCharge'));
+  assert.match(reserveCatch, /if \(mustAfford\) \{[\s\S]*?await finish\('failed', \{ failure: 'reservation' \}\);[\s\S]*?return fail\('failed'\);[\s\S]*?\}/);
+  // The insufficient-credit answer still comes first; the unheld path only when charges are not enforced.
+  assert.ok(reserveCatch.indexOf('InsufficientCreditError') < reserveCatch.indexOf("failure: 'reservation'"));
+  assert.ok(run.indexOf("failure: 'reservation'") < run.indexOf('startAction('), 'before the provider calls start');
+  assert.ok(run.indexOf("failure: 'reservation'") < run.indexOf('await debit('), 'before the debit');
+  // The fix is not "debit without overdraft" (that would give the report away free once written).
+  assert.match(run, /allowNegative: true,/);
+});
+
+test('R4-22: the report compares with the band that holds the top of the member’s Buying cash, as Today does', async () => {
+  const run = await reportServer();
+  assert.match(run, /const band = btlBenchmarkBand\(goals, ctx\.settings\.bands\) \?\? screen\.card\.band;/);
+  assert.doesNotMatch(run, /looker\.cashBand/);
+});

@@ -122,3 +122,25 @@ test('Batch 22e: the other sorts inside the list', async () => {
   assert.deepEqual(sortRows(rows, 'price'), ['a', 'b']);
   assert.deepEqual(sortRows(rows, 'newest'), ['b', 'a']);
 });
+
+// ── Review R4 (R4-23) ──
+
+test('R4-23: a row judged as Buy to let uses its buy-to-let cash in (no "Misses" on a £56k deal for Buying cash 30-60), and no short-let profit check', async () => {
+  const { profileFits } = await import('./browse.ts');
+  const { judgeDeal, factsFromRow, forTypes, rentalFromCard, wantsFor } = await import('./criteria.ts');
+  // Member A: Buy to let, Buying cash £30–60k, a minimum profit answered for short-lets.
+  const memberA = plainProfile(
+    { ...DEFAULT_GOALS, path: 'buy', sourcingKind: 'sale', where: 'areas', dealTypes: ['btl'], btl: { priority: 'income', cashBand: '25k_50k' }, buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '30-60', cashFromBudget: false }, finance: { ...DEFAULT_GOALS.finance, targetMarginPcm: 900 } },
+    ['DE'], WIDTHS, { answered: { where: real, cash_available: real, min_profit: real, main_goal: real } },
+  );
+  const at = (mid: number) => ({ cashIn: { low: mid, mid, high: mid + 5_000 } }) as unknown as BrowseRow['btl'];
+  // £175k 3-bed: £56,000 cash in as a buy-to-let (no furnishing); about £70,000 as a short-let purchase.
+  const btl56 = sale({ id: 'a', postcode_area: 'DE', bedrooms: 3, price_amount: 175_000, band: 'unqualified', btl_pass: true, btl: at(56_000), annual_profit: 1_000 });
+  const btl64 = sale({ id: 'b', postcode_area: 'DE', bedrooms: 3, price_amount: 175_000, band: 'unqualified', btl_pass: true, btl: at(64_000), annual_profit: 1_000 });
+  const fits = profileFits([btl56, btl64], memberA, ['btl'], NOW)!;
+  assert.deepEqual(fits.get('a')!.misses, [], 'on Today at £56k ≤ £60k: no "Misses: Cash available" on Browse either');
+  assert.deepEqual(fits.get('b')!.misses, ['cash'], 'over the same £60k ceiling as Today');
+  const facts = forTypes(factsFromRow(btl56, rentalFromCard(btl56), { qualifies: undefined, score: 0 }), ['btl']);
+  const keys = judgeDeal(facts, memberA, wantsFor(memberA)).judgement.checks.map((c) => c.key);
+  assert.ok(keys.includes('cash') && !keys.includes('profit'), 'judged on its own cash in, never the short-let profit');
+});

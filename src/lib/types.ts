@@ -302,6 +302,7 @@ import type { CouncilTaxFigure } from './listing/bills';
 import type { DemandSnapshot, Designation, ListedBuilding } from './apis/propertydata-parse';
 import type { CompetitorSummary, TrackedListing } from './listing/competitors';
 import type { SecondOpinion } from './listing/quick-types';
+import type { BtlCard } from './btl/card';
 
 export interface SourceListingRef {
   url: string;
@@ -378,6 +379,12 @@ export interface AnalysisResult {
    * finance, without photos. Absent on every other report.
    */
   project?: ReportProject | null;
+  /**
+   * Review R4 (R4-24): "Buy to let instead?", worked out on the server when the report was built, with the stored
+   * buy-to-let settings and a flat's service charge (src/lib/btl/analyser.ts). Null when the report has no price or
+   * long-let rent; absent on reports from before it (the section is then not shown).
+   */
+  btlInstead?: BtlCard | null;
   /** Row id in saved_searches once the report has been persisted. */
   reportId?: string;
 }

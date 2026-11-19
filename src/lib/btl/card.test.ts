@@ -222,3 +222,37 @@ test('rentals: whole homes let by the month only', () => {
   assert.equal(rentCompFrom({ ...row, bedrooms: null }), null);
   assert.equal(rentCompFrom({ ...row, raw_type: 'Flat', title: '1 bedroom flat to rent' })?.kind, 'flat');
 });
+
+// ── Review R4 (R4-28) ──
+
+test('R4-28: btlFlags names a national or thin benchmark, before Open; a local one says nothing', async () => {
+  const { btlBenchmarkFlag } = await import('./card.ts');
+  const { btlViewFor } = await import('./view.ts');
+  const card = b44Card();
+  const bm = { band: '50k_100k' as const, step: '25mi' as const, radiusMiles: 25, count: 40, steps: [], roiMedianPct: 1, roiP40Pct: 0.5, growthMedianPct: 2, growthP40Pct: 1.5, thin: false, none: false };
+  assert.deepEqual(btlFlags(card, null, { ...bm, step: 'national' }), ['EPC not checked', 'Rough rent estimate', 'Compared across the UK']);
+  assert.deepEqual(btlFlags(card, null, { ...bm, step: 'national', thin: true }), ['EPC not checked', 'Rough rent estimate', 'Few deals to compare']);
+  assert.equal(btlBenchmarkFlag({ ...bm, step: 'national', none: true }), 'Few deals to compare', 'too few to compare at all');
+  assert.equal(btlBenchmarkFlag(bm), null);
+  assert.equal(btlBenchmarkFlag(null), null);
+  // The card view carries it (what Today, Browse and the deal page show before anything is opened).
+  const v = btlViewFor({ btl: card, postcode_area: 'B' }, { types: ['btl'], priority: 'income' }, { ...bm, step: 'national' });
+  assert.ok(v.flags.includes('Compared across the UK'));
+  assert.ok(!JSON.stringify(v).includes('B44 9'), 'no full postcode or address');
+});
+
+test('R4-28 wiring: every card list and the deal page judge the flag on the member’s benchmark, read before Open', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url).pathname, 'utf8');
+  const state = read('../marketplace/card-state.ts');
+  assert.match(state, /btlBench: benches\.get\(c\.id\) \?\? null/);
+  assert.match(state, /const theirs = btlBenchmarkBand\(looker\?\.cash \?\? null, settings\.bands\);/);
+  const page = read('../../app/deals/[id]/page.tsx');
+  assert.match(page, /btlViewFor\(\{ btl: btlCard, postcode_area: deal\.postcode_area \}, btlLooker, btlBench\)/);
+  assert.match(page, /const btlBench = btlCard && btlLooker\.centre && btlBand \?/, 'read before Open (no priv gate)');
+  assert.match(page, /const btlSheetData = btlCard && priv \?/, 'the full working still waits for Open');
+  // Today and the email carry the same line.
+  assert.match(read('../../app/today/page.tsx'), /btlDayLine\(btlStored\?\.btlWiden, btlStored\?\.btlBench\)/);
+  assert.match(read('../notify/digest-run.ts'), /btlLine: btlDayLine\(plan\?\.btlWiden, plan\?\.btlBench\)/);
+  assert.match(read('../listing/picks-run.ts'), /btlLine: btlDayLine\(plan\?\.btlWiden, plan\?\.btlBench\)/);
+});

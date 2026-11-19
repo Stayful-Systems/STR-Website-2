@@ -5,16 +5,37 @@
  * existing short-let vs long-let comparison and does not repeat it: this is
  * what the home makes let to long-term tenants on a buy-to-let mortgage.
  *
+ * Review R4 (R4-24): worked out on the server when the analysis is built
+ * (analysis/run.ts), with Zac's stored settings and buying costs, and a
+ * flat's service charge and ground rent as the deal cards carry them; the
+ * result carries the card (AnalysisResult.btlInstead) and the page only
+ * shows it. Never the built-in defaults when the settings are to hand.
+ *
  * Pure: no network, no database, no server-only.
  */
 import type { AnalysisResult } from '../types.ts';
 import { countryForPostcode } from '../listing/stamp-duty.ts';
 import { buildBtlCard, type BtlCard } from './card.ts';
-import { DEFAULT_BTL_SETTINGS } from './config.ts';
+import { DEFAULT_BTL_SETTINGS, type BtlSettings } from './config.ts';
 import { btlDeal, cashBandFor, isEpcRating } from './deal.ts';
 import { growthRange } from './growth.ts';
-import type { RentRange } from './rent.ts';
+import { flatCharges } from './listing.ts';
+import type { ListingKind, RentRange } from './rent.ts';
 import { DEFAULT_PROJECT_COSTS } from '../project/config.ts';
+
+/** What "Buy to let instead?" is worked out with: the stored settings and buying costs, and what kind of home it is. */
+export interface BtlInsteadContext {
+  settings: BtlSettings;
+  /** Batch 17's buying costs (project_costs.buyingCosts). */
+  buyingCosts: number;
+  /** A flat carries a service charge and ground rent (the listing's own figures when given, else the estimate). */
+  kind: ListingKind;
+  serviceChargeYear?: number | null;
+  groundRentYear?: number | null;
+}
+
+/** London's region key, as the screen reads it (screen.ts): a London flat's service charge estimate is London's. */
+const LONDON_REGION = 'greater_london';
 
 /** The price the report was worked at: the asking price, else the listing's, else PropertyData's value. */
 export function analysedPrice(r: Pick<AnalysisResult, 'deal' | 'sourceListing' | 'propertyValuation'>): number | null {
@@ -40,23 +61,24 @@ export function rentFromLongLet(l: AnalysisResult['longLet'] | null | undefined,
 }
 
 /** "Buy to let instead?": its figures as a buy-to-let card, or null when the report has no price or rent. */
-export function btlInsteadFor(r: AnalysisResult, now: Date = new Date()): BtlCard | null {
+export function btlInsteadFor(r: AnalysisResult, ctx: BtlInsteadContext = { settings: DEFAULT_BTL_SETTINGS, buyingCosts: DEFAULT_PROJECT_COSTS.buyingCosts, kind: 'unknown' }, now: Date = new Date()): BtlCard | null {
+  const s = ctx.settings;
   const price = analysedPrice(r);
-  const rent = rentFromLongLet(r.longLet);
+  const rent = rentFromLongLet(r.longLet, s.rent.minWidthPct);
   if (price === null || !rent) return null;
   const country = countryForPostcode(r.property.postcode);
   const epc = r.epc?.rating?.toUpperCase() ?? null;
   const rating = isEpcRating(epc) ? epc : null;
   const live = r.deal && r.deal.kind === 'purchase' ? (r.deal.mortgageRateLive ?? null) : null;
-  const s = DEFAULT_BTL_SETTINGS;
-  const deal = btlDeal(price, rent, { ratePct: live?.ratePct ?? null, country, buyingCosts: DEFAULT_PROJECT_COSTS.buyingCosts, flat: null, epc: rating, finance: s.finance, costs: s.costs, epcSettings: s.epc });
+  const flat = flatCharges(ctx.kind, { serviceChargeYear: ctx.serviceChargeYear ?? null, groundRentYear: ctx.groundRentYear ?? null }, r.growth?.region === LONDON_REGION, s.flats);
+  const deal = btlDeal(price, rent, { ratePct: live?.ratePct ?? null, country, buyingCosts: ctx.buyingCosts, flat, epc: rating, finance: s.finance, costs: s.costs, epcSettings: s.epc });
   if (!deal) return null;
   const outcode = r.growth?.outcode ?? null;
   const growth = growthRange(price, r.growth?.growth5y ?? null, r.growth?.growth1y ?? null, outcode ?? '', r.growth?.asOf ?? null);
   return buildBtlCard({
     computedAt: now.toISOString(),
     bedrooms: r.property.bedrooms,
-    kind: 'unknown',
+    kind: ctx.kind,
     country,
     outcode,
     region: r.growth?.region ?? null,
@@ -65,7 +87,7 @@ export function btlInsteadFor(r: AnalysisResult, now: Date = new Date()): BtlCar
     growth,
     rateDate: live?.date ?? null,
     band: cashBandFor(deal.cashIn.mid, s.bands),
-    serviceChargeConfirmed: null,
+    serviceChargeConfirmed: flat ? flat.confirmed : null,
     epc: rating,
     shortLease: false,
   });

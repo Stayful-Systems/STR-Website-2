@@ -12,10 +12,10 @@
  *                    from older answers than the stored list's is refused (bug 8).
  *
  * Stored in profile_today_lists.choice: {checked, meeting, capped, nearby,
- * finds, fp, answeredAt, btlWiden}. Pure: no network, no database, no server-only.
+ * finds, fp, answeredAt, btlWiden, btlBench}. Pure: no network, no database, no server-only.
  */
 import type { DealFilters } from '../marketplace/grid.ts';
-import { parseBtlWiden, type BtlWiden } from '../btl/today.ts';
+import { parseBtlBench, parseBtlWiden, type BtlBenchNote, type BtlWiden } from '../btl/today.ts';
 
 export interface StoredChoice {
   checked: number;
@@ -27,6 +27,8 @@ export interface StoredChoice {
   answeredAt: string | null;
   /** Batch 28: how far the day looked for the buy-to-let deals it shows (Today and the email say so); absent or null when it did not. */
   btlWiden?: BtlWiden | null;
+  /** Review R4 (R4-28): its buy-to-let deals were compared across the UK, or with few deals (Today and the email say so). */
+  btlBench?: BtlBenchNote | null;
 }
 
 type PoolFn<R extends { id: string }> = (filters: DealFilters, limit: number) => Promise<R[]>;
@@ -92,6 +94,7 @@ export function parseStoredChoice(raw: unknown): StoredChoice | null {
     fp: typeof r.fp === 'string' ? r.fp : null,
     answeredAt: typeof r.answeredAt === 'string' ? r.answeredAt : null,
     btlWiden: parseBtlWiden(r.btlWiden),
+    btlBench: parseBtlBench(r.btlBench),
   };
 }
 

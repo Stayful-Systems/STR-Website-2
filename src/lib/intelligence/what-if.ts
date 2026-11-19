@@ -39,7 +39,8 @@ import { feedbackRules } from '../listing/picks.ts';
 import { formatRange } from '../marketplace/profit-range.ts';
 import type { PoolRow } from '../today/candidates.ts';
 import type { BtlCard } from '../btl/card.ts';
-import { inBudget } from '../btl/deal.ts';
+import { btlCashTop, withinBtlCash } from '../btl/deal.ts';
+import { DEFAULT_BTL_BANDS } from '../btl/config.ts';
 import { minimumsOf, twoMinimums } from '../si-actions/undo.ts';
 
 export type WhatIfKey = 'budget' | 'brrr_budget' | 'cash' | 'rent_10' | 'rent_20' | 'areas' | 'miles' | 'beds_down' | 'beds_up' | 'type_either' | 'profit' | `add_${DealType}`;
@@ -236,12 +237,14 @@ export async function whatIfResults(input: ChooseInput, p: TailoringProfile, rea
 /**
  * Batch 28: the buy-to-let deals a variant would show, as Today's own
  * buy-to-let list judges them where it can without a benchmark read: they
- * pass the hard rules (btl_pass), sit in the variant's areas and cash band,
- * and are not ruled out by a reason the member gave. Best cashflow first.
+ * pass the hard rules (btl_pass), sit in the variant's areas and within its
+ * cash ceiling (Review R4, R4-22: Today's own, deal.ts btlCashTop, on Zac's
+ * band tops), and are not ruled out by a reason the member gave. Best
+ * cashflow first.
  */
-function btlAdmissible(rows: readonly PoolRow[], input: Pick<ChooseInput, 'feedback' | 'exclude'>, goals: MarketGoals | null, profile: TailoringProfile): { dealId: string; btl: BtlCard }[] {
+export function btlAdmissible(rows: readonly PoolRow[], input: Pick<ChooseInput, 'feedback' | 'exclude' | 'btlSettings'>, goals: MarketGoals | null, profile: TailoringProfile): { dealId: string; btl: BtlCard }[] {
   const areas = wantsFor(profile).areas;
-  const band = goals?.btl?.cashBand ?? null;
+  const top = btlCashTop(goals, input.btlSettings?.bands ?? DEFAULT_BTL_BANDS);
   const bad = feedbackRules(input.feedback).badAreas;
   const out: { dealId: string; btl: BtlCard }[] = [];
   for (const r of rows) {
@@ -249,7 +252,7 @@ function btlAdmissible(rows: readonly PoolRow[], input: Pick<ChooseInput, 'feedb
     const area = r.postcode_area ? r.postcode_area.toUpperCase() : null;
     if (r.btl_pass !== true || !card || input.exclude.has(r.id) || (area && bad.has(area))) continue;
     if (areas && !(area && areas.has(area))) continue;
-    if (band && !inBudget(card.cashIn.mid, band)) continue;
+    if (!withinBtlCash(card.cashIn.mid, top)) continue;
     out.push({ dealId: r.id, btl: card });
   }
   return out.sort((a, b) => b.btl.cashflowMonthly.low - a.btl.cashflowMonthly.low || (a.dealId < b.dealId ? -1 : 1));
