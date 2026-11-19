@@ -27,7 +27,7 @@ export type Slot = 'daily' | 'weekly';
  * and go anyway when it is not, so the day's later capped emails move to the
  * next day (src/lib/voice/cap-server.ts).
  */
-export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call';
+export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call' | 'academy_reminder';
 
 export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   todays_5: 'daily',
@@ -36,6 +36,7 @@ export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   notice: 'daily',
   low_credit: 'daily',
   si_call: 'daily',
+  academy_reminder: 'daily',
   your_week: 'weekly',
 };
 
@@ -57,6 +58,10 @@ export const SWITCHES_BEHIND: Readonly<Record<SendKind, readonly NotificationKey
   low_credit: ['credit_alerts'],
   // Missed-call emails carry no unsubscribe token; calls are switched off in Notifications.
   si_call: ['si_calls'],
+  // A billing notice (the Academy's free months ending, src/lib/academy/
+  // reminders-run.ts): it counts toward the one-a-day cap but carries no
+  // unsubscribe, so there is no switch behind it (Zac, Batch 31a).
+  academy_reminder: [],
 };
 
 /** The day a send counts against: the UTC date, as the picks' "sent today" guard counts it. */
