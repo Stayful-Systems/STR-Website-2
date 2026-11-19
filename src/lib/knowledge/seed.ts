@@ -841,6 +841,48 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['Why have my picks paused?', 'Why am I not getting daily picks?', 'Where are my daily picks?'],
     answer: 'If you haven’t been in for {pack_pause_days} days, I pause your daily picks so your credit isn’t used. They start again the next time you sign in.',
   },
+
+  // ── Batch 31a: Stayful Academy (drafts for Zac; every figure a placeholder: the months and reminder days from ACADEMY_FACTS, the price from the Pro plan) ──
+  {
+    slug: 'academy_includes',
+    from: 'Batch 31a, Zac section 6 (checkout terms)',
+    category: 'credit_billing',
+    channels: ['view', 'call', 'chat'],
+    showWhen: null,
+    question: 'What does the Stayful Academy include?',
+    variants: ['Do I get Stayful Intelligence with the Academy?', 'What comes with the Academy?', 'Does the Academy come with Intelligence Pro?'],
+    answer: 'The Academy includes {academy_trial_months} months of Stayful Intelligence Pro free, starting when you create your Intelligence account with the email you bought it with. After that it’s {pro_plan_cost} a month on the same card until you cancel.',
+  },
+  {
+    slug: 'academy_trial_end',
+    from: 'Batch 31a, Zac section 6 (reminder email)',
+    category: 'credit_billing',
+    channels: ['view', 'call', 'chat'],
+    showWhen: null,
+    question: 'When do my Academy months end, and what happens then?',
+    variants: ['Will I be charged after my Academy months?', 'When does my Academy trial end?', 'What happens after my Academy months?'],
+    answer: 'We email you {academy_reminder_days} days before the first charge with the date and the amount. After that it’s {pro_plan_cost} a month on your card unless you cancel; there’s nothing to do to keep it.',
+  },
+  {
+    slug: 'academy_cancel',
+    from: 'Batch 31a, Zac section 6 (account line, reminder email)',
+    category: 'credit_billing',
+    channels: ['view', 'call', 'chat'],
+    showWhen: null,
+    question: 'How do I cancel my Academy months or my plan?',
+    variants: ['How do I cancel my plan after the Academy?', 'Can I stop the Academy Pro plan before I’m charged?', 'How do I cancel before the first charge?'],
+    answer: 'Go to Account → Billing and tap Manage or cancel, or use the link in your reminder email. Cancel before your free months end and you aren’t charged anything.',
+  },
+  {
+    slug: 'academy_no_trial',
+    from: 'Batch 31a, Zac section 6 (no-match message)',
+    category: 'account',
+    channels: ['view', 'call', 'chat'],
+    showWhen: null,
+    question: 'I bought the Academy but don’t have my free months',
+    variants: ['Where are my Academy months?', 'My Academy Pro trial isn’t showing', 'I bought the Academy but I’m not on Pro'],
+    answer: 'Use the email you bought the Academy with, or contact us.',
+  },
 ];
 
 /**

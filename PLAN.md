@@ -40,8 +40,10 @@ Branch: batch-31a-academy-trial. Full detail for every phase is below the checkl
   Notes: tests 3408, build OK. account-view.ts (new); ManagePlan +8/−4, account/page.tsx +4/−2 (PROFILE_COLUMNS gains
   stripe_default_payment_method_id; not ACCESS_COLUMNS), sign-in-hooks +8. "Manage or cancel" links to /account/billing
   (the portal button lives there; no portal button on /account to reuse).
-- [ ] Phase 8 — Stayful Intelligence knowledge drafts
-  Notes:
+- [x] Phase 8 — Stayful Intelligence knowledge drafts
+  Notes: tests 3408. Placeholders pro_plan_cost, academy_trial_months, academy_reminder_days. Draft slugs academy_includes,
+  academy_trial_end, academy_cancel, academy_no_trial (word "free" left out of two questions so existing matching tests
+  keep routing "is the service free" correctly). service-facts entry under CREDIT, PLANS AND PAYING.
 - [ ] Phase 9 — Final checks + review
   Notes:
 
