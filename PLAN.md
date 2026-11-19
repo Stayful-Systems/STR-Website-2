@@ -116,11 +116,11 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: `npm run build`; Playwright: Approve blocked when copy contains `{{`; colour override updates preview.
   Notes:
 
-- [ ] **Phase 11 — Admin panel** (needs 5, 7)
+- [x] **Phase 11 — Admin panel** (needs 5, 7)
   Files: `src/app/admin/management/page.tsx`, `WebsitesPanel.tsx`, `website-actions.ts`, `src/lib/websites/invite-run.ts` (+ test).
   "Give a website": email + slug → Dry run (member found, management, owner, no site, slug free, gate state); Run creates. Site list: status, leads this week, free reports used today, held backlog. Pause/unpause with dry run first. The 5 settings.
   Check: `npm test` and `npm run build`; dry run writes nothing (pin).
-  Notes:
+  Notes: admin/management/page.tsx +5, no deletions (line 11 `import { WebsitesPanel }`, line 12 `import { loadWebsitesAdmin }`, line 30 `const websites = await loadWebsitesAdmin();`, lines 128-129 blank + `<WebsitesPanel data={websites} />`). New: WebsitesPanel.tsx, website-actions.ts (dryRunGiveWebsiteAction/giveWebsiteAction, dryRunSiteStatusAction/setSiteStatusAction, saveWebsiteSettingsAction; each calls requireAdmin first), lib/websites/invite-run.ts (+29 tests: dry run proven write-free by spy and source pin; each refusal case), lib/websites/admin-server.ts (extra read-only site-list loader, counts only). Run is offered only after a passing dry run for the same inputs. Settings write via the existing `updateBillingSetting` with a fixed WEBSITE_KEYS map (analysis pricing unreachable). DEVIATIONS: other admin actions don't write the activity log, so this logs a console audit line and `invited_by` records who gave the site; turning the charge setting on asks for confirmation. tsc, eslint, build clean; npm test 3560 pass. NOT RUN: the panel against a real admin session/database.
 
 - [x] **Phase 12 — Lead view** (needs 5)
   Files: `src/app/leads/[id]/page.tsx` (2 lines), `src/app/leads/website/LeadPanel.tsx`, `src/app/leads/page.tsx` (entry card for invited members; no new nav item), `src/app/leads/lead-actions.ts` (refuse manual CRM push of a website lead with no report).

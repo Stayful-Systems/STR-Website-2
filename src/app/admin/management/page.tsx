@@ -8,6 +8,8 @@ import { getFunnelTierSettings } from "@/lib/funnels/tiers-server";
 import { money } from "@/lib/funnels/tiers";
 import { mcReport, type McAccount, type McCharge } from "@/lib/management/report";
 import { FunnelNoticePanel, TestMonthPanel } from "./Panels";
+import { WebsitesPanel } from "./WebsitesPanel";
+import { loadWebsitesAdmin } from "@/lib/websites/admin-server";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Management companies — Admin", robots: { index: false, follow: false } };
@@ -25,6 +27,7 @@ export default async function AdminManagement() {
   if (!isAdminEmail(user.email)) notFound();
 
   const tiers = await getFunnelTierSettings();
+  const websites = await loadWebsitesAdmin();
   let accounts: McAccount[] = [];
   let charges: McCharge[] = [];
   let views: Array<{ views: number; tagged: number }> = [];
@@ -122,6 +125,8 @@ export default async function AdminManagement() {
         <FunnelNoticePanel />
         <TestMonthPanel />
       </div>
+
+      <WebsitesPanel data={websites} />
     </main>
   );
 }
