@@ -98,11 +98,11 @@ Coordinator, one subagent per phase, in order, each told to read CLAUDE.md, give
   Check: `npm test`; smoke + pin prove "21st report is held and runs next day exactly once".
   Notes:
 
-- [ ] **Phase 8 — Templates and AI copy** (needs 4)
+- [x] **Phase 8 — Templates and AI copy** (needs 4)
   Files: `src/lib/websites/templates/SiteShell.tsx`, `templates/pages.tsx`, `copy-prompt.ts` (+ test), `copy-server.ts`.
   Pure components fed by the page model, operator branding, footer "Powered by Stayful Intelligence". Privacy & Terms: operator = data controller, Stayful = processor; retention from the leads retention constant; matches `consentText` wording. Copy: Sonnet 5.5, JSON schema per page; guardrails (no income ranges, never "you will earn", "you stay the owner", no guarantees); every output passes `checks.ts`; regen cap 10 (config constant); house-paid.
   Check: `npm test` (prompt contains guardrails; sample JSON passes checks).
-  Notes:
+  Notes: templates/SiteShell.tsx + pages.tsx (`<SitePage page renderForm/>`, `siteThemeVars(site)`; footer "Powered by Stayful Intelligence"), lead-form-props.ts (`LeadFormProps`, `RenderForm` slot Phase 9 implements), copy-prompt.ts (+8 tests), copy-server.ts (`generateSiteCopy({websiteId, site, settings, kind})` → {ok, copy, regenCount, costPence} | {ok:false, reason}; does not save; WEBSITE_REGEN_CAP=10; first draft free, failed draft returns its regen; Sonnet 5.5 via callModel, house-paid). ANGLES.md is not in the repo, so guardrails come from the brief. Retention text from leads/retention.ts. Privacy/terms wording lives in pages.tsx (page-model.ts left alone). Rendered all 7 pages with react-dom in a scratch script: form on all but privacy, all links /s/<slug>.
 
 - [ ] **Phase 9 — Public site** (needs 6, 8)
   Files: `src/app/s/[slug]/layout.tsx`, `page.tsx`, `[page]/page.tsx` (fees, about, faq, privacy), `areas/[area]/page.tsx`, `src/lib/websites/LeadForm.tsx` (client, two steps, attribution in layout-level context, no storage).
