@@ -4,8 +4,8 @@ Planned against origin/main a0fa9c2 (re-checked 19 Nov 2026: main has not moved)
 Branch: batch-31a-academy-trial. Full detail for every phase is below the checklist.
 
 ## Progress
-- [ ] Phase 0 — Setup (npm ci, baseline tests + lint)
-  Notes:
+- [x] Phase 0 — Setup (npm ci, baseline tests + lint)
+  Notes: main still a0fa9c2. Baseline: npm test 3343/3343 pass; lint 0 errors, 79 existing warnings. Schema-twice check script: /tmp/claude-0/-home-user-STR-Website-2/9f47ba7d-c597-516e-8b28-449ceff23206/scratchpad/schema-check.sh (passes on baseline).
 - [ ] Phase 1 — Pure rules + schema
   Notes:
 - [ ] Phase 2 — Linking + starting the trial
