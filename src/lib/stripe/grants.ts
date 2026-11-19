@@ -3,7 +3,8 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { expirePlanGrants, grant, getBalance } from '../credit/ledger';
 import { round4 } from '../credit/pricing';
-import { annualSlotAt } from './annual';
+import { annualSlotAt, type MonthSlot } from './annual';
+import { trialMonthDue, trialSlotKey } from '../academy/rules';
 import { forgetTodayLists } from '../today/forget-server';
 import { getPlan, type BillingPlan } from '../credit/plans';
 import { getBillingSettings } from '../credit/unit-costs';
@@ -178,5 +179,52 @@ export async function ensureAnnualMonthlyGrant(userId: string): Promise<boolean>
   // Judged by the start of the subscription YEAR: an annual plan changes to
   // the new credit at its next annual renewal, not at a monthly slot.
   await grantPlanCycle(userId, 'pro_annual', sourceRef, slot.to, { email: (data.email as string | null) ?? null, notify: slot.slot > 0, periodStart: start });
+  return true;
+}
+
+// ── Batch 31a: Stayful Academy ──
+
+/** The academy_purchases columns the trial's monthly credit needs. */
+export interface AcademyTrialPurchase {
+  user_id: string | null;
+  trial_subscription_id: string | null;
+  trial_started_at: string | null;
+  trial_ends_at: string | null;
+  refunded_at: string | null;
+}
+
+/**
+ * The trial month an Academy purchase is due now, as the grant's source_ref
+ * (`trial:<subscription>:<YYYY-MM>`, the same key the webhook gives month 1),
+ * or null when nothing can be due (not linked, no trial, refunded, outside the
+ * trial). Pure: the sweep's dry run lists these without writing.
+ */
+export function academyTrialSlotDue(purchase: AcademyTrialPurchase, now: Date = new Date()): { userId: string; subscriptionId: string; sourceRef: string; slot: MonthSlot; start: Date } | null {
+  if (purchase.refunded_at || !purchase.user_id || !purchase.trial_subscription_id || !purchase.trial_started_at || !purchase.trial_ends_at) return null;
+  const start = new Date(purchase.trial_started_at);
+  const end = new Date(purchase.trial_ends_at);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const slot = trialMonthDue(start, end, now);
+  if (!slot) return null;
+  return { userId: purchase.user_id, subscriptionId: purchase.trial_subscription_id, sourceRef: trialSlotKey(purchase.trial_subscription_id, slot.key), slot, start };
+}
+
+/**
+ * An Academy trial is credited month by month like an annual plan: the
+ * webhook grants month 1 on the £0 trial invoice and the daily sweep grants
+ * whichever month is due, only while the member's subscription is still that
+ * trial and `trialing` and the purchase is not refunded. Idempotent per month
+ * (the source_ref); true when it granted.
+ */
+export async function ensureAcademyTrialMonthlyGrant(purchase: AcademyTrialPurchase): Promise<boolean> {
+  const due = academyTrialSlotDue(purchase);
+  if (!due) return false;
+  const admin = createAdminClient();
+  const { data, error } = await admin.from('profiles').select('email, stripe_subscription_id, stripe_subscription_status').eq('id', due.userId).maybeSingle();
+  if (error) throw new Error(`profile read failed: ${error.message}`);
+  if (!data || data.stripe_subscription_id !== due.subscriptionId || data.stripe_subscription_status !== 'trialing') return false;
+  const { data: existing } = await admin.from('credit_grants').select('id').eq('source_ref', due.sourceRef).maybeSingle();
+  if (existing) return false;
+  await grantPlanCycle(due.userId, 'pro', due.sourceRef, due.slot.to, { email: (data.email as string | null) ?? null, notify: due.slot.slot > 0, periodStart: due.start });
   return true;
 }

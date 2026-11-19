@@ -20,8 +20,10 @@ Branch: batch-31a-academy-trial. Full detail for every phase is below the checkl
   trialSubscriptionParams, trialIdempotencyKey, flagReasonFor. emails.ts has the refund email only (Phase 5 adds the
   reminder). Activity via recordActivity (awaitable). Unlink also restores the profile's previous customer and clears
   the buyer's card. customer.ts +6 lines, kinds.ts +2 lines.
-- [ ] Phase 3 — Webhook + monthly trial credit
-  Notes:
+- [x] Phase 3 — Webhook + monthly trial credit
+  Notes: tests 3391 pass. deps.academy {recordPurchase, linkAfterPurchase(purchaseId,userId), cancelTrialForRefund};
+  purchase upsert lives in src/lib/stripe/deps.ts. grants.ts: ensureAcademyTrialMonthlyGrant + pure academyTrialSlotDue.
+  Sweep returns academyTrialGranted / dry academyTrialDue. Dispute path left unchanged (harmless for academy).
 - [ ] Phase 4 — Checkout + pages
   Notes:
 - [ ] Phase 5 — Reminder email + daily cron

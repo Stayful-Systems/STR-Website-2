@@ -1025,3 +1025,196 @@ test('Review R4 (R4-14): a dispute marks its payment (so a charged-back payment 
     { paymentIntentId: 'pi_top', open: false },
   ]);
 });
+
+// ── Batch 31a: Stayful Academy ──
+
+function academyDeps() {
+  const deps = fakeDeps();
+  const records: unknown[] = [];
+  const links: Array<[string, string]> = [];
+  const refunds: Array<[string, boolean]> = [];
+  const byPi = new Map<string, string>();
+  const started = new Set<string>();
+  const academyPi = (id: string) => ({ id, payment_method: 'pm_academy', customer: 'cus_new', amount: 9900, amount_received: 9900, metadata: { kind: 'academy' } }) as unknown as Stripe.PaymentIntent;
+  deps.retrievePaymentIntent = async (id) => academyPi(id);
+  deps.recordRefund = async (...a) => {
+    (deps.calls.recordRefund ??= []).push(a);
+  };
+  deps.academy = {
+    recordPurchase: async (input) => {
+      records.push(input);
+      if (!byPi.has(input.paymentIntentId)) byPi.set(input.paymentIntentId, `ap_${byPi.size + 1}`);
+      return { id: byPi.get(input.paymentIntentId)! };
+    },
+    linkAfterPurchase: async (purchaseId, userId) => {
+      links.push([purchaseId, userId]);
+      if (started.has(purchaseId)) return 'academy link already (already)';
+      started.add(purchaseId);
+      return 'academy link start (start)';
+    },
+    cancelTrialForRefund: async (pi, fully) => {
+      refunds.push([pi, fully]);
+      return 'ok';
+    },
+  };
+  return { deps, records, links, refunds };
+}
+
+const academySession = (over: Record<string, unknown> = {}) => ({
+  id: 'cs_academy',
+  mode: 'payment',
+  payment_status: 'paid',
+  metadata: { kind: 'academy' },
+  payment_intent: 'pi_academy',
+  customer: 'cus_new',
+  customer_details: { email: 'A@Example.com' },
+  consent: { terms_of_service: 'accepted' },
+  created: 1_790_000_000,
+  ...over,
+});
+
+const academyTrialSub = (trialStart: number, trialEnd: number, metadata: Record<string, string> = { source: 'academy' }) =>
+  ({ id: 'sub_x', status: 'trialing', cancel_at_period_end: false, customer: 'cus_1', metadata, trial_start: trialStart, trial_end: trialEnd, start_date: trialStart, items: { data: [{ price: { id: 'price_pro' }, current_period_end: trialEnd }] } }) as unknown as Stripe.Subscription;
+
+const zeroInvoice = (id: string, subId: string, reason = 'subscription_create') => ({ id, customer: 'cus_1', amount_paid: 0, billing_reason: reason, parent: { subscription_details: { subscription: subId } }, lines: { data: [] } });
+
+test('Batch 31a: an Academy trial’s £0 first invoice grants month 1 only, keyed trial:<sub>:<YYYY-MM of trial start>, expiring one clamped month later', async () => {
+  const deps = fakeDeps();
+  const start = Date.UTC(2027, 0, 31, 10) / 1000; // 31 Jan: one clamped month is 28 Feb
+  const end = start + 90 * 86400;
+  deps.setSub(academyTrialSub(start, end));
+  const r = await handleStripeEvent(ev('invoice.paid', zeroInvoice('in_trial', 'sub_x')), deps);
+  assert.equal(r.handled, true);
+  assert.equal(deps.calls.grantPlanCycle!.length, 1);
+  const [userId, planCode, sourceRef, expiry] = deps.calls.grantPlanCycle![0];
+  assert.equal(userId, 'u1');
+  assert.equal(planCode, 'pro');
+  assert.equal(sourceRef, 'trial:sub_x:2027-01');
+  assert.equal((expiry as Date).toISOString(), new Date(Date.UTC(2027, 1, 28, 10)).toISOString());
+  // The profile write is as before.
+  const patch = deps.calls.updateProfile![0][1] as Record<string, unknown>;
+  assert.equal(patch.stripe_subscription_status, 'trialing');
+  assert.equal(patch.plan_code, 'pro');
+});
+
+test('Batch 31a: an Academy trial shorter than a month expires month 1 at the trial end', async () => {
+  const deps = fakeDeps();
+  const start = Date.UTC(2027, 2, 10) / 1000;
+  const end = start + 20 * 86400;
+  deps.setSub(academyTrialSub(start, end));
+  await handleStripeEvent(ev('invoice.paid', zeroInvoice('in_trial', 'sub_x')), deps);
+  const [, , sourceRef, expiry] = deps.calls.grantPlanCycle![0];
+  assert.equal(sourceRef, 'trial:sub_x:2027-03');
+  assert.equal((expiry as Date).getTime(), end * 1000);
+});
+
+test('Batch 31a: a non-Academy £0 trial invoice is unchanged (inv:<id>, period end); the Academy’s day-91 invoice follows the normal cycle', async () => {
+  const deps = fakeDeps();
+  const start = Date.UTC(2027, 0, 31, 10) / 1000;
+  const end = start + 90 * 86400;
+  deps.setSub(academyTrialSub(start, end, {}));
+  await handleStripeEvent(ev('invoice.paid', zeroInvoice('in_other', 'sub_x')), deps);
+  const [, planCode, sourceRef, expiry] = deps.calls.grantPlanCycle![0];
+  assert.equal(planCode, 'pro');
+  assert.equal(sourceRef, 'inv:in_other');
+  assert.equal((expiry as Date).getTime(), end * 1000);
+
+  const deps2 = fakeDeps();
+  deps2.setSub({ ...academyTrialSub(start, end), status: 'active' } as Stripe.Subscription);
+  await handleStripeEvent(ev('invoice.paid', { ...zeroInvoice('in_91', 'sub_x', 'subscription_cycle'), amount_paid: 3999 }), deps2);
+  assert.equal(deps2.calls.grantPlanCycle![0][2], 'inv:in_91');
+});
+
+test('Batch 31a: an Academy checkout records the purchase and links it, never touching the profile, card or top-ups', async () => {
+  const { deps, records, links } = academyDeps();
+  const r = await handleStripeEvent(ev('checkout.session.completed', academySession()), deps);
+  assert.equal(r.handled, true);
+  assert.match(r.note ?? '', /academy purchase recorded; academy link start/);
+  assert.equal(records.length, 1);
+  assert.deepEqual(records[0], {
+    email: 'a@example.com',
+    customerId: 'cus_new',
+    paymentIntentId: 'pi_academy',
+    paymentMethodId: 'pm_academy',
+    amountPence: 9900,
+    paidAt: new Date(1_790_000_000 * 1000).toISOString(),
+    checkoutSessionId: 'cs_academy',
+    termsAcceptedAt: (records[0] as { termsAcceptedAt: string }).termsAcceptedAt,
+  });
+  assert.ok((records[0] as { termsAcceptedAt: string | null }).termsAcceptedAt);
+  assert.deepEqual(links, [['ap_1', 'u1']]);
+  assert.equal(deps.calls.updateProfile, undefined);
+  assert.equal(deps.calls.savePaymentMethod, undefined);
+  assert.equal(deps.calls.grantTopup, undefined);
+});
+
+test('Batch 31a: an Academy checkout links the client_reference_id account first; no tick box means no consent recorded', async () => {
+  const { deps, records, links } = academyDeps();
+  await handleStripeEvent(ev('checkout.session.completed', academySession({ client_reference_id: 'u1', customer_details: { email: 'someone@else.com' }, consent: null })), deps);
+  assert.equal((records[0] as { termsAcceptedAt: string | null }).termsAcceptedAt, null);
+  assert.deepEqual(links, [['ap_1', 'u1']]);
+});
+
+test('Batch 31a: an Academy checkout with no account is recorded only', async () => {
+  const { deps, records, links } = academyDeps();
+  const r = await handleStripeEvent(ev('checkout.session.completed', academySession({ customer_details: { email: 'nobody@example.com' } })), deps);
+  assert.equal(r.handled, true);
+  assert.equal(r.note, 'academy purchase recorded; no account yet');
+  assert.equal(records.length, 1);
+  assert.equal(links.length, 0);
+  assert.equal(deps.calls.updateProfile, undefined);
+});
+
+test('Batch 31a: a replayed Academy checkout records the same purchase again and linking answers already', async () => {
+  const { deps, records, links } = academyDeps();
+  await handleStripeEvent(ev('checkout.session.completed', academySession()), deps);
+  const r = await handleStripeEvent(ev('checkout.session.completed', academySession()), deps);
+  assert.equal(records.length, 2);
+  assert.deepEqual(links, [['ap_1', 'u1'], ['ap_1', 'u1']]);
+  assert.match(r.note ?? '', /already/);
+  assert.equal(deps.calls.updateProfile, undefined);
+  assert.equal(deps.calls.grantTopup, undefined);
+});
+
+test('Batch 31a: an Academy checkout known only by its payment intent’s metadata is still the Academy’s', async () => {
+  const { deps, records } = academyDeps();
+  await handleStripeEvent(ev('checkout.session.completed', academySession({ metadata: {} })), deps);
+  assert.equal(records.length, 1);
+  assert.equal(deps.calls.updateProfile, undefined);
+  assert.equal(deps.calls.savePaymentMethod, undefined);
+});
+
+test('Batch 31a: an unpaid Academy checkout records nothing; without the Academy wired in it is still kept off the generic path', async () => {
+  const { deps, records } = academyDeps();
+  const r = await handleStripeEvent(ev('checkout.session.completed', academySession({ payment_status: 'unpaid' })), deps);
+  assert.equal(r.handled, true);
+  assert.equal(records.length, 0);
+  const plain = fakeDeps();
+  const r2 = await handleStripeEvent(ev('checkout.session.completed', academySession()), plain);
+  assert.equal(r2.handled, false);
+  assert.equal(plain.calls.updateProfile, undefined);
+  assert.equal(plain.calls.grantTopup, undefined);
+});
+
+test('Batch 31a: a full Academy refund cancels the trial and is kept off Total paid; a partial one is passed on as partial', async () => {
+  const { deps, refunds } = academyDeps();
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_a', payment_intent: 'pi_academy', captured: true, amount: 9900, amount_refunded: 9900, refunded: true }), deps);
+  assert.equal(r.handled, true);
+  assert.deepEqual(refunds, [['pi_academy', true]]);
+  assert.equal(deps.calls.recordRefund, undefined);
+  assert.equal(deps.calls.refundTopup, undefined);
+
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_a', payment_intent: 'pi_academy', captured: true, amount: 9900, amount_refunded: 5000, refunded: false }), deps);
+  assert.deepEqual(refunds[1], ['pi_academy', false]);
+  assert.equal(deps.calls.recordRefund, undefined);
+});
+
+test('Batch 31a: a refund that is not the Academy’s follows the existing path', async () => {
+  const { deps, refunds } = academyDeps();
+  deps.retrievePaymentIntent = async (id) => ({ id, amount: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } }) as unknown as Stripe.PaymentIntent;
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_t', payment_intent: 'pi_t', captured: true, amount: 2500, amount_refunded: 2500, refunded: true }), deps);
+  assert.equal(r.note, 'top-up clawed back');
+  assert.equal(refunds.length, 0);
+  assert.equal(deps.calls.recordRefund!.length, 1);
+  assert.equal(deps.calls.refundTopup!.length, 1);
+});
