@@ -160,6 +160,23 @@ test('a PDF that will not render sends the lead alone and keeps the report owed 
   assert.ok(!logged.join('\n').includes('boom'), 'only an id is logged, not the error text');
 });
 
+test('a report the receiver refuses (bad_report) does not cost the lead: it is re-sent alone, report left owed', async () => {
+  const w = world({ reportState: 'done' });
+  w.setResponder((b) => (b.report
+    ? { ok: false, code: 'bad_report', retryable: false, status: 422 }
+    : { ok: true, code: 'ok', retryable: false, status: 200, data: { ok: true, outcome: 'created', replayed: false, lead_id: 'ldb-1', url: 'u', report: 'coming' } }));
+  await w.deps.store.enqueue(LEAD, OWNER, { reportDone: true });
+  await runLeadDbDelivery(LEAD, w.deps);
+  assert.equal(w.posts.length, 2);
+  assert.ok(w.posts[0].report, 'first try carried the report');
+  assert.equal(w.posts[1].report, undefined, 'second try is the lead alone');
+  assert.equal(w.row().leaddb_lead_id, 'ldb-1');
+  assert.ok(w.row().lead_sent_at);
+  assert.equal(w.row().report_sent_at, null);
+  assert.equal(w.row().status, 'pending');
+  assert.equal(w.row().last_error, 'report_not_sent');
+});
+
 test('a report that finished with no figures is not owed for ever', async () => {
   const w = world({ reportState: 'done', ctx: { result: { property: { bedrooms: 3 }, shortLet: { annualRevenue: 0 } } as unknown as AnalysisResult } });
   await w.deps.store.enqueue(LEAD, OWNER, { reportDone: true });

@@ -170,7 +170,21 @@ export async function runLeadDbDelivery(leadId: string, deps: LeadDbDeps): Promi
     lead: { name: ctx.name, email: ctx.email, phone: ctx.phone, address: ctx.address, postcode: ctx.postcode, bedrooms: ctx.bedrooms },
     report,
   });
-  const res = await deps.post(body);
+  let res = await deps.post(body);
+
+  // The receiver refused the REPORT (bad PDF or figures), which fails the same way for ever. The lead itself
+  // must not be lost to it: send it alone now, and leave the report owed (bounded like any other retry).
+  if (!res.ok && res.code === 'bad_report' && report !== undefined) {
+    report = undefined;
+    res = await deps.post(
+      buildPushBody({
+        ownerId: ctx.ownerId,
+        leadId,
+        lead: { name: ctx.name, email: ctx.email, phone: ctx.phone, address: ctx.address, postcode: ctx.postcode, bedrooms: ctx.bedrooms },
+        report: undefined,
+      }),
+    );
+  }
 
   if (!res.ok || !res.data) {
     // Only the other side saying the link itself is wrong marks the link; a network blip says nothing about it.
