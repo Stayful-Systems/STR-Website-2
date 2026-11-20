@@ -50,6 +50,10 @@ export class MemoryStore implements DomainStore {
     return [...this.domains.values()].find((d) => d.websiteId === websiteId && d.status !== 'released') ?? null;
   }
 
+  async releasedBefore(websiteId: string) {
+    return [...this.domains.values()].some((d) => d.websiteId === websiteId && d.status === 'released');
+  }
+
   private clash(name: string, websiteId: string, except?: string): boolean {
     return [...this.domains.values()].some((d) => d.id !== except && d.status !== 'released' && (d.name === name || d.websiteId === websiteId));
   }

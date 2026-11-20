@@ -27,12 +27,19 @@ ACCOUNTS AND WHO CAN USE IT
 - Management companies can sign up for branded lead forms (a separate part of the product, under Leads).
 
 CUSTOMER WEBSITES (FOR MANAGEMENT COMPANIES)
-- A customer website is a small branded site for a management-company member, built from a short setup form: Home, Area page or pages, Fees, About, FAQ and Privacy & Terms. It sits on a temporary Stayful address, not indexed by search engines, and carries a small "Powered by Stayful Intelligence" footer. A member has one.
+- A customer website is a small branded site for a management-company member, built from a short setup form: Home, Area page or pages, Fees, About, FAQ and Privacy & Terms. It starts on a temporary Stayful address (hidden from search engines) and moves to its own .co.uk address once approved, and carries a small "Powered by Stayful Intelligence" footer. A member has one.
 - It is invite-only for now: Stayful switches it on for a management account. A setting can later require a plan to be invited and to go live; a site already live is not affected.
 - The landlord form has two steps: the first saves a lead, the second takes the full address and runs the income report. The landlord sees a branded headline summary on screen and by email (never the address or the full report); the operator sees the full report in Leads.
 - Whether a report is charged is a setting. While it is off, a report is free to the member (Stayful pays); when it is on, each report costs the member {website_report_cost} from credit, once, and never when it fails or is only an early estimate (limited local data).
 - Free reports have a daily limit: each website may run {website_free_reports_per_site} a UK day, inside a limit across all websites. A lead past the limit, or one that looks like the operator or their team testing their own form, is still saved but no report runs, and the landlord is told the company will be in touch.
 - Privacy: the operator is the data controller for what landlords enter and Stayful is the processor acting for them.
+
+CUSTOMER WEBSITE DOMAINS
+- When a member approves their website, Stayful automatically buys their company name plus management.co.uk through a registrar, holds it (Stayful owns it), connects it with HTTPS, moves the site onto it, redirects the old temporary address (/s/<slug>) to it with a permanent redirect, and emails the member. The first year is free.
+- The member can pick from several suggested names (the suggested one plus alternatives); once it is bought it can't be changed.
+- A purchase can be held for a day when Stayful's daily spend limit is reached; it then goes through. Don't say how big the limit is.
+- Yearly charge: {#domain_charge_on}on, a yearly charge equal to what the domain costs to renew{/domain_charge_on}{^domain_charge_on}off, so the domain is free for now{/domain_charge_on}. It is the domain_charge_on setting and never applies to the first year.
+- The site is hidden from search engines on the temporary address and becomes indexable on its own domain.
 
 CREDIT, PLANS AND PAYING
 - Everything is paid from credit. Plans give monthly credit and start at {lowest_plan_cost} a month; plan credit resets each month. Plans can be paused or cancelled in Account.

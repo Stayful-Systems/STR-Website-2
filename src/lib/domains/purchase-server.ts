@@ -104,6 +104,8 @@ export interface DomainStore {
   domain(id: string): Promise<DomainRow | null>;
   /** The site's domain row that is not released, or null. */
   domainForSite(websiteId: string): Promise<DomainRow | null>;
+  /** Has this site ever had a domain released (so Stayful, not the member, decides whether it gets another)? */
+  releasedBefore(websiteId: string): Promise<boolean>;
   /** A new row, awaiting_admin. Throws StoreConflict when the site or the name already has an active one. */
   insertDomain(row: { websiteId: string; ownerId: string; name: string; costPence: number }): Promise<DomainRow>;
   /**
@@ -290,6 +292,8 @@ export function createDomainEngine(deps: DomainDeps) {
     if (!priceAllowed(price, DOMAIN_MAX_PRICE_PENCE)) return { ok: false, reason: 'not_offered' };
     const existing = await store.domainForSite(input.websiteId);
     if (!canChoose(existing)) return { ok: false, reason: 'cannot_choose' };
+    // A domain the admin released is not replaced by the member's own click: that is the admin's call.
+    if (!existing && (await store.releasedBefore(input.websiteId))) return { ok: false, reason: 'cannot_choose' };
 
     const settings = await store.settings();
     if (opts.dryRun) return { ok: true, domainId: existing?.id ?? null, status: 'awaiting_admin', outcome: settings.autoBuy ? 'would_buy' : 'would_wait_for_admin', dryRun: true };

@@ -160,6 +160,15 @@ export function createLiveStore(): DomainStore {
       return data ? toDomainRow(data as Record<string, unknown>) : null;
     },
 
+    async releasedBefore(websiteId) {
+      const { count, error } = await admin().from('website_domains').select('id', { count: 'exact', head: true }).eq('website_id', websiteId).eq('status', 'released');
+      if (error) {
+        console.error('[domains] released check failed:', error.code ?? 'error');
+        return true; // When unsure, do not let the member buy another.
+      }
+      return (count ?? 0) > 0;
+    },
+
     async insertDomain(r) {
       const { data, error } = await admin().from('website_domains').insert({ website_id: r.websiteId, owner_id: r.ownerId, name: r.name, cost_pence: r.costPence, status: 'awaiting_admin' }).select(COLUMNS).single();
       if (isUnique(error)) throw new StoreConflict();

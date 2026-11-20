@@ -84,6 +84,14 @@ test('only a live site chooses; a name can be chosen once and not changed after 
   assert.deepEqual(await h.engine.chooseName({ websiteId: 's1', name: 'harbourlettings.co.uk' }), { ok: false, reason: 'cannot_choose' });
 });
 
+test('a member cannot buy another domain after the admin released theirs', async () => {
+  const h = harness();
+  const { siteId, domainId } = await liveDomain(h);
+  await h.engine.release(domainId);
+  await h.engine.offerNames({ websiteId: siteId }, { refresh: true });
+  assert.deepEqual(await h.engine.chooseName({ websiteId: siteId, name: 'harbourlettings.co.uk' }), { ok: false, reason: 'cannot_choose' });
+});
+
 test('two sites cannot hold the same name', async () => {
   const h = harness();
   h.store.addSite({ id: 's1' });
