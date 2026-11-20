@@ -144,8 +144,11 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   Run. Link-missing returns counts only (no lead ids); Run gated on a prior dry run in the panel (client state). BUG FOUND AND
   FIXED by coordinator: a new version used to clear `approved_at`, so leads from still-running ads stopped linking until
   re-approval. Now a regenerate keeps the first approval time, and approvePack keeps `approvedAt ?? now` (generate-core.ts).
-- [ ] **Phase 11 — Knowledge and docs.** placeholders, seed drafts, service-facts, CLAUDE.md section.
-  Notes:
+- [x] **Phase 11 — Knowledge and docs.** placeholders, seed drafts, service-facts, CLAUDE.md section.
+  Notes: npm test 4256/4256, tsc clean. placeholders.ts: `ad_pack_free_regens`, `ad_pack_voice_changes` (whole numbers, shown
+  in words). seed.ts: five DRAFT entries `adpack_what/who/regenerate/tagging/not_included` (no typed figures). service-facts.ts:
+  "LANDLORD AD PACK" block (a test needs every placeholder it uses in a seed entry). CLAUDE.md: Batch 36 section only.
+  Zac to approve the drafts in Stayful Intelligence.
 - [ ] **Phase 12 — Final checks, review, PR.**
   Notes:
 

@@ -537,6 +537,15 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   pro_plan_cost: g_("The Pro plan's monthly price (what an Academy trial costs after its free months)", "billing_plans ('pro', monthly)", (g) => money(proMonthlyPlan(g))),
   academy_trial_months: g_('Free months of Pro the Stayful Academy gives, in words', 'code ACADEMY_FACTS.trialMonths (src/lib/academy/rules.ts)', () => countWords(ACADEMY_FACTS.trialMonths)),
   academy_reminder_days: g_('Days before the first Academy charge the reminder email goes', 'code ACADEMY_FACTS.reminderDaysBefore (src/lib/academy/rules.ts)', () => String(ACADEMY_FACTS.reminderDaysBefore)),
+  // Batch 36: the landlord ad pack (each read strictly from its billing_settings row, seeded in schema.sql's Batch 36 block)
+  ad_pack_free_regens: g_('Free regenerates an operator gets for their ad pack, in words (only after a brand change)', 'billing_settings.ad_pack_free_regens', (g) => {
+    const n = whole(g, 'ad_pack_free_regens', 0);
+    return n === null ? null : countWords(n);
+  }),
+  ad_pack_voice_changes: g_('Times the video voice can be changed before the operator approves their ad pack, in words', 'billing_settings.ad_pack_voice_changes', (g) => {
+    const n = whole(g, 'ad_pack_voice_changes', 0);
+    return n === null ? null : countWords(n);
+  }),
 
   // The member's own (view and chat only, never a call)
   balance: m_('Their exact credit balance', 'the member’s credit', (m) => money(m.balancePence)),
