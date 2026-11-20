@@ -11,7 +11,8 @@ Coordinator rules: one subagent per phase, each replies in 150 words or fewer. A
 ## Progress (32a)
 - [x] Phase 0 — Setup
   Notes: main still cf6935e. Baseline: npm test 3661/3661 pass; lint 0 errors, 79 warnings; typecheck 0 errors; build OK, no warnings. Schema check: `bash /tmp/claude-0/-home-user-STR-Website-2/1a23043a-0f19-5f4a-8fe2-b4631334ee33/scratchpad/schema-check.sh` (fresh PG16 cluster as user pgcheck in /var/tmp/str-schema-check; schema twice + index/dump diff + every supabase/tests/*-smoke.sql, new ones picked up automatically; passes on baseline).
-- [ ] Phase 1 — Database
+- [x] Phase 1 — Database
+  Notes: schema-check passes (twice, no index rebuild, no dump diff, all smoke incl. rollover-smoke); npm test 3661 unchanged. Batch 32 section sits BEFORE the Batch 31 section (websites/schema.test.ts needs 31 last). credit_smoke.sql edited: renewal now expires 0 and 1800 rolls over. SQL: credit_plan_cycle ignores p_expires_at, sets plan_cycle; credit_idle_plan_report(p_now) -> user_id,last_spent_at,idle_since,plan_remaining_pence,expirable_pence (no cycle grant => nothing expirable); credit_expire_plan_source(p_user,p_source_like,p_max_pence,p_reason) -> {expired_pence,grants}; p_max_pence null = all; source_like is a LIKE pattern so '_' and '%' must be escaped by the caller ('\\_'); only plan-kind grants match. Phase 2 MUST: escape LIKE chars in the ledger.ts wrapper; flag annual + Academy-trial plan grants plan_cycle=true too (they are monthly plan credit, and the newest one must be protected) -- credit_plan_cycle sets it, plain credit_grant does not.
 - [ ] Phase 2 — Grant and Stripe paths
 - [ ] Phase 3 — Pure rollover rules and summary
 - [ ] Phase 4 — Chip, banner and Usage page
