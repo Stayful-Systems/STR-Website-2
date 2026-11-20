@@ -13,7 +13,9 @@ test('Ltd, Limited, LLP, PLC and & are stripped; punctuation and accents vanish'
   assert.equal(slugFromCompany('Smith & Jones Ltd'), 'smithjones');
   assert.equal(slugFromCompany('Smith&Jones Limited'), 'smithjones');
   assert.equal(slugFromCompany('Oak LLP'), 'oak');
-  assert.equal(slugFromCompany('Oak Lettings PLC'), 'oaklettings');
+  assert.equal(slugFromCompany('Oak Lettings PLC'), 'oak');
+  assert.equal(slugFromCompany('Oak Lettings Management Ltd'), 'oak');
+  assert.equal(candidates('Oak Lettings Ltd')[0], 'oakmanagement.co.uk');
   assert.equal(slugFromCompany("O'Neil Properties"), 'oneilproperties');
   assert.equal(slugFromCompany('Café Résidences'), 'caferesidences');
   assert.equal(slugFromCompany('  The   Old  Mill  '), 'theoldmill');
@@ -22,6 +24,7 @@ test('Ltd, Limited, LLP, PLC and & are stripped; punctuation and accents vanish'
 test('"management" alone, or nothing usable, gives no names', () => {
   assert.equal(slugFromCompany('Management Ltd'), '');
   assert.deepEqual(candidates('Management'), []);
+  assert.deepEqual(candidates('Lettings Ltd'), []);
   assert.deepEqual(candidates(''), []);
   assert.deepEqual(candidates(null), []);
   assert.deepEqual(candidates('!!! & ???'), []);

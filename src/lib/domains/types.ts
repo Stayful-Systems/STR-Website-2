@@ -66,4 +66,6 @@ export interface DomainRow {
   renewalAlertedFor: string | null;
   stateChangedAt: string;
   createdAt: string;
+  /** Bumped on every write: the engine's optimistic lock (a second runner of the same step loses). */
+  updatedAt: string;
 }

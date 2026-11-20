@@ -22,6 +22,8 @@ export const BRAND_PREFIX = ['booking'] as const;
 
 /** Words dropped from a company name: its legal form. */
 const LEGAL_WORDS = new Set(['ltd', 'limited', 'llp', 'plc']);
+/** What we add ourselves, so a company that already ends in it does not get it twice. */
+const TRAILING = ['management', 'lettings'] as const;
 
 /** The longest company stem kept: with "management" (10) and a town (12) the label stays within 63. */
 const STEM_MAX = 40;
@@ -42,8 +44,17 @@ export function slugFromCompany(company: unknown): string {
     .split(' ')
     .filter((w) => w && !LEGAL_WORDS.has(w));
   let joined = words.join('');
-  // A trailing "management" is ours to add, not theirs to repeat ("Management Ltd" alone leaves nothing to build on).
-  if (joined.endsWith('management')) joined = joined.slice(0, -'management'.length);
+  // A trailing "management" or "lettings" is ours to add, not theirs to repeat ("Oak Lettings Ltd" -> oak, so we offer
+  // oakmanagement and oaklettings, not oaklettingsmanagement). "Management Ltd" alone leaves nothing to build on.
+  for (let again = true; again; ) {
+    again = false;
+    for (const tail of TRAILING) {
+      if (joined.endsWith(tail)) {
+        joined = joined.slice(0, -tail.length);
+        again = true;
+      }
+    }
+  }
   joined = joined.slice(0, STEM_MAX);
   return joined;
 }
