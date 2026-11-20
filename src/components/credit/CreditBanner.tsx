@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { formatGbp, openOutOfCredit } from "@/lib/credit/client";
+import { lowBalanceText } from "@/lib/credit/balance-words";
 import { useCreditOptional } from "./CreditProvider";
 import { LowCreditChoice } from "./LowCreditChoice";
 
 /**
- * Sticky strip under the app nav: a warning once 80% of the cycle's credit
- * is used, a red one at £0. Both link to top-up and upgrade. A new member
- * who can still buy the starter pack is offered that instead (Batch 20).
+ * Sticky strip under the app nav: "Running low: £X of credit left" once the
+ * balance is low, a red one at £0. Both link to top-up and upgrade. A new
+ * member who can still buy the starter pack is offered that instead (Batch 20).
  */
 export function CreditBanner() {
   const ctx = useCreditOptional();
@@ -54,12 +55,11 @@ export function CreditBanner() {
   // Batch 20, Part B: no plan, £5 or less (£0 included): Starter or a £10 top-up.
   if (c.decision) return <LowCreditChoice credit={c} />;
   const cycle = c.cycle;
-  const pct = cycle && cycle.allowancePence > 0 ? Math.min(100, Math.round((cycle.usedPence / cycle.allowancePence) * 100)) : null;
   const message = out
     ? c.enforcing
       ? "You're out of credit. Top up or upgrade to keep running reports."
       : "You've used all your credit. Top up or upgrade — new usage will count against your next credit."
-    : `Running low: ${pct !== null ? `${pct}% of your ${cycle?.planName ? `${cycle.planName} plan` : "welcome"} credit is used` : `${formatGbp(c.totalPence)} left`}${cycle?.planName ? "" : " · upgrade for monthly credit"}.`;
+    : lowBalanceText(c.totalPence, Boolean(cycle?.planName), formatGbp);
   return (
     <div className="sticky top-0 z-40 w-full border-b border-black/10 shadow-sm" style={{ backgroundColor: out ? "#991b1b" : "#b45309" }}>
       <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 px-4 py-2.5 text-center text-sm font-medium text-white">

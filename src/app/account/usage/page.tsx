@@ -7,6 +7,7 @@ import { teamCreditSnapshot } from "@/lib/team/credit";
 import { payerFor } from "@/lib/team";
 import { quoterFor } from "@/lib/credit/quote-server";
 import { formatPence } from "@/lib/credit/deal-pricing";
+import { planCreditLine } from "@/lib/credit/balance-words";
 import { usageBreakdown, type UsageCategory } from "@/lib/credit/usage-breakdown";
 import { usageLinesSince, usagePeriodFor } from "@/lib/credit/usage-server";
 import { dailyDealsLineFor } from "@/lib/listing/daily-deals";
@@ -69,7 +70,7 @@ export default async function UsagePage() {
   const daily = dailyDealsLineFor(quoter.label(admin ? 0 : quoter.pricing.todays5DailyPence, "todays_5"), quoter.pricing.todays5DailyPence);
   const member = credit.member;
   const allowance = credit.cycle?.allowancePence ?? 0;
-  const usedPct = onPlan && allowance > 0 ? Math.min(100, Math.round(((credit.cycle?.usedPence ?? 0) / allowance) * 100)) : null;
+  const planLine = onPlan ? planCreditLine(allowance, credit.rolledOverPence, formatPence) : null;
   // Batch 22f: where the owner's month of funnel leads stands on the volume tiers (the team's, for a member).
   const funnels = await listFunnels(payerId);
   let funnelLine: string | null = null;
@@ -97,7 +98,7 @@ export default async function UsagePage() {
             <p className="text-2xl font-bold text-foreground">{failed ? "—" : formatPence(breakdown.totalFacePence)} <span className="text-sm font-normal text-muted-foreground">used</span></p>
             <p className="text-sm text-muted-foreground">
               Balance {formatPence(Math.max(0, credit.totalPence))}
-              {usedPct !== null ? ` · ${usedPct}% of ${formatPence(allowance)} plan credit used` : ""}
+              {planLine ? ` · ${planLine}` : ""}
             </p>
           </div>
           {bonusLine && <p className="mt-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">{bonusLine}</p>}
