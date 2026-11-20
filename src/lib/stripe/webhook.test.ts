@@ -4,7 +4,7 @@ import type Stripe from 'stripe';
 import { handleStripeEvent, reasonFromStripeFeedback, type WebhookActivity, type WebhookDeps } from './webhook.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 import { dedupeKeyFor, purchaseFromPack, repeatPurchaseDue, repeatValue, subscribeFromInvoice } from '../meta/events.ts';
-import { clawbackDue, refundedShare, thisCycleGrants, trialEndedUnpaid, upgradeTopUpPence } from './plan-credit.ts';
+import { annualInvoiceYear, clawbackDue, refundedShare, thisCycleGrants, trialEndedUnpaid, upgradeTopUpPence, type AnnualInvoiceYear } from './plan-credit.ts';
 import { planSourcePattern } from '../credit/ledger.ts';
 
 const env = { STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_PRO_ANNUAL: 'price_annual' };
@@ -1269,7 +1269,7 @@ function planLedgerDeps() {
   const deps = fakeDeps();
   const grants: FakeGrant[] = [];
   const expires: Array<{ grantId: string; amount: number; reason: string }> = [];
-  const invoices = new Map<string, { userId: string; invoiceId: string; paidPence: number }>();
+  const invoices = new Map<string, { userId: string; invoiceId: string; paidPence: number; annual?: AnnualInvoiceYear | null }>();
   const paidSubs = new Map<string, boolean>();
   let clock = Date.UTC(2027, 0, 1);
   const PLAN_CREDIT: Record<string, number> = { starter: 1900, pro: 3900, pro_annual: 3900 };
@@ -1296,14 +1296,21 @@ function planLedgerDeps() {
     const diff = upgradeTopUpPence(PLAN_CREDIT[to] ?? 0, cycle, PLAN_CREDIT[from ?? ''] ?? 0);
     if (diff > 0) add(sourceRef, diff, false);
   };
-  deps.expirePlanSource = async (_userId, match, maxPence, reason) => {
-    (deps.calls.expirePlanSource ??= []).push([_userId, match, maxPence, reason]);
+  // As credit_expire_plan_source: synchronous here, as the member's row lock makes it in the database.
+  deps.expirePlanSource = async (_userId, match, maxPence, reason, opts = {}) => {
+    (deps.calls.expirePlanSource ??= []).push([_userId, match, maxPence, reason, opts]);
     const re = likeRegex(planSourcePattern(match));
+    const inScope = (g: FakeGrant) =>
+      g.kind === 'plan' && re.test(g.sourceRef) && (!opts.createdFrom || g.createdAt >= opts.createdFrom) && (!opts.createdTo || g.createdAt < opts.createdTo);
     let left = maxPence;
+    if (opts.total && left !== null) {
+      const ids = new Set(grants.filter(inScope).map((g) => g.id));
+      left = Math.max(0, left - expires.filter((e) => ids.has(e.grantId) && e.reason === reason).reduce((s, e) => s + e.amount, 0));
+    }
     let total = 0;
     let n = 0;
     for (const g of grants) {
-      if (g.kind !== 'plan' || !re.test(g.sourceRef) || g.remaining <= 0) continue;
+      if (!inScope(g) || g.remaining <= 0) continue;
       if (left !== null && left <= 0) break;
       const take = left === null ? g.remaining : Math.min(left, g.remaining);
       g.remaining -= take;
@@ -1315,8 +1322,11 @@ function planLedgerDeps() {
     return { expiredPence: total, grants: n };
   };
   deps.planInvoiceForPayment = async (pi) => invoices.get(pi) ?? null;
-  deps.planInvoiceCredit = async (_userId, invoiceId, reason) => {
-    const own = grants.filter((g) => g.kind === 'plan' && g.sourceRef === `inv:${invoiceId}`);
+  deps.planInvoiceCredit = async (_userId, invoiceId, reason, annual) => {
+    const own = grants.filter((g) =>
+      g.kind === 'plan' &&
+      (annual ? g.sourceRef.startsWith(`annual:${annual.subscriptionId}:`) && g.createdAt >= annual.from && g.createdAt < annual.to : g.sourceRef === `inv:${invoiceId}`),
+    );
     const ids = new Set(own.map((g) => g.id));
     return { grantedPence: own.reduce((s, g) => s + g.amount, 0), removedPence: expires.filter((e) => ids.has(e.grantId) && e.reason === reason).reduce((s, e) => s + e.amount, 0) };
   };
@@ -1327,7 +1337,12 @@ function planLedgerDeps() {
   deps.subscriptionHasPaidInvoice = async (_userId, subId) => paidSubs.get(subId) ?? false;
   // Plan invoices' payments carry no metadata of ours.
   deps.retrievePaymentIntent = async (pi) => ({ id: pi, amount: 1900, amount_received: 1900, metadata: {} }) as unknown as Stripe.PaymentIntent;
-  return { deps, grants, expires, invoices, paidSubs, add, spend, balance, remainingOf };
+  /** A grant made at a given instant (an annual slot in a given year). */
+  const addAt = (sourceRef: string, amount: number, createdAt: string, planCycle = true) => {
+    add(sourceRef, amount, planCycle);
+    grants.find((g) => g.sourceRef === sourceRef)!.createdAt = new Date(createdAt).toISOString();
+  };
+  return { deps, grants, expires, invoices, paidSubs, add, addAt, spend, balance, remainingOf };
 }
 
 const planInvoice = (id: string, reason = 'subscription_cycle', price = 'price_starter') => ({
@@ -1439,6 +1454,116 @@ test('Batch 32: a partial plan refund removes the refunded share; a later refund
   assert.equal(refundedShare(1900, 1140, 2280), 950);
   assert.equal(refundedShare(1900, 5000, 2280), 1900, 'never more than was granted');
   assert.equal(clawbackDue(950, 1200), 0);
+});
+
+test('Batch 32: two cumulative partial refunds racing remove the latest total, not the sum (what was removed is read under the lock)', async () => {
+  const { deps, add, invoices, remainingOf, expires } = planLedgerDeps();
+  add('inv:in_A', 1000, true);
+  add('inv:in_B', 1900, true);
+  invoices.set('pi_A', { userId: 'u1', invoiceId: 'in_A', paidPence: 1000 });
+  // 30% then 60% cumulative, delivered at the same time: both read the same granted amount before either removes.
+  await Promise.all([
+    handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 1000, amount_refunded: 300, refunded: false }), deps),
+    handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 1000, amount_refunded: 600, refunded: false }), deps),
+  ]);
+  assert.equal(remainingOf('inv:in_A'), 400, '60% removed in total, not 30% + 60%');
+  assert.equal(expires.reduce((s, e) => s + e.amount, 0), 600);
+  // Each call passes the TOTAL share with total: true; nothing is subtracted before the call.
+  assert.deepEqual(deps.calls.expirePlanSource!.map((c) => [c[2], (c[4] as { total?: boolean }).total]).sort(), [[300, true], [600, true]]);
+  // Redelivered (either one): nothing more.
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 1000, amount_refunded: 300, refunded: false }), deps);
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 1000, amount_refunded: 600, refunded: false }), deps);
+  assert.equal(remainingOf('inv:in_A'), 400);
+  assert.equal(remainingOf('inv:in_B'), 1900, 'another month untouched');
+});
+
+const YEAR1 = { subscriptionId: 'sub_1', from: '2027-01-01T00:00:00.000Z', to: '2028-01-01T00:00:00.000Z' };
+
+/** An annual member: two year-1 slots, a year-2 slot, a monthly plan's banked credit and a top-up. */
+function annualLedger() {
+  const l = planLedgerDeps();
+  l.addAt('annual:sub_1:2027-01', 3900, '2027-01-01T00:00:05Z');
+  l.addAt('annual:sub_1:2027-02', 3900, '2027-02-01T03:00:00Z');
+  l.addAt('annual:sub_1:2028-01', 3900, '2028-01-01T00:00:05Z'); // year 2's first slot
+  l.addAt('annual:sub_12:2027-02', 3900, '2027-02-01T03:00:00Z'); // another subscription whose id starts the same
+  l.addAt('inv:in_old', 1900, '2026-12-01T00:00:00Z'); // a monthly plan's banked credit
+  l.add('pi:pi_top', 2500, false, 'topup');
+  l.invoices.set('pi_Y1', { userId: 'u1', invoiceId: 'in_Y1', paidPence: 46800, annual: YEAR1 });
+  return l;
+}
+
+test('Batch 32: a refunded annual invoice removes the unspent credit of that year’s slots only; a redelivery removes nothing more', async () => {
+  const { deps, spend, remainingOf, expires } = annualLedger();
+  spend('annual:sub_1:2027-01', 1000);
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y1', payment_intent: 'pi_Y1', captured: true, amount: 46800, amount_refunded: 46800, refunded: true }), deps);
+  assert.equal(r.handled, true);
+  assert.match(r.note ?? '', /6800p of its credit removed/);
+  assert.equal(remainingOf('annual:sub_1:2027-01'), 0);
+  assert.equal(remainingOf('annual:sub_1:2027-02'), 0);
+  assert.equal(remainingOf('annual:sub_1:2028-01'), 3900, 'year 2’s slot untouched');
+  assert.equal(remainingOf('annual:sub_12:2027-02'), 3900, 'another subscription untouched');
+  assert.equal(remainingOf('inv:in_old'), 1900, 'other plan credit untouched');
+  assert.equal(remainingOf('pi:pi_top'), 2500, 'top-up untouched');
+  const call = deps.calls.expirePlanSource![0];
+  assert.deepEqual(call[1], { prefix: 'annual:sub_1:' });
+  assert.equal(call[2], 7800, 'the share of what the year granted');
+  assert.deepEqual(call[4], { total: true, createdFrom: YEAR1.from, createdTo: YEAR1.to });
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y1', payment_intent: 'pi_Y1', captured: true, amount: 46800, amount_refunded: 46800, refunded: true }), deps);
+  assert.equal(expires.reduce((s, e) => s + e.amount, 0), 6800, 'a redelivery removes nothing more');
+});
+
+test('Batch 32: a year-2 annual refund leaves year 1’s slots alone', async () => {
+  const { deps, invoices, remainingOf } = annualLedger();
+  invoices.set('pi_Y2', { userId: 'u1', invoiceId: 'in_Y2', paidPence: 46800, annual: { subscriptionId: 'sub_1', from: '2028-01-01T00:00:00.000Z', to: '2029-01-01T00:00:00.000Z' } });
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y2', payment_intent: 'pi_Y2', captured: true, amount: 46800, amount_refunded: 46800, refunded: true }), deps);
+  assert.equal(remainingOf('annual:sub_1:2028-01'), 0);
+  assert.equal(remainingOf('annual:sub_1:2027-01'), 3900);
+  assert.equal(remainingOf('annual:sub_1:2027-02'), 3900);
+});
+
+test('Batch 32: a partial annual refund removes its share of the year’s slots, cumulatively', async () => {
+  const { deps, remainingOf } = annualLedger();
+  // Half refunded: half of the 7800 granted so far, oldest slot first.
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y1', payment_intent: 'pi_Y1', captured: true, amount: 46800, amount_refunded: 23400, refunded: false }), deps);
+  assert.equal(remainingOf('annual:sub_1:2027-01'), 0);
+  assert.equal(remainingOf('annual:sub_1:2027-02'), 3900);
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y1', payment_intent: 'pi_Y1', captured: true, amount: 46800, amount_refunded: 23400, refunded: false }), deps);
+  assert.equal(remainingOf('annual:sub_1:2027-02'), 3900, 'redelivery: nothing more');
+  // Three quarters in total: 5850 of 7800, so 1950 more.
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y1', payment_intent: 'pi_Y1', captured: true, amount: 46800, amount_refunded: 35100, refunded: false }), deps);
+  assert.equal(remainingOf('annual:sub_1:2027-02'), 1950);
+  assert.equal(remainingOf('annual:sub_1:2028-01'), 3900);
+});
+
+test('Batch 32: a disputed annual invoice removes that year’s unspent slots; a won dispute restores it once', async () => {
+  const { deps, spend, remainingOf, balance } = annualLedger();
+  deps.retrievePaymentIntentStrict = deps.retrievePaymentIntent;
+  spend('annual:sub_1:2027-01', 900);
+  await handleStripeEvent(ev('charge.dispute.created', { id: 'dp_Y1', payment_intent: 'pi_Y1', amount: 46800 }), deps);
+  await handleStripeEvent(ev('charge.dispute.created', { id: 'dp_Y1', payment_intent: 'pi_Y1', amount: 46800 }), deps);
+  assert.equal(remainingOf('annual:sub_1:2027-01'), 0);
+  assert.equal(remainingOf('annual:sub_1:2027-02'), 0);
+  assert.equal(remainingOf('annual:sub_1:2028-01'), 3900);
+  const before = balance();
+  await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_Y1', payment_intent: 'pi_Y1', status: 'won', amount: 46800 }), deps);
+  await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_Y1', payment_intent: 'pi_Y1', status: 'won', amount: 46800 }), deps);
+  assert.equal(remainingOf('inv:in_Y1:dispute_won'), 6900, 'what was removed comes back, under the invoice’s won-dispute ref');
+  assert.equal(balance(), before + 6900, 'restored once');
+});
+
+test('Batch 32: which invoices pay an annual year (pure)', () => {
+  const inv = (billing_reason: string | null, sub: string | null = 'sub_1', period: { start: number; end: number } | null = { start: 1_798_761_600, end: 1_830_297_600 }) => ({
+    billing_reason,
+    parent: { subscription_details: { subscription: sub } },
+    lines: { data: [{ period }] },
+  });
+  assert.deepEqual(annualInvoiceYear(inv('subscription_create'), 'pro_annual'), { subscriptionId: 'sub_1', from: '2027-01-01T00:00:00.000Z', to: '2028-01-01T00:00:00.000Z' });
+  assert.ok(annualInvoiceYear(inv('subscription_cycle'), 'pro_annual'));
+  assert.ok(annualInvoiceYear(inv(null), 'pro_annual'));
+  assert.equal(annualInvoiceYear(inv('subscription_update'), 'pro_annual'), null, 'an upgrade’s proration invoice grants under inv:<id>');
+  assert.equal(annualInvoiceYear(inv('subscription_cycle'), 'pro'), null, 'a monthly plan');
+  assert.equal(annualInvoiceYear(inv('subscription_cycle', null), 'pro_annual'), null);
+  assert.equal(annualInvoiceYear(inv('subscription_cycle', 'sub_1', null), 'pro_annual'), null);
 });
 
 test('Batch 32: a chargeback removes the invoice’s leftover credit; a won dispute restores it once; a lost one restores nothing', async () => {

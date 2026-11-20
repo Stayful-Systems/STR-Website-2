@@ -5,7 +5,9 @@ import { emailKey } from '../supabase/email-key';
 import { getStripe } from './client';
 import { savePaymentMethod } from './customer';
 import { grantPlanCycle, grantTopup, grantUpgradeDifference } from './grants';
-import { expirePlanSource, grant } from '../credit/ledger';
+import { expirePlanSource, grant, planSourcePattern } from '../credit/ledger';
+import { annualInvoiceYear } from './plan-credit';
+import { planForPriceId } from './prices';
 import { cardNeedsUpdateEmail, paymentFailedEmail } from '../email/billing';
 import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { getPlan } from '../credit/plans';
@@ -145,13 +147,27 @@ export function liveWebhookDeps(): WebhookDeps {
     grantTopup: (userId, amountPence, sourceRef, email) => grantTopup(userId, amountPence, sourceRef, { email }),
     // Batch 32 (plan credit rollover): plan credit is removed only by source (a refunded or disputed plan
     // invoice, a forfeited Academy trial); ending, pausing or downgrading a plan keeps it.
-    expirePlanSource: (userId, match, maxPence, reason) => expirePlanSource(userId, match, maxPence, reason),
+    expirePlanSource: (userId, match, maxPence, reason, opts) => expirePlanSource(userId, match, maxPence, reason, opts),
     planInvoiceForPayment: async (paymentIntentId) => {
+      // The invoice's plan, from its line's price (as invoice.paid read it).
+      const planOf = (invoice: { lines?: { data?: Array<{ pricing?: { price_details?: { price?: string | { id: string } | null } | null } | null }> } | null }) => {
+        const price = invoice.lines?.data?.[0]?.pricing?.price_details?.price;
+        return planForPriceId(typeof price === 'string' ? price : (price?.id ?? null));
+      };
       // The payment row written when the invoice was paid (src/lib/payments), keyed inv:<invoice>.
-      const { data, error } = await admin.from('member_payments').select('id, user_id, amount_pence').eq('payment_intent_id', paymentIntentId).eq('kind', 'subscription').limit(1);
+      const { data, error } = await admin.from('member_payments').select('id, user_id, amount_pence, plan_code').eq('payment_intent_id', paymentIntentId).eq('kind', 'subscription').limit(1);
       if (error) throw new Error(`payment lookup failed: ${error.message}`);
-      const row = (data ?? [])[0] as { id: string; user_id: string; amount_pence: number } | undefined;
-      if (row && row.id.startsWith('inv:')) return { userId: row.user_id, invoiceId: row.id.slice(4), paidPence: Number(row.amount_pence) || 0 };
+      const row = (data ?? [])[0] as { id: string; user_id: string; amount_pence: number; plan_code: string | null } | undefined;
+      if (row && row.id.startsWith('inv:')) {
+        const invoiceId = row.id.slice(4);
+        // An annual plan's credit is its year's slot grants: Stripe gives the subscription and the year (a failure throws; Stripe retries).
+        let annual = null;
+        if (row.plan_code === 'pro_annual' || !row.plan_code) {
+          const invoice = await stripe.invoices.retrieve(invoiceId);
+          annual = annualInvoiceYear(invoice, row.plan_code ?? planOf(invoice));
+        }
+        return { userId: row.user_id, invoiceId, paidPence: Number(row.amount_pence) || 0, annual };
+      }
       // That row is bookkeeping and may be missing: ask Stripe which invoice the payment paid. A failure throws (Stripe retries).
       const list = await stripe.invoicePayments.list({ payment: { type: 'payment_intent', payment_intent: paymentIntentId }, limit: 5 });
       const paid = list.data.find((p) => p.status === 'paid') ?? null;
@@ -161,10 +177,14 @@ export function liveWebhookDeps(): WebhookDeps {
       if (!invoice.parent?.subscription_details?.subscription) return null;
       const customerId = typeof invoice.customer === 'string' ? invoice.customer : (invoice.customer?.id ?? null);
       const user = customerId ? await one(admin.from('profiles').select(SELECT).eq('stripe_customer_id', customerId).maybeSingle()) : null;
-      return user ? { userId: user.id, invoiceId, paidPence: Number(invoice.amount_paid) || 0 } : null;
+      return user ? { userId: user.id, invoiceId, paidPence: Number(invoice.amount_paid) || 0, annual: annualInvoiceYear(invoice, planOf(invoice)) } : null;
     },
-    planInvoiceCredit: async (userId, invoiceId, reason) => {
-      const { data: grants, error } = await admin.from('credit_grants').select('id, amount_pence').eq('user_id', userId).eq('kind', 'plan').eq('source_ref', `inv:${invoiceId}`);
+    planInvoiceCredit: async (userId, invoiceId, reason, annual) => {
+      // The same grants credit_expire_plan_source matches (planInvoiceScope): inv:<id>, or the annual year's slots.
+      const base = admin.from('credit_grants').select('id, amount_pence').eq('user_id', userId).eq('kind', 'plan');
+      const { data: grants, error } = annual
+        ? await base.like('source_ref', planSourcePattern({ prefix: `annual:${annual.subscriptionId}:` })).gte('created_at', annual.from).lt('created_at', annual.to)
+        : await base.eq('source_ref', `inv:${invoiceId}`);
       if (error) throw new Error(`plan grant lookup failed: ${error.message}`);
       const rows = (grants ?? []) as { id: string; amount_pence: number | string }[];
       if (rows.length === 0) return { grantedPence: 0, removedPence: 0 };

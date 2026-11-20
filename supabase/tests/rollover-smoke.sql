@@ -16,9 +16,12 @@ declare
   i11 uuid := gen_random_uuid(); -- idle 11 months
   i0 uuid := gen_random_uuid();  -- never spent: idle since the launch date
   c uuid := gen_random_uuid();   -- clawback
+  d uuid := gen_random_uuid();   -- the one-off's cycle flag skips an upgrade top-up
+  e uuid := gen_random_uuid();   -- cumulative totals and an annual year's window
   rate numeric := credit_spend_rate('topup');
   g1 uuid; g2 uuid; g_extra uuid; g_bonus uuid; g_welcome uuid; g_top uuid;
   c1 uuid; c2 uuid; t1 uuid; t2 uuid; c_top uuid; c_trial_top uuid;
+  d1 uuid; d2 uuid; d_up uuid; e1 uuid; y1 uuid; y1b uuid; y2 uuid;
   j jsonb;
   tx bigint;
   n integer;
@@ -27,8 +30,8 @@ declare
 begin
   insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
   select i, 'rollover-smoke-' || i::text || '@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now()
-    from unnest(array[a, b, i12, i11, i0, c]) as i;
-  insert into profiles (id, email) select i, 'rollover-smoke-' || i::text || '@example.test' from unnest(array[a, b, i12, i11, i0, c]) as i on conflict (id) do nothing;
+    from unnest(array[a, b, i12, i11, i0, c, d, e]) as i;
+  insert into profiles (id, email) select i, 'rollover-smoke-' || i::text || '@example.test' from unnest(array[a, b, i12, i11, i0, c, d, e]) as i on conflict (id) do nothing;
 
   -- ── Settings and the one-off ──
   if credit_setting_num('plan_credit_idle_months', 0) <> 12 then raise exception 'plan_credit_idle_months should be seeded at 12'; end if;
@@ -152,6 +155,36 @@ begin
   if (select count(*) from credit_transactions where user_id = i12 and kind = 'expire') <> 0 then raise exception 'the report must change nothing'; end if;
   raise notice 'idle report ok';
 
+  -- ── The one-off's cycle flag skips an upgrade top-up ──
+  -- Pre-launch grants (none marked): two renewals and, after the newer one, an
+  -- upgrade's top-up (grantUpgradeDifference's description). The one-off's
+  -- predicate, run on them: the renewals are marked, the top-up is not, so the
+  -- newest renewal is the cycle start and only the older renewal can lapse.
+  d1 := credit_grant(d, 'plan', 1900, null, 'inv:pre1_' || d::text, 'Starter plan credit');
+  d2 := credit_grant(d, 'plan', 1900, null, 'inv:pre2_' || d::text, 'Starter plan credit');
+  d_up := credit_grant(d, 'plan', 2000, null, 'inv:preup_' || d::text, 'Upgrade to Pro: extra plan credit');
+  update credit_grants set plan_cycle = false, created_at = now() - interval '2 months' where id = d1;
+  update credit_grants set plan_cycle = false, created_at = now() - interval '1 month' where id = d2;
+  update credit_grants set plan_cycle = false, created_at = now() - interval '10 days' where id = d_up;
+  if credit_batch32_cycle_candidate('plan', false, 'Upgrade to Scale: extra plan credit')
+     or not credit_batch32_cycle_candidate('plan', false, 'Pro plan credit')
+     or not credit_batch32_cycle_candidate('plan', false, null)
+     or credit_batch32_cycle_candidate('plan', true, 'Pro plan credit')
+     or credit_batch32_cycle_candidate('topup', false, 'Top-up') then
+    raise exception 'credit_batch32_cycle_candidate: only unmarked plan grants that are not upgrade top-ups';
+  end if;
+  update credit_grants set plan_cycle = true where user_id = d and credit_batch32_cycle_candidate(kind, plan_cycle, description);
+  if not (select plan_cycle from credit_grants where id = d1) or not (select plan_cycle from credit_grants where id = d2) then
+    raise exception 'the one-off should mark the renewals as cycle grants';
+  end if;
+  if (select plan_cycle from credit_grants where id = d_up) then raise exception 'the one-off must not mark an upgrade top-up as a cycle grant'; end if;
+  select * into r from credit_idle_plan_report() where user_id = d;
+  if not found then raise exception 'd never spent and should be in the report'; end if;
+  if r.plan_remaining_pence <> 5800 or r.expirable_pence <> 1900 then
+    raise exception 'the newest renewal (not the top-up after it) starts the cycle: expirable should be 1900 of 5800, got %', r;
+  end if;
+  raise notice 'one-off cycle flag ok';
+
   -- ── Clawback: stops at zero, touches only matching plan grants ──
   c1 := (credit_plan_cycle(c, 1900, null, 'inv:claw1_' || c::text, 'Plan credit')->>'grant_id')::uuid;
   perform credit_debit(c, 500, null, false, '{}'::jsonb);   -- 1400 left on c1
@@ -191,15 +224,57 @@ begin
   if exists (select 1 from credit_grants where user_id = c and remaining_pence < 0) then raise exception 'no grant may go below zero'; end if;
   raise notice 'clawback ok';
 
+  -- ── Cumulative totals (p_total): what was removed for the reason is read under the lock ──
+  e1 := (credit_plan_cycle(e, 1000, null, 'inv:tot1_' || e::text, 'Plan credit')->>'grant_id')::uuid;
+  j := credit_expire_plan_source(e, 'inv:tot1\_' || e::text, 300, 'plan_refunded', true);
+  if (j->>'expired_pence')::numeric <> 300 then raise exception 'a 30%% total should remove 300: %', j; end if;
+  j := credit_expire_plan_source(e, 'inv:tot1\_' || e::text, 600, 'plan_refunded', true);
+  if (j->>'expired_pence')::numeric <> 300 then raise exception 'a 60%% total after 30%% should remove 300 more: %', j; end if;
+  if (select remaining_pence from credit_grants where id = e1) <> 400 then raise exception 'totals of 30%% then 60%% should remove 600 in all, not 900'; end if;
+  j := credit_expire_plan_source(e, 'inv:tot1\_' || e::text, 600, 'plan_refunded', true);
+  if (j->>'expired_pence')::numeric <> 0 then raise exception 'the same total again removes nothing: %', j; end if;
+  j := credit_expire_plan_source(e, 'inv:tot1\_' || e::text, 300, 'plan_refunded', true);
+  if (j->>'expired_pence')::numeric <> 0 then raise exception 'a lower total than already removed removes nothing (never negative): %', j; end if;
+  j := credit_expire_plan_source(e, 'inv:tot1\_' || e::text, 300, 'plan_refunded');
+  if (j->>'expired_pence')::numeric <> 300 or (select remaining_pence from credit_grants where id = e1) <> 100 then
+    raise exception 'without p_total the amount is removed as before: %', j;
+  end if;
+  j := credit_expire_plan_source(e, 'inv:tot1\_' || e::text, 5000, 'plan_disputed', true);
+  if (j->>'expired_pence')::numeric <> 100 or (select remaining_pence from credit_grants where id = e1) <> 0 then
+    raise exception 'a total never takes a grant below zero: %', j;
+  end if;
+
+  -- ── An annual year's window (p_created_from, p_created_to) ──
+  y1 := credit_plan_cycle(e, 3900, null, 'annual:subE' || e::text || ':2024-01', 'Plan credit')->>'grant_id';
+  y1b := credit_plan_cycle(e, 3900, null, 'annual:subE' || e::text || ':2024-02', 'Plan credit')->>'grant_id';
+  y2 := credit_plan_cycle(e, 3900, null, 'annual:subE' || e::text || ':2025-01', 'Plan credit')->>'grant_id';
+  update credit_grants set created_at = '2024-01-01 00:00:05+00' where id = y1;
+  update credit_grants set created_at = '2024-02-01 03:00:00+00' where id = y1b;
+  update credit_grants set created_at = '2025-01-01 00:00:05+00' where id = y2;
+  perform credit_debit(e, 1000, null, false, '{}'::jsonb);   -- from the oldest plan grant: year 1's first slot
+  if (select remaining_pence from credit_grants where id = y1) <> 2900 then raise exception 'the debit should come off year 1''s first slot'; end if;
+  -- Year 1 refunded in full: the share of what the year granted (7800), less nothing removed yet.
+  j := credit_expire_plan_source(e, 'annual:subE' || e::text || ':%', 7800, 'plan_refunded', true, '2024-01-01 00:00:00+00', '2025-01-01 00:00:00+00');
+  if (j->>'expired_pence')::numeric <> 6800 or (j->>'grants')::int <> 2 then raise exception 'year 1''s refund should remove its two slots'' 6800: %', j; end if;
+  if (select remaining_pence from credit_grants where id = y2) <> 3900 then raise exception 'year 1''s refund must not touch year 2''s slot'; end if;
+  j := credit_expire_plan_source(e, 'annual:subE' || e::text || ':%', 7800, 'plan_refunded', true, '2024-01-01 00:00:00+00', '2025-01-01 00:00:00+00');
+  if (j->>'expired_pence')::numeric <> 0 then raise exception 'year 1''s refund again removes nothing: %', j; end if;
+  -- Year 2: year 1's removals under the same reason are outside its window, so they do not count against it.
+  j := credit_expire_plan_source(e, 'annual:subE' || e::text || ':%', 3900, 'plan_refunded', true, '2025-01-01 00:00:00+00', '2026-01-01 00:00:00+00');
+  if (j->>'expired_pence')::numeric <> 3900 or (select remaining_pence from credit_grants where id = y2) <> 0 then raise exception 'year 2''s refund should remove its own slot: %', j; end if;
+  if exists (select 1 from credit_grants where user_id = e and remaining_pence < 0) then raise exception 'no grant may go below zero'; end if;
+  raise notice 'cumulative totals and annual window ok';
+
   -- ── Service role only ──
   if has_function_privilege('authenticated', 'public.credit_idle_plan_report(timestamptz)', 'execute')
      or has_function_privilege('anon', 'public.credit_idle_plan_report(timestamptz)', 'execute')
-     or has_function_privilege('authenticated', 'public.credit_expire_plan_source(uuid, text, numeric, text)', 'execute')
-     or has_function_privilege('anon', 'public.credit_expire_plan_source(uuid, text, numeric, text)', 'execute') then
+     or has_function_privilege('authenticated', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute')
+     or has_function_privilege('anon', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute') then
     raise exception 'the rollover functions are service-role only';
   end if;
   if not has_function_privilege('service_role', 'public.credit_idle_plan_report(timestamptz)', 'execute')
-     or not has_function_privilege('service_role', 'public.credit_expire_plan_source(uuid, text, numeric, text)', 'execute') then
+     or not has_function_privilege('service_role', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute')
+     or to_regprocedure('public.credit_expire_plan_source(uuid, text, numeric, text)') is not null then
     raise exception 'the service role should run the rollover functions';
   end if;
   raise notice 'privileges ok';

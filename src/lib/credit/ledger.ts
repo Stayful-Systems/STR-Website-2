@@ -278,14 +278,29 @@ export function planSourcePattern(match: PlanSourceMatch): string {
   return `${escapeLike(match.prefix)}%`;
 }
 
+/** Options for expirePlanSource (credit_expire_plan_source's p_total and created-at window). */
+export interface PlanSourceOptions {
+  /**
+   * `maxPence` is the TOTAL to have removed for `reason` from the matched
+   * grants: what was already removed for it is subtracted inside the
+   * database, under the member's lock (cumulative refunds, redeliveries).
+   */
+  total?: boolean;
+  /** Only grants created at or after this instant (an annual invoice's year). */
+  createdFrom?: string | null;
+  /** Only grants created before this instant. */
+  createdTo?: string | null;
+}
+
 /**
  * Batch 32: removes up to `maxPence` (null = all) of the member's unexpired
  * PLAN credit in grants whose source_ref matches, oldest first, never below
  * zero and no other credit touched (credit_expire_plan_source). For a
- * refunded or charged-back plan payment ({ exact: 'inv:<invoice>' }) and a
- * forfeited Academy trial ({ prefix: 'trial:<sub>:' }).
+ * refunded or charged-back plan payment ({ exact: 'inv:<invoice>' }, or an
+ * annual plan's { prefix: 'annual:<sub>:' } slots in the invoice's year) and
+ * a forfeited Academy trial ({ prefix: 'trial:<sub>:' }).
  */
-export async function expirePlanSource(userId: string, match: PlanSourceMatch, maxPence: number | null, reason: string): Promise<{ expiredPence: number; grants: number }> {
+export async function expirePlanSource(userId: string, match: PlanSourceMatch, maxPence: number | null, reason: string, opts: PlanSourceOptions = {}): Promise<{ expiredPence: number; grants: number }> {
   const pattern = planSourcePattern(match);
   if (!hasServiceRole()) return { expiredPence: 0, grants: 0 };
   if (maxPence !== null && !(maxPence > 0)) return { expiredPence: 0, grants: 0 };
@@ -294,6 +309,9 @@ export async function expirePlanSource(userId: string, match: PlanSourceMatch, m
     p_source_like: pattern,
     p_max_pence: maxPence === null ? null : round4(maxPence),
     p_reason: reason,
+    p_total: Boolean(opts.total),
+    p_created_from: opts.createdFrom ?? null,
+    p_created_to: opts.createdTo ?? null,
   });
   if (error) throwRpc(error, 'credit_expire_plan_source');
   const d = (data ?? {}) as { expired_pence?: number | string; grants?: number | string };

@@ -62,6 +62,56 @@ export function refundedShare(creditPence: number, takenPence: number, chargedPe
   return Math.round((credit * Math.min(taken, charged)) / charged);
 }
 
+/** An annual plan invoice's credit: its subscription's `annual:<sub>:<YYYY-MM>` slot grants made in the invoice's year [from, to). */
+export interface AnnualInvoiceYear {
+  subscriptionId: string;
+  /** ISO instant: the invoice line's period start. */
+  from: string;
+  /** ISO instant: the invoice line's period end. */
+  to: string;
+}
+
+/** The invoice fields annualInvoiceYear reads (a Stripe.Invoice fits). */
+export interface AnnualInvoiceLike {
+  billing_reason?: string | null;
+  parent?: { subscription_details?: { subscription?: string | { id: string } | null } | null } | null;
+  lines?: { data?: Array<{ period?: { start?: number | null; end?: number | null } | null }> | null } | null;
+}
+
+/**
+ * Whether a plan invoice paid for an annual plan's monthly slots, and which
+ * year: an annual plan's create, cycle or manual invoice (as invoice.paid
+ * grants `annual:<sub>:<YYYY-MM>` for them, not `inv:<id>`). The year is the
+ * invoice line's period, so a refund of year 2 never touches year 1's slots.
+ * Null for anything else (a monthly plan, an upgrade's proration invoice,
+ * which grants under `inv:<id>`, or a line without a period).
+ */
+export function annualInvoiceYear(invoice: AnnualInvoiceLike | null | undefined, planCode: string | null | undefined): AnnualInvoiceYear | null {
+  if (!invoice || planCode !== 'pro_annual') return null;
+  const reason = invoice.billing_reason ?? null;
+  if (reason !== null && reason !== 'subscription_create' && reason !== 'subscription_cycle' && reason !== 'manual') return null;
+  const sub = invoice.parent?.subscription_details?.subscription;
+  const subscriptionId = typeof sub === 'string' ? sub : (sub?.id ?? null);
+  const period = invoice.lines?.data?.find((l) => Number(l?.period?.start) > 0 && Number(l?.period?.end) > 0)?.period;
+  if (!subscriptionId || !period) return null;
+  const from = Number(period.start) * 1000;
+  const to = Number(period.end) * 1000;
+  if (!(to > from)) return null;
+  return { subscriptionId, from: new Date(from).toISOString(), to: new Date(to).toISOString() };
+}
+
+/** The plan grants a plan invoice's payment bought: its `inv:<id>` grant, or an annual invoice's slot grants made in its year. */
+export interface PlanInvoiceScope {
+  match: { exact: string } | { prefix: string };
+  createdFrom: string | null;
+  createdTo: string | null;
+}
+
+export function planInvoiceScope(invoiceId: string, annual?: AnnualInvoiceYear | null): PlanInvoiceScope {
+  if (annual) return { match: { prefix: `annual:${annual.subscriptionId}:` }, createdFrom: annual.from, createdTo: annual.to };
+  return { match: { exact: `inv:${invoiceId}` }, createdFrom: null, createdTo: null };
+}
+
 /** What is still to remove: the share due less what was already removed for the same reason (a redelivery or a cumulative partial refund). */
 export function clawbackDue(sharePence: number, alreadyRemovedPence: number): number {
   return Math.max(0, Math.round((Number(sharePence) || 0) - Math.max(0, Number(alreadyRemovedPence) || 0)));

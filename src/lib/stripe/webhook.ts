@@ -17,9 +17,9 @@ import { planActivityKind, type ActivityKind } from '../activity/kinds.ts';
 import type { InvoiceFacts, PackFacts, RepeatFacts } from '../meta/events.ts';
 import { invoicePaymentIntentId, paymentFromIntent, paymentFromInvoice, type PaymentRecord, type RefundRecord } from '../payments/rules.ts';
 import { trialSlotKey, trialSlots } from '../academy/rules.ts';
-import { clawbackDue, disputeWonRef, refundedShare, trialEndedUnpaid } from './plan-credit.ts';
+import { disputeWonRef, planInvoiceScope, refundedShare, trialEndedUnpaid, type AnnualInvoiceYear } from './plan-credit.ts';
 
-import type { PlanSourceMatch } from '../credit/ledger.ts';
+import type { PlanSourceMatch, PlanSourceOptions } from '../credit/ledger.ts';
 
 /** Batch 32: the reasons plan credit is removed under (credit_expire_plan_source's ledger rows carry them). */
 export type PlanClawbackReason = 'plan_refunded' | 'plan_disputed';
@@ -59,18 +59,21 @@ export interface WebhookDeps {
    * without it no plan credit is ever removed here. Plan credit is no longer
    * expired when a subscription ends, is paused or is downgraded.
    */
-  expirePlanSource?(userId: string, match: PlanSourceMatch, maxPence: number | null, reason: string): Promise<{ expiredPence: number; grants: number }>;
+  expirePlanSource?(userId: string, match: PlanSourceMatch, maxPence: number | null, reason: string, opts?: PlanSourceOptions): Promise<{ expiredPence: number; grants: number }>;
   /**
    * Batch 32: the plan invoice a payment paid (member_payments, else Stripe's
    * invoice payments), or null when it paid no plan invoice. `paidPence` is
-   * what the invoice charged. A failed lookup throws (Stripe retries).
+   * what the invoice charged. `annual` is set when it paid an annual plan's
+   * year (its credit is that year's `annual:<sub>:` slot grants, not an
+   * `inv:<id>` grant). A failed lookup throws (Stripe retries).
    */
-  planInvoiceForPayment?(paymentIntentId: string): Promise<{ userId: string; invoiceId: string; paidPence: number } | null>;
+  planInvoiceForPayment?(paymentIntentId: string): Promise<{ userId: string; invoiceId: string; paidPence: number; annual?: AnnualInvoiceYear | null } | null>;
   /**
-   * Batch 32: the plan credit granted for the invoice (its `inv:<id>` grant)
-   * and what has already been removed from it under `reason`.
+   * Batch 32: the plan credit granted for the invoice (its `inv:<id>` grant,
+   * or with `annual` the subscription's slot grants made in that year) and
+   * what has already been removed from it under `reason`.
    */
-  planInvoiceCredit?(userId: string, invoiceId: string, reason: PlanClawbackReason): Promise<{ grantedPence: number; removedPence: number }>;
+  planInvoiceCredit?(userId: string, invoiceId: string, reason: PlanClawbackReason, annual?: AnnualInvoiceYear | null): Promise<{ grantedPence: number; removedPence: number }>;
   /** Batch 32: a won dispute's credit back, as a plan grant under `sourceRef` (idempotent on it); true when this call granted it. */
   restorePlanCredit?(userId: string, sourceRef: string, amountPence: number, description: string): Promise<boolean>;
   /**
@@ -580,11 +583,14 @@ async function forfeitUnpaidAcademyTrial(sub: Stripe.Subscription, userId: strin
 
 /**
  * Batch 32: a refund or a dispute of a plan invoice's payment removes that
- * invoice's unspent credit (its `inv:<id>` grant), in the share refunded or
- * disputed, never below zero, no other credit touched. Cumulative: a refund
- * carries the charge's total refunded, so a later partial refund (or a
- * redelivery) removes only what is still due. Null when the payment paid no
- * plan invoice (a top-up, a pack, the Academy) or the plan path is not wired.
+ * invoice's unspent credit (its `inv:<id>` grant; for an annual plan, its
+ * subscription's slot grants made in that invoice's year), in the share
+ * refunded or disputed, never below zero, no other credit touched.
+ * Cumulative: a refund carries the charge's total refunded, and the database
+ * subtracts what was already removed for the reason under the member's lock
+ * (p_total), so a later partial refund, a redelivery or two refunds racing
+ * remove only what is still due. Null when the payment paid no plan invoice
+ * (a top-up, a pack, the Academy) or the plan path is not wired.
  */
 async function clawbackPlanInvoice(event: Stripe.Event, deps: WebhookDeps): Promise<HandleResult | null> {
   if (!deps.planInvoiceForPayment || !deps.planInvoiceCredit || !deps.expirePlanSource) return null;
@@ -601,10 +607,13 @@ async function clawbackPlanInvoice(event: Stripe.Event, deps: WebhookDeps): Prom
   const reason: PlanClawbackReason = charge ? 'plan_refunded' : 'plan_disputed';
   const taken = charge ? Number(charge.amount_refunded) || 0 : Number(dispute?.amount) || 0;
   const charged = (charge ? Number(charge.amount) || 0 : 0) || invoice.paidPence || Number(pi?.amount_received ?? pi?.amount) || 0;
-  const { grantedPence, removedPence } = await deps.planInvoiceCredit(invoice.userId, invoice.invoiceId, reason);
-  const due = clawbackDue(refundedShare(grantedPence, taken, charged), removedPence);
-  if (due <= 0) return { handled: true, note: `plan invoice ${invoice.invoiceId}: nothing more to remove` };
-  const r = await deps.expirePlanSource(invoice.userId, { exact: `inv:${invoice.invoiceId}` }, due, reason);
+  // grantedPence never changes once granted (an annual year's only grows as its slots are granted), so reading it
+  // outside the lock is safe; what was already removed is read inside it (p_total).
+  const { grantedPence } = await deps.planInvoiceCredit(invoice.userId, invoice.invoiceId, reason, invoice.annual ?? null);
+  const target = refundedShare(grantedPence, taken, charged);
+  if (target <= 0) return { handled: true, note: `plan invoice ${invoice.invoiceId}: nothing more to remove` };
+  const scope = planInvoiceScope(invoice.invoiceId, invoice.annual);
+  const r = await deps.expirePlanSource(invoice.userId, scope.match, target, reason, { total: true, createdFrom: scope.createdFrom, createdTo: scope.createdTo });
   return { handled: true, note: `plan invoice ${invoice.invoiceId} ${charge ? 'refunded' : 'disputed'}: ${r.expiredPence}p of its credit removed` };
 }
 
@@ -613,7 +622,7 @@ async function restorePlanDispute(piId: string, pi: Stripe.PaymentIntent | null,
   if (pi?.metadata?.kind || !deps.planInvoiceForPayment || !deps.planInvoiceCredit || !deps.restorePlanCredit) return null;
   const invoice = await deps.planInvoiceForPayment(piId);
   if (!invoice) return null;
-  const { removedPence } = await deps.planInvoiceCredit(invoice.userId, invoice.invoiceId, 'plan_disputed');
+  const { removedPence } = await deps.planInvoiceCredit(invoice.userId, invoice.invoiceId, 'plan_disputed', invoice.annual ?? null);
   if (!(removedPence > 0)) return { handled: true, note: `plan invoice ${invoice.invoiceId}: nothing was removed, nothing to give back` };
   const granted = await deps.restorePlanCredit(invoice.userId, disputeWonRef(invoice.invoiceId), removedPence, 'Dispute closed in your favour — plan credit restored');
   return { handled: true, note: `plan invoice ${invoice.invoiceId}: ${granted ? `${removedPence}p restored` : 'already restored'}` };
