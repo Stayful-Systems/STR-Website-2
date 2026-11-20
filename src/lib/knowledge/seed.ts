@@ -953,7 +953,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Do I get my own web address for my website?',
     variants: ['Will my website have its own domain?', 'Does Stayful buy a domain for me?', 'Can my website be on a .co.uk address?', 'Who owns my website’s domain?'],
-    answer: 'Yes. When you approve your website, Stayful buys your company name followed by management.co.uk, connects it securely with HTTPS, moves your site onto it and emails you. Stayful buys it and holds it for you, and the first year is free. Until then your site sits on a temporary Stayful address that search engines can’t see; on its own address it can be found in search.',
+    answer: 'Yes. Once your website is live you choose its web address from a few suggestions, such as your company name followed by management.co.uk. Stayful then buys it and holds it for you, connects it securely with HTTPS, moves your site onto it and emails you, and the first year is free. Until then your site sits on a temporary Stayful address that search engines can’t see; on its own address it can be found in search.',
   },
   {
     slug: 'website_domain_choose',
@@ -963,7 +963,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Can I choose my website’s web address?',
     variants: ['Can I pick a different domain name?', 'Can I change my website’s address after it is bought?', 'What if I don’t like the suggested domain?', 'Can I choose from other names?'],
-    answer: 'Yes, before you approve. Stayful suggests a name and a few alternatives, and you pick the one you want. Once it is bought it can’t be changed, so check it before you approve. If a purchase is held for a day it still goes through, and you’ll be emailed when it is done.',
+    answer: 'Yes. Once your website is live, Stayful suggests a name and a few alternatives, and you pick the one you want. Once it is bought it can’t be changed, so check it before you choose. If a purchase is held for a day it still goes through, and you’ll be emailed when it is done.',
   },
   {
     slug: 'website_domain_cost',

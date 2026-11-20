@@ -35,7 +35,7 @@ CUSTOMER WEBSITES (FOR MANAGEMENT COMPANIES)
 - Privacy: the operator is the data controller for what landlords enter and Stayful is the processor acting for them.
 
 CUSTOMER WEBSITE DOMAINS
-- When a member approves their website, Stayful automatically buys their company name plus management.co.uk through a registrar, holds it (Stayful owns it), connects it with HTTPS, moves the site onto it, redirects the old temporary address (/s/<slug>) to it with a permanent redirect, and emails the member. The first year is free.
+- Once a member's website is live they pick a web address from Stayful's suggestions (their company name plus management.co.uk first); Stayful then automatically buys it through a registrar, holds it (Stayful owns it), connects it with HTTPS, moves the site onto it, redirects the old temporary address (/s/<slug>) to it with a permanent redirect, and emails the member. The first year is free.
 - The member can pick from several suggested names (the suggested one plus alternatives); once it is bought it can't be changed.
 - A purchase can be held for a day when Stayful's daily spend limit is reached; it then goes through. Don't say how big the limit is.
 - Yearly charge: {#domain_charge_on}on, a yearly charge equal to what the domain costs to renew{/domain_charge_on}{^domain_charge_on}off, so the domain is free for now{/domain_charge_on}. It is the domain_charge_on setting and never applies to the first year.
