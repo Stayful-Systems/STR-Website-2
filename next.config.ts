@@ -30,6 +30,13 @@ const AD_PACK_FONTS = ["src/lib/ad-packs/fonts/**/*"];
  */
 const AD_PACK_GUIDE_SHOTS = ["public/ad-packs/guide/*.png"];
 
+/**
+ * Batch 38b: the notice video's renderer (Python, in ad-render/) is read from
+ * disk by the render worker and written into a Vercel Sandbox. Only the files
+ * it needs (render-core.ts RENDERER_FILES); the sample folder stays out.
+ */
+const AD_RENDER_FILES = ["ad-render/*.py", "ad-render/*.txt", "ad-render/fonts/*"];
+
 const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/generate-pdf": PDF_ASSETS,
@@ -41,6 +48,7 @@ const nextConfig: NextConfig = {
     "/si/card": ["public/images/si-contact.png"],
     "/leads/ads": [...AD_PACK_FONTS, ...AD_PACK_GUIDE_SHOTS],
     "/admin/ad-packs": AD_PACK_FONTS,
+    "/api/internal/ad-pack-renders": AD_RENDER_FILES,
   },
   images: {
     formats: ["image/avif", "image/webp"],
