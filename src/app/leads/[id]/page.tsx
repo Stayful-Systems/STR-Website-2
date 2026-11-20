@@ -16,6 +16,7 @@ import { PushLeadButton } from "../PushLeadButton";
 import { LeadDetailActions, MarkLeadOpened } from "./LeadDetailActions";
 import { LeadPanel } from "../website/LeadPanel";
 import { leadDbBadges } from "@/lib/leaddb/store";
+import { PackAdLine } from "./PackAdLine";
 
 export const dynamic = "force-dynamic";
 
@@ -130,6 +131,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             <div className="min-w-0">
               <h1 className="text-xl font-bold text-foreground">{lead.name || lead.email || "Unnamed enquiry"}</h1>
               {leadDbBadge ? <p className="mt-1"><span className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">{leadDbBadge}</span></p> : null}
+              <PackAdLine leadId={lead.id} ownerId={scope.ownerId} />
               <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
                 {lead.email ? (<><dt className="text-muted-foreground">Email</dt><dd><a href={`mailto:${lead.email}`} className="underline underline-offset-2">{lead.email}</a></dd></>) : null}
                 {lead.phone ? (<><dt className="text-muted-foreground">Phone</dt><dd><a href={`tel:${lead.phone}`} className="underline underline-offset-2">{lead.phone}</a></dd></>) : null}

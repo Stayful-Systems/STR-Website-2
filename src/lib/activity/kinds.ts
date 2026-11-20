@@ -92,6 +92,10 @@ export const ACTIVITY_KINDS = {
   api_key_created: inApp('Created an API key'),
   // Batch 32: a confirmed link to the operator's lead database account (record only: no other new member action).
   leaddb_connected: recordOnly('Connected the lead database'),
+  // Batch 38: the ad pack (src/app/leads/ads). Approving it is the operator's own decision, so it counts; copying a text
+  // is only recorded (extras: the ad code, the angle, the kind of text and its position, never the text itself).
+  ad_pack_approved: inApp('Approved their ad pack'),
+  ad_text_copied: recordOnly('Copied an ad text'),
 
   // Money
   topup: inApp('Topped up'),

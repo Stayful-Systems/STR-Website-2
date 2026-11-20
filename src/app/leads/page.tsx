@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
@@ -17,6 +18,7 @@ import { WallBanner, type WallNotice } from "./WallBanner";
 import { LeadList, type LeadListRow } from "./LeadList";
 import { leadDbBadges } from "@/lib/leaddb/store";
 import { WebsiteEntryCard } from "./website/LeadPanel";
+import { AdPackEntryCard } from "./ads/EntryCard";
 
 export const metadata: Metadata = {
   title: "Leads — Stayful Intelligence",
@@ -161,6 +163,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
         </div>
 
         {website ? <WebsiteEntryCard site={website} /> : null}
+
+        {/* Batch 38: owners whose website is live on its own domain see the ad pack card (one tiny read while the switch is off). */}
+        {isOwner ? <Suspense fallback={null}><AdPackEntryCard userId={user.id} /></Suspense> : null}
 
         {isOwner ? <WallBanner notices={notices} showFunnelName={funnels.length > 1} /> : null}
 

@@ -55,3 +55,24 @@ wire contract: `PLAN-batch-32.md`. Code: `src/lib/leaddb/`.
   (`ownerIdOrNull`); logs the record-only kind `leaddb_connected`. A failure is shown in plain English
   (`messages.ts`).
 - **Knowledge.** Four draft entries in `seed.ts` (`leaddb_*`) and a line in `service-facts.ts`.
+
+# Batch 38: ad packs tag every website lead to the ad that brought it
+
+An Academy operator whose website is live on its own domain gets a pack of three landlord Facebook ads in their own
+brand (tenant-notice video, moving abroad, renting rules changed), made from their website and uploaded by them to
+their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-batch-38.md`. Code:
+`src/lib/ad-packs/`; screens `/leads/ads` (operator) and `/admin/ad-packs`.
+
+- **Contract.** Pack code `SI-<op>-<angle>-<n>` in the ad name and the link
+  (`?ad=<code>` plus `utm_content={{ad.id}}`). Tables `ad_packs`, `ad_pack_ads`, `ad_pack_runs`,
+  `ad_pack_lead_links`; files in the private bucket `ad-packs`. `linkLeadToPackAd(leadId)` runs after the leaddb
+  hook in the lead route and never throws. `leads.status` and `leads.crm_pushed_at` are **never** written by this.
+- **Switch and caps.** `ad_packs_enabled` stays OFF until the screenshots and the video are done.
+  `ad_pack_max_raw_pence` (one run) and `ad_pack_monthly_cap_pence` (the month) cap the house spend.
+- **Regenerate.** One free regenerate (`ad_pack_free_regens`), only after a brand change (logo, colour, company,
+  fee, photos, area); the video voice can change `ad_pack_voice_changes` time(s) before approving. Admin
+  regenerate is always a dry run first and never counts.
+- **Figures and words.** Take-home is net less the operator's own fee only while `NET_INCLUDES_MANAGEMENT_FEE`
+  (`area.ts`) is false. No Stayful assets, words or example figures in any pack, script or template; the fee
+  comes only from the operator's own setting.
+- **Knowledge.** Five draft entries in `seed.ts` (`adpack_*`) and a block in `service-facts.ts`.
