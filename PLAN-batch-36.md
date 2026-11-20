@@ -53,9 +53,11 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   (8 smoke files, schema twice, no diff). Schema-check script: run
   `/tmp/claude-0/-home-user-STR-Website-2/40edeeda-a663-5737-9418-5656d9df67ae/scratchpad/schema-check.sh`
   (local Postgres 16 via `service postgresql start`; creates DB `schemacheck` each run; `npm ci` already done).
-- [ ] **Phase 1 — Database.** `-- Batch 36: Ads A1` block (ad_packs, ad_pack_ads, ad_pack_runs, ad_pack_lead_links,
+- [x] **Phase 1 — Database.** `-- Batch 36: Ads A1` block (ad_packs, ad_pack_ads, ad_pack_runs, ad_pack_lead_links,
   private bucket `ad-packs`, billing_settings seeds), `supabase/tests/adpacks-smoke.sql`, CI step.
-  Notes:
+  Notes: block at schema.sql ~9141 (before Batch 31). `ad_packs.website_id` is a plain uuid, no FK (websites is created
+  later in the file). `ad_pack_runs.by` is a column name. billing_settings values are jsonb: `ad_packs_enabled` false,
+  others numbers (1, 1, 500, 5000, 5). `ad_pack_lead_links` PK = lead_id. Schema check: 9 smoke files, twice, no diff.
 - [ ] **Phase 2 — Codes, links, limits.** `src/lib/ad-packs/{codes,links,limits}.ts` + tests.
   Notes:
 - [ ] **Phase 3 — Angles, copy, figures.** `angles.ts` (45 templates, 5b script, card text, lead-form questions),

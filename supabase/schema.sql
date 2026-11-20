@@ -9137,6 +9137,173 @@ $$;
 revoke all on function public.credit_expire_idle_plan(uuid, timestamptz) from public, anon, authenticated;
 grant execute on function public.credit_expire_idle_plan(uuid, timestamptz) to service_role;
 
+-- =========================
+-- Batch 36: Ads A1 (the ad pack: three landlord ads in an operator's own brand)
+-- =========================
+-- An Academy operator whose website is live on its own domain gets a pack of
+-- three landlord ads (angles 5b, 3a, 17) to upload to their own Meta account.
+-- Every ad carries a pack code in its ad name and link, so each website lead is
+-- recorded against the ad that brought it (ad_pack_lead_links). See
+-- PLAN-batch-36.md. Checked by supabase/tests/adpacks-smoke.sql.
+--
+--   ad_packs            one per owner (owner_id unique). version is the pack
+--                       version n in the codes; operator_code is the first 6
+--                       hex of the owner id, upper case (more on a collision).
+--   ad_pack_ads         one row per ad per pack version; code is unique
+--                       (SI-<operator code>-<angle>-<n>); an older version is
+--                       kept with superseded_at set so its leads still match.
+--   ad_pack_runs        one row per generation attempt (cost, by whom, dry run).
+--   ad_pack_lead_links  one row per website lead: which ad brought it.
+--
+-- website_id is a plain uuid (no foreign key): this section sits before the
+-- websites table (Batch 31) in this file. All four tables are reached by the
+-- service role only (RLS on, no policy); nothing here is added to ACCESS_COLUMNS,
+-- and leads.status / leads.crm_pushed_at are never written by this.
+--
+-- Settings (billing_settings, edited by the admin):
+--   ad_packs_enabled            master switch for the whole feature (off)
+--   ad_pack_free_regens         free regenerations of a pack per owner
+--   ad_pack_voice_changes       voice (tone) changes per owner
+--   ad_pack_max_raw_pence       most one generation may cost in raw spend
+--   ad_pack_monthly_cap_pence   most all generations may cost in a UK month
+--   ad_pack_min_area_samples    fewest reports an area figure may rest on
+
+create table if not exists public.ad_packs (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  website_id uuid,
+  status text not null default 'draft',
+  operator_code text not null,
+  version integer not null default 1,
+  voice_key text,
+  voice_changes integer not null default 0,
+  regen_count integer not null default 0,
+  brand_hash text,
+  area_key text,
+  area_label text,
+  bedrooms integer,
+  figures jsonb,
+  photos jsonb,
+  checks jsonb,
+  error_code text,
+  cost_pence integer not null default 0,
+  generated_at timestamptz,
+  approved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'ad_packs_owner_id_key' and conrelid = 'public.ad_packs'::regclass) then
+    alter table public.ad_packs add constraint ad_packs_owner_id_key unique (owner_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'ad_packs_operator_code_key' and conrelid = 'public.ad_packs'::regclass) then
+    alter table public.ad_packs add constraint ad_packs_operator_code_key unique (operator_code);
+  end if;
+end $$;
+alter table public.ad_packs drop constraint if exists ad_packs_status_check;
+alter table public.ad_packs add constraint ad_packs_status_check
+  check (status in ('draft', 'generating', 'checks_failed', 'preview', 'approved', 'failed'));
+alter table public.ad_packs drop constraint if exists ad_packs_counts_check;
+alter table public.ad_packs add constraint ad_packs_counts_check
+  check (version >= 1 and voice_changes >= 0 and regen_count >= 0 and cost_pence >= 0);
+create index if not exists ad_packs_website_idx on public.ad_packs (website_id);
+alter table public.ad_packs enable row level security;
+revoke all on public.ad_packs from anon, authenticated;
+
+create table if not exists public.ad_pack_ads (
+  id uuid primary key default gen_random_uuid(),
+  pack_id uuid not null references public.ad_packs(id) on delete cascade,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  version integer not null,
+  angle text not null,
+  n integer not null,
+  code varchar(40) not null,
+  ad_name text,
+  link text,
+  texts jsonb,
+  lead_form jsonb,
+  files jsonb,
+  superseded_at timestamptz,
+  created_at timestamptz not null default now()
+);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'ad_pack_ads_code_key' and conrelid = 'public.ad_pack_ads'::regclass) then
+    alter table public.ad_pack_ads add constraint ad_pack_ads_code_key unique (code);
+  end if;
+end $$;
+alter table public.ad_pack_ads drop constraint if exists ad_pack_ads_angle_check;
+alter table public.ad_pack_ads add constraint ad_pack_ads_angle_check check (angle in ('5b', '3a', '17'));
+create index if not exists ad_pack_ads_pack_idx on public.ad_pack_ads (pack_id, version);
+create index if not exists ad_pack_ads_owner_idx on public.ad_pack_ads (owner_id);
+alter table public.ad_pack_ads enable row level security;
+revoke all on public.ad_pack_ads from anon, authenticated;
+
+create table if not exists public.ad_pack_runs (
+  id uuid primary key default gen_random_uuid(),
+  pack_id uuid not null references public.ad_packs(id) on delete cascade,
+  version integer not null,
+  by text not null,
+  dry boolean not null default false,
+  cost_pence integer not null default 0,
+  result jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.ad_pack_runs drop constraint if exists ad_pack_runs_by_check;
+alter table public.ad_pack_runs add constraint ad_pack_runs_by_check check (by in ('operator', 'admin'));
+create index if not exists ad_pack_runs_pack_idx on public.ad_pack_runs (pack_id, created_at desc);
+create index if not exists ad_pack_runs_month_idx on public.ad_pack_runs (created_at) where not dry;
+alter table public.ad_pack_runs enable row level security;
+revoke all on public.ad_pack_runs from anon, authenticated;
+
+create table if not exists public.ad_pack_lead_links (
+  lead_id uuid primary key references public.leads(id) on delete cascade,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  pack_ad_id uuid references public.ad_pack_ads(id) on delete set null,
+  match text not null,
+  ad_code_seen varchar(40),
+  meta_ad_id_seen varchar(30),
+  linked_at timestamptz not null default now()
+);
+alter table public.ad_pack_lead_links drop constraint if exists ad_pack_lead_links_match_check;
+alter table public.ad_pack_lead_links add constraint ad_pack_lead_links_match_check
+  check (match in ('code', 'ad_id', 'none', 'foreign_code'));
+create index if not exists ad_pack_lead_links_owner_idx on public.ad_pack_lead_links (owner_id, linked_at desc);
+create index if not exists ad_pack_lead_links_ad_idx on public.ad_pack_lead_links (pack_ad_id);
+create index if not exists ad_pack_lead_links_meta_idx on public.ad_pack_lead_links (owner_id, meta_ad_id_seen) where meta_ad_id_seen is not null;
+alter table public.ad_pack_lead_links enable row level security;
+revoke all on public.ad_pack_lead_links from anon, authenticated;
+
+-- The private bucket for the pack's image and video files. Private, with no
+-- storage.objects policy, so only the service role reads or writes it; an
+-- operator downloads through a short signed link. Same pattern as
+-- feedback-screenshots (above): "on conflict" puts it back to private, and an
+-- old storage schema raises a notice instead of stopping the run (create the
+-- bucket by hand, private).
+do $$
+begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('ad-packs', 'ad-packs', false, 20971520, array['image/jpeg', 'image/png', 'image/webp', 'video/mp4'])
+  on conflict (id) do update
+    set public = false,
+        file_size_limit = excluded.file_size_limit,
+        allowed_mime_types = excluded.allowed_mime_types;
+exception when others then
+  raise notice 'The ad-packs bucket was not created (%): create it by hand, private.', sqlerrm;
+end $$;
+
+insert into public.billing_settings (key, value) values
+  ('ad_packs_enabled', 'false'::jsonb),
+  ('ad_pack_free_regens', '1'::jsonb),
+  ('ad_pack_voice_changes', '1'::jsonb),
+  ('ad_pack_max_raw_pence', '500'::jsonb),
+  ('ad_pack_monthly_cap_pence', '5000'::jsonb),
+  ('ad_pack_min_area_samples', '5'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
+
 -- Batch 31: customer websites (Phase 1: schema and settings)
 -- =========================
 -- A member who is invited gets a small white-label website at /s/<slug> whose
