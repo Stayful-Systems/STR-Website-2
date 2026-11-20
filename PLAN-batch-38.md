@@ -174,7 +174,7 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
 
 ## Session 38b (after 38a merged and schema run)
 
-- [ ] B0 Setup (Vercel Sandbox available; Zac adds the 3 library voices to ElevenLabs)
+- [x] B0 Setup (Vercel Sandbox available; Zac adds the 3 library voices to ElevenLabs). Notes 20 Nov: branch restarted from origin/main f20faeb (38a merged as #179); live DB caught up (website/domain/Academy tables). Vercel Sandbox API answers for team stayful-systems (project str-website-2 has no sandboxes yet) - a real render proves it in B4. Voices: Jane (RILOU7...) and Olivia J (NbkKn...) are ALREADY in the ElevenLabs account; Oliver (lo1O1...) is only in the public library and STILL has to be added (Zac, one click). ffmpeg/Pillow/numpy are available in this container for local test renders.
 - [ ] B1 Database (`ad_pack_renders`, unit_costs row, smoke + CI)
 - [ ] B2 Renderer copy (`ad-render/`, no Stayful assets)
 - [ ] B3 Voice and captions (`voice-server.ts`, with-timestamps)
