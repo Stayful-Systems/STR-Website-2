@@ -157,6 +157,8 @@ export function LeadForm({ form, companyName, heading, intro, anchorId, preview 
   const [values, setValues] = useState<Record<string, string>>({ name: "", email: "", phone: "" });
   const [consent, setConsent] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  // Batch 33: a field no person sees or fills; a bot that fills it is quietly dropped by the server.
+  const [honeypot, setHoneypot] = useState("");
 
   // The step token lives here and nowhere else: not a URL, a cookie or storage.
   const [stepToken, setStepToken] = useState<string | null>(null);
@@ -263,6 +265,7 @@ export function LeadForm({ form, companyName, heading, intro, anchorId, preview 
           phone: values.phone,
           consent,
           turnstileToken,
+          hp: honeypot,
           sources,
           landing,
         }),
@@ -638,7 +641,12 @@ export function LeadForm({ form, companyName, heading, intro, anchorId, preview 
           ) : null}
         </div>
 
-        <TurnstileWidget siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null} onToken={setTurnstileToken} theme="light" />
+        <div aria-hidden="true" style={{ position: "absolute", left: "-10000px", width: "1px", height: "1px", overflow: "hidden" }}>
+          <label htmlFor={id("hp")}>Leave this empty</label>
+          <input id={id("hp")} type="text" name="hp_company_site" tabIndex={-1} autoComplete="off" value={honeypot} onChange={(e) => setHoneypot(e.target.value)} />
+        </div>
+
+        {form.skipBotCheck ? null : <TurnstileWidget siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null} onToken={setTurnstileToken} theme="light" />}
 
         {looseErrors.length ? (
           <p role="alert" className={errorClass}>

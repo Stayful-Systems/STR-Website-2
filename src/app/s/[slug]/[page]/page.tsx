@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { renderSitePage } from "@/lib/websites/render";
-import { loadLiveSite } from "../site-data";
+import { canonicalFor, loadLiveSite } from "../site-data";
 
 /**
  * Batch 31: the fixed pages of a customer's website: fees, about, faq and
@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!isPage(page)) return {};
   const live = await loadLiveSite(slug);
   const found = live?.pages.find((p) => p.path === page);
-  return found ? { title: found.title } : {};
+  return found && live ? { title: found.title, alternates: canonicalFor(live.row, page) } : {};
 }
 
 export default async function SiteFixedPage({ params }: Props) {

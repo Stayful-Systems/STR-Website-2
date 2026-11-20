@@ -565,6 +565,8 @@ export const CONDITIONS: Readonly<Record<string, ConditionDef>> = {
   // Batch 31: customer websites. Strict like briefings_on: anything but a true or false setting resolves to null (the answer goes stale).
   website_report_charge_on: { label: 'Income reports from customer websites are charged (billing_settings.website_report_charge_on)', scope: 'global', resolve: (g) => flag(g, 'website_report_charge_on') },
   website_plan_gate_on: { label: 'A plan is needed to invite a customer website and go live (billing_settings.website_plan_gate_on)', scope: 'global', resolve: (g) => flag(g, 'website_plan_gate_on') },
+  // Batch 33: the yearly charge for a customer website's own web address (billing_settings.domain_charge_on, seeded false). Strict like the others.
+  domain_charge_on: { label: 'The yearly charge for a customer website’s own web address is on (billing_settings.domain_charge_on)', scope: 'global', resolve: (g) => flag(g, 'domain_charge_on') },
   welcome_offer: { label: 'They have a welcome price running', scope: 'member', resolve: (_g, m) => (m ? m.welcome !== null : null) },
   first_deep_offer: { label: 'Their first deep report is discounted', scope: 'member', resolve: (_g, m) => (m ? m.firstDeepPence !== null : null) },
   alerts_by_text: { label: 'Their alerts also come by text', scope: 'member', resolve: (_g, m) => (m ? m.alertsByText : null) },

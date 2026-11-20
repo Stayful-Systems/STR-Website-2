@@ -160,7 +160,8 @@ export function pageUrl(base: string, site: SiteRef, path: string): string {
 }
 
 async function fetchOne(deps: GoLiveDeps, base: string, page: PageModel): Promise<PageFailure | null> {
-  const url = pageUrl(base, deps.site, page.path);
+  // Batch 33: approval always checks the temporary /s/<slug> address, even for a site that has since got its own domain.
+  const url = pageUrl(base, { slug: deps.site.slug }, page.path);
   try {
     const signal = typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(deps.timeoutMs ?? PAGE_TIMEOUT_MS) : undefined;
     const res = await deps.fetchPage(url, { redirect: 'manual', cache: 'no-store', signal });

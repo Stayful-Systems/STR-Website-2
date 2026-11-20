@@ -96,3 +96,5 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/rollover-smoke.sql
       - name: Lead database link and delivery table checks (Batch 32)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/leaddb-smoke.sql
+      - name: Website domain spend cap, one-per-site and charge checks (Batch 33)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/domains-smoke.sql

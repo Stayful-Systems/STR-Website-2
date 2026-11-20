@@ -1,6 +1,8 @@
 import { cache } from 'react';
 import { liveSiteBySlug } from '@/lib/websites/store-server';
 import { sitePagesOf } from '@/lib/websites/render';
+import { siteAbsoluteUrl, siteDomain } from '@/lib/websites/urls';
+import type { SiteRef } from '@/lib/websites/types';
 
 /**
  * Batch 31: the live site behind a /s/<slug> address, for the layout, each
@@ -18,3 +20,12 @@ export const loadLiveSite = cache(async (slug: string) => {
   if (!pages) return null;
   return { row, pages };
 });
+
+/**
+ * Batch 33: the canonical address of a page, only for a site on its own
+ * domain ("https://harbourmanagement.co.uk/fees"). A site on the temporary
+ * address has none: it stays noindex and is never competing with itself.
+ */
+export function canonicalFor(site: SiteRef, path: string): { canonical: string } | undefined {
+  return siteDomain(site) ? { canonical: siteAbsoluteUrl(site, path) } : undefined;
+}

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { updateSupabaseSession } from '@/lib/supabase/proxy'
 import { postAuthPath } from '@/lib/auth/landing'
 import { isManagementOnly } from '@/lib/management/stamp-server'
+import { isSiteHost, siteHostResponse, tempAddressRedirect } from '@/lib/domains/host-server'
 
 // /profile and /profiles are here so a signed-out click on an email link
 // keeps its whole address (?via=email, ?q=, ?new=1) through the login bounce;
@@ -29,6 +30,14 @@ export async function proxy(request: NextRequest) {
   // analyser render in environments where env vars haven't been set.
   if (!isSupabaseConfigured()) {
     return NextResponse.next()
+  }
+
+  // Batch 33: a customer's own domain serves only its site (no Supabase session, no app); /s/<slug> on our host
+  // goes to the site's live domain. Both are decided in src/lib/domains (redirect.ts is the rule book).
+  if (isSiteHost(request)) return siteHostResponse(request)
+  if (request.nextUrl.pathname.startsWith('/s/')) {
+    const moved = await tempAddressRedirect(request)
+    if (moved) return moved
   }
 
   const { response, user } = await updateSupabaseSession(request)

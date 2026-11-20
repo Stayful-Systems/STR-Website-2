@@ -11,6 +11,8 @@ import { FunnelNoticePanel, TestMonthPanel } from "./Panels";
 import { WebsitesPanel } from "./WebsitesPanel";
 import { LeadDbFailuresPanel } from "./LeadDbFailuresPanel";
 import { loadWebsitesAdmin } from "@/lib/websites/admin-server";
+import { DomainsPanel } from "./DomainsPanel";
+import { loadDomainsAdmin } from "@/lib/domains/admin-server";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Management companies — Admin", robots: { index: false, follow: false } };
@@ -29,6 +31,7 @@ export default async function AdminManagement() {
 
   const tiers = await getFunnelTierSettings();
   const websites = await loadWebsitesAdmin();
+  const domains = await loadDomainsAdmin();
   let accounts: McAccount[] = [];
   let charges: McCharge[] = [];
   let views: Array<{ views: number; tagged: number }> = [];
@@ -129,6 +132,7 @@ export default async function AdminManagement() {
 
       <WebsitesPanel data={websites} />
       <LeadDbFailuresPanel />
+      <DomainsPanel data={domains} />
     </main>
   );
 }
