@@ -35,7 +35,10 @@ CUSTOMER WEBSITES (FOR MANAGEMENT COMPANIES)
 - Privacy: the operator is the data controller for what landlords enter and Stayful is the processor acting for them.
 
 CREDIT, PLANS AND PAYING
-- Everything is paid from credit. Plans give monthly credit and start at {lowest_plan_cost} a month; plan credit resets each month. Plans can be paused or cancelled in Account.
+- Everything is paid from credit. Plans give monthly credit and start at {lowest_plan_cost} a month; unused plan credit rolls over every month, with no cap. Plans can be paused or cancelled in Account.
+- Plan credit stays on the account if the member cancels, pauses or downgrades; subscribing again adds new credit on top. If a plan payment is refunded or charged back, that payment's unspent credit is removed (credit already spent is not).
+- Credit is spent in this order: an expiring starter-pack bonus first, then the oldest plan credit, then welcome credit, then top-up credit. Top-up credit is spent at {topup_rate} the plan rate and plan credit at the plan rate, including plan credit left after cancelling.
+- If an account goes {plan_credit_idle_months} months with no spending at all, we email reminders at {plan_credit_idle_reminder_months} months; earlier months' plan credit still unspent {plan_credit_final_notice_days} days after the final warning expires. The latest month's plan credit never expires this way, and top-up credit never expires.
 - Top-ups: {topup_amounts}, any time, in Account → Billing. Top-up credit never expires but is spent at {topup_rate} the plan rate.
 - Auto top-up adds credit automatically when the balance runs low and needs a saved card; the one-tap offer is {auto_topup_amount} whenever the balance drops below {auto_topup_threshold}.
 - A pay-as-you-go member (no plan) whose credit reaches {low_credit_mark} between {nudge_days_min} and {nudge_days_max} days after their last top-up gets one text ({text_cost}) and email ({email_cost}) with the one-tap auto top-up link, instead of the usual low-credit email; one notice per credit, whichever comes first (the call, the nudge or the email).
