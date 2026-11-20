@@ -3,7 +3,8 @@ import 'server-only';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { getFunnel } from '../funnels';
 import { renderReportPdf, pdfBrandForFunnel } from '../pdf/render';
-import { leadDbPushLead } from './client';
+import { leadDbConfig, leadDbPushLead } from './client';
+import { leadDbBadge } from './messages';
 import type { DeliveryRow, FinishPatch, LeadContext, LeadDbDeps, LeadDbStore, LinkState } from './deliver';
 import { realLinkClient, type LinkDeps, type LinkRecord, type LinkStore } from './links';
 import type { AnalysisResult } from '../types';
@@ -237,4 +238,40 @@ export function supabaseLinkStore(): LinkStore {
 export function supabaseLinkDeps(): LinkDeps {
   if (!hasServiceRole()) throw new Error('service role not configured');
   return { store: supabaseLinkStore(), ...realLinkClient, randomId: () => crypto.randomUUID() };
+}
+
+// ── What the screens read ──────────────────────────────────────────────────
+
+export interface LeadDbPanelData {
+  /** False when SI_LEAD_PUSH_SECRET or LEADDB_API_URL is unset or too weak: the panel says "not available yet". */
+  available: boolean;
+  link: {
+    status: 'code_sent' | 'active' | 'revoked' | 'error';
+    email: string;
+    leadType: 'management' | 'guaranteed_rent' | null;
+    lastError: string | null;
+    connectedAt: string | null;
+  } | null;
+}
+
+export async function leadDbPanelData(ownerId: string): Promise<LeadDbPanelData> {
+  const available = leadDbConfig() !== null;
+  if (!hasServiceRole()) return { available, link: null };
+  const rec = await supabaseLinkStore().get(ownerId);
+  return {
+    available,
+    link: rec ? { status: rec.status, email: rec.email, leadType: rec.lead_type, lastError: rec.last_error, connectedAt: rec.connected_at } : null,
+  };
+}
+
+/** The badge text for each of these leads that went to the lead database (others are absent). One query. */
+export async function leadDbBadges(leadIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (leadIds.length === 0 || !hasServiceRole()) return out;
+  const { data } = await db().from('leaddb_deliveries').select('lead_id, status, lead_sent_at, report_sent_at, last_error').in('lead_id', leadIds);
+  for (const r of (data ?? []) as { lead_id: string; status: 'pending' | 'sent' | 'failed'; lead_sent_at: string | null; report_sent_at: string | null; last_error: string | null }[]) {
+    const badge = leadDbBadge({ deliveryStatus: r.status, leadSent: r.lead_sent_at !== null, reportSent: r.report_sent_at !== null, noReport: r.last_error === 'no_report_figures' });
+    if (badge) out.set(r.lead_id, badge);
+  }
+  return out;
 }
