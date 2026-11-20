@@ -176,14 +176,16 @@ function cand(userId: string, idleSince: string): IdlePlanRowLike {
 /**
  * The fixture. Each member is an idle candidate (as credit_idle_plan_report
  * lists them); only A and F are due.
- *   A due: notice 50 days ago; 1000 + 500 before it, a 300 top-up after it
- *     (before the newest month: the report's expirable_pence counts it, the
- *     expiry must not), newest month 2000 kept. Expires 1500 in 2 grants.
+ *   A due: notice 50 days ago; cycle grants of 1000 and 500 before it, a 300
+ *     top-up and a new 2000 month after it. The 500 month was the newest when
+ *     the warning went out (the email promised it never expires), so it is
+ *     kept, as is everything created after the notice. Expires 1000 in 1 grant.
  *   B no final notice at all.
  *   C notice 19 days ago (warned).
  *   D the final row was recorded 'skipped', never sent.
  *   E spent after the notice: the notice belongs to the old idle run.
- *   F notice exactly 30 days ago (due at the boundary): 700 expires, newest 100 kept.
+ *   F notice exactly 30 days ago (due at the boundary): 700 expires, newest 100 kept
+ *     (its month began before the notice).
  *   G notice 30 days minus 1 ms ago (warned at the boundary).
  *   H no cycle grant known: the newest month is unknown, nothing expires.
  */
@@ -225,9 +227,9 @@ function fixture() {
     g('E', '2025-06-01T00:00:00Z', 1200, true),
     g('E', '2026-11-01T00:00:00Z', 1200, true),
     g('F', '2025-01-01T00:00:00Z', 700, false),
-    g('F', '2026-11-05T00:00:00Z', 100, true),
+    g('F', '2026-10-05T00:00:00Z', 100, true),
     g('G', '2025-01-01T00:00:00Z', 650, true),
-    g('G', '2026-11-05T00:00:00Z', 100, true),
+    g('G', '2026-10-05T00:00:00Z', 100, true),
     g('H', '2025-01-01T00:00:00Z', 550, false),
   ];
   return { candidates, notices, grants };
@@ -248,7 +250,8 @@ function fakeSql(world: ReturnType<typeof fixture>) {
     if (!n?.sentAt) return { expiredPence: 0, grants: 0, reason: 'no_final_notice' };
     const sent = Date.parse(n.sentAt);
     if (sent > now.getTime() - 30 * DAY_MS) return { expiredPence: 0, grants: 0, reason: 'notice_too_recent' };
-    const cycles = mine.filter((r) => r.plan_cycle && Date.parse(r.created_at) <= now.getTime()).map((r) => Date.parse(r.created_at));
+    // The month newest WHEN THE WARNING WAS SENT (created_at <= v_sent) is protected.
+    const cycles = mine.filter((r) => r.plan_cycle && Date.parse(r.created_at) <= sent).map((r) => Date.parse(r.created_at));
     if (cycles.length === 0) return { expiredPence: 0, grants: 0, reason: 'no_cycle_grant' };
     const newest = Math.max(...cycles);
     let total = 0;
@@ -301,10 +304,10 @@ test('dry and live agree: the dry run lists exactly the members and pence the li
   assert.equal(calls.expire.length, 0, 'the dry run never calls the expiry');
   assert.equal(calls.recorded.length, 0, 'the dry run records nothing');
   assert.deepEqual(dry.wouldExpireIdle, [
-    { userId: 'A', expiringPence: 1500, grants: 2 },
+    { userId: 'A', expiringPence: 1000, grants: 1 },
     { userId: 'F', expiringPence: 700, grants: 1 },
   ]);
-  assert.equal(dry.wouldExpireIdlePence, 2200);
+  assert.equal(dry.wouldExpireIdlePence, 1700);
 
   const live = await idleExpiryLive(world.candidates, d, XNOW);
   assert.deepEqual(calls.expire, world.candidates.map((c) => c.userId), 'the SQL is asked about every candidate');
@@ -315,13 +318,14 @@ test('dry and live agree: the dry run lists exactly the members and pence the li
   assert.equal(live.idleExpiredPence, dry.wouldExpireIdlePence);
   assert.deepEqual(live.errors, []);
   assert.deepEqual(calls.recorded, [
-    { userId: 'A', dedupeKey: 'credit-idle-expired:A:2025-09-01T10:00:00.000Z', expiredPence: 1500, grants: 2 },
+    { userId: 'A', dedupeKey: 'credit-idle-expired:A:2025-09-01T10:00:00.000Z', expiredPence: 1000, grants: 1 },
     { userId: 'F', dedupeKey: 'credit-idle-expired:F:2025-09-01T10:00:00.000Z', expiredPence: 700, grants: 1 },
   ]);
   // The rest are counted by the SQL's reason, and the dry run's counts match.
   assert.deepEqual(live.idleExpireSkipped, { no_final_notice: 3, notice_too_recent: 2, no_cycle_grant: 1 });
   assert.deepEqual(dry.idleExpireSkipped, live.idleExpireSkipped);
-  // The newest month and the post-notice top-up are still there; a second run expires nothing.
+  // The month newest at the notice, the post-notice month and top-up are still there; a second run expires nothing.
+  assert.equal(world.grants.find((r) => r.user_id === 'A' && r.created_at === '2025-09-01T00:00:00Z')?.remaining_pence, 500);
   assert.equal(world.grants.find((r) => r.user_id === 'A' && r.created_at === '2026-11-01T00:00:00Z')?.remaining_pence, 2000);
   assert.equal(world.grants.find((r) => r.user_id === 'A' && r.created_at === '2026-10-10T00:00:00Z')?.remaining_pence, 300);
   const again = await idleExpiryLive(world.candidates, d, XNOW);
@@ -346,8 +350,8 @@ test('nothing expires without a final notice at least 30 days old', () => {
   // Only the final stage counts: with a 6-month final stage only A's 6-month row matches (and it is old enough).
   const six = idleExpiryViews({ ...world, settings: { idleMonths: 6, finalNoticeDays: 30 }, now: XNOW });
   assert.deepEqual(six.filter((v) => v.state === 'due').map((v) => v.userId), ['A']);
-  // Only grants created before the notice: A's notice of 1 Mar 2026 leaves the same two.
-  assert.equal(six[0].expiringPence, 1500);
+  // Only grants created before the notice and before the month newest at it: A's notice of 1 Mar 2026 leaves the same one.
+  assert.equal(six[0].expiringPence, 1000);
 });
 
 test('idleExpiringPence: before the notice and before the newest month, unexpired, with credit left', () => {
@@ -355,8 +359,42 @@ test('idleExpiringPence: before the notice and before the newest month, unexpire
   assert.deepEqual(idleExpiringPence(rows, '2025-07-01T00:00:00Z', XNOW), { pence: 100, grants: 1, noCycleGrant: false });
   // A spent newest cycle grant still marks the newest month.
   assert.deepEqual(idleExpiringPence([g('u', '2025-01-01T00:00:00Z', 100, false), g('u', '2025-06-01T00:00:00Z', 0, true)], '2025-07-01T00:00:00Z', XNOW), { pence: 100, grants: 1, noCycleGrant: false });
-  // A cycle grant after now is not the newest month yet.
+  // A cycle grant after the notice is not the protected month (and nothing before the notice marks one).
   assert.deepEqual(idleExpiringPence([g('u', '2025-01-01T00:00:00Z', 100, false), g('u', '2027-01-01T00:00:00Z', 9, true)], '2025-07-01T00:00:00Z', XNOW), { pence: 0, grants: 0, noCycleGrant: true });
+});
+
+test('a new monthly grant after the final warning: the month newest at the warning stays protected, only older months expire', async () => {
+  // Warning sent 06:43 on 1 Sep 2026; the member stays subscribed, so a new
+  // cycle grant (Sep 15) and a top-up arrive inside the 30-day wait.
+  const sentAt = '2026-09-01T06:43:00.000Z';
+  const grants = [
+    g('M', '2026-06-15T00:00:00Z', 1000, true), // older month
+    g('M', '2026-07-15T00:00:00Z', 800, true), // older month
+    g('M', '2026-08-15T00:00:00Z', 600, true), // newest month WHEN THE WARNING WENT OUT
+    g('M', '2026-09-15T00:00:00Z', 500, true), // new month after the warning
+    g('M', '2026-09-20T00:00:00Z', 200, false), // top-up after the warning
+  ];
+  const at = new Date('2026-10-02T03:00:00Z'); // the first sweep that may expire
+  // What the email quoted: credit_idle_plan_report's expirable_pence at send time
+  // (grants older than the newest cycle grant then): 1000 + 800.
+  const quoted = grants.filter((r) => Date.parse(r.created_at) < Date.parse('2026-08-15T00:00:00Z')).reduce((n, r) => n + Number(r.remaining_pence), 0);
+  assert.equal(quoted, 1800);
+  assert.deepEqual(idleExpiringPence(grants, sentAt, at), { pence: quoted, grants: 2, noCycleGrant: false });
+  // The view, the dry run and the SQL stand-in agree, and leave G, G+1 and the top-up whole.
+  const world = { candidates: [cand('M', '2025-08-01T00:00:00.000Z')], notices: [notice('M', '2025-08-01T00:00:00.000Z', sentAt)], grants };
+  const [view] = idleExpiryViews({ ...world, settings: SETTINGS, now: at });
+  assert.equal(view.state, 'due');
+  assert.equal(view.expiringPence, 1800);
+  const { d } = deps(world);
+  const dry = await idleExpiryDry(world.candidates, d, at);
+  assert.deepEqual(dry.wouldExpireIdle, [{ userId: 'M', expiringPence: 1800, grants: 2 }]);
+  const live = await idleExpiryLive(world.candidates, d, at);
+  assert.deepEqual(live.idleExpired, [{ userId: 'M', expiredPence: 1800, grants: 2 }]);
+  assert.deepEqual(grants.map((r) => r.remaining_pence), [0, 0, 600, 500, 200]);
+  // Before that sweep the member is warned, with the same due date as the email.
+  const [early] = idleExpiryViews({ ...world, grants: grants.map((r) => ({ ...r })), settings: SETTINGS, now: new Date('2026-10-01T06:42:59Z') });
+  assert.equal(early.state, 'notice_too_recent');
+  assert.equal(early.dueAt, '2026-10-02T03:00:00.000Z');
 });
 
 test('a spend after the notice expires nothing: the TS passes the SQL reason through and never expires on its own', async () => {
@@ -440,14 +478,16 @@ test('admin lists: warned (inside the window, due time shown) vs due, boundary e
   const views = idleExpiryViews({ ...world, settings: SETTINGS, now: XNOW });
   const lists = idleExpiryLists(views, new Map([['A', 'a@example.com'], ['C', null]]));
   assert.deepEqual(lists.due.map((r) => [r.userId, r.email, r.expiringPence]), [
-    ['A', 'a@example.com', 1500],
+    ['A', 'a@example.com', 1000],
     ['F', null, 700],
   ]);
-  assert.equal(lists.duePence, 2200);
-  // Warned: soonest due first; G becomes due 1 ms after now, C on 1 Dec.
+  assert.equal(lists.duePence, 1700);
+  // Warned: soonest due first. The due date is the first 03:00 UTC sweep at or
+  // after sent_at + 30 days (the date the email states): G's 30 days end 1 ms
+  // after this 03:00 sweep, so the next one, 21 Nov; C's end 06:43 on 1 Dec, so 03:00 on 2 Dec.
   assert.deepEqual(lists.warned.map((r) => r.userId), ['G', 'C']);
-  assert.equal(lists.warned[0].dueAt, new Date(XNOW.getTime() + 1).toISOString());
-  assert.equal(lists.warned[1].dueAt, '2026-12-01T06:43:00.000Z');
+  assert.equal(lists.warned[0].dueAt, '2026-11-21T03:00:00.000Z');
+  assert.equal(lists.warned[1].dueAt, '2026-12-02T03:00:00.000Z');
   assert.equal(lists.warned[1].noticeSentAt, '2026-11-01T06:43:00.000Z');
   assert.equal(lists.warnedPence, 650 + 600);
   // F sits exactly on the boundary: due, with its due time equal to now.

@@ -207,3 +207,22 @@ export function expiryDue(input: { finalNoticeSentAt: Date | string | null | und
   if (!Number.isFinite(sent) || !Number.isFinite(days) || days < 0) return false;
   return sent <= input.now.getTime() - days * 86_400_000;
 }
+
+/** The credit sweep's hour (vercel.json /api/internal/credit-sweep, "0 3 * * *": 03:00 UTC daily). */
+export const CREDIT_SWEEP_HOUR_UTC = 3;
+
+/**
+ * The first credit sweep that can expire the plan credit a final warning
+ * covered: the first 03:00 UTC at or after sentAt + finalNoticeDays days
+ * (credit_expire_idle_plan needs sent_at <= sweep time - finalNoticeDays days,
+ * and the sweep only runs at 03:00 UTC). The date the email states and the
+ * admin "Warned" list shows. Invalid input gives an invalid Date.
+ */
+export function firstExpirySweepAfter(sentAt: Date | string, finalNoticeDays: number): Date {
+  const sent = sentAt instanceof Date ? sentAt.getTime() : Date.parse(sentAt);
+  const days = Number(finalNoticeDays);
+  if (!Number.isFinite(sent) || !Number.isFinite(days) || days < 0) return new Date(NaN);
+  const earliest = new Date(sent + days * 86_400_000);
+  const sweep = Date.UTC(earliest.getUTCFullYear(), earliest.getUTCMonth(), earliest.getUTCDate(), CREDIT_SWEEP_HOUR_UTC);
+  return new Date(sweep >= earliest.getTime() ? sweep : sweep + 86_400_000);
+}

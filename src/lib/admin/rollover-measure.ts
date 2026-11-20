@@ -32,7 +32,7 @@
  * dry: the same members and pence, computed from reads), and the admin lists.
  */
 import { cyclesFromEvents, monthlyTrend, type Cycle, type SubEvent, type TrendPoint } from '../billing/churn.ts';
-import { expiryDue, rolledOverPence, type RolloverGrantRow } from '../credit/rollover.ts';
+import { expiryDue, firstExpirySweepAfter, rolledOverPence, type RolloverGrantRow } from '../credit/rollover.ts';
 import { ukWeekRange } from '../activity/week.ts';
 
 /** Below this many plan members the figures are labelled "too early" (pack-paying.ts SMALL_NUMBERS). */
@@ -315,14 +315,13 @@ export interface IdleExpiryView {
   state: IdleExpiryState;
   /** The final notice's sent_at for this idle run (null: none sent). */
   noticeSentAt: string | null;
-  /** sent_at + plan_credit_final_notice_days: the first moment the expiry may run (null: none sent). */
+  /** The first 03:00 UTC credit sweep at or after sent_at + plan_credit_final_notice_days (firstExpirySweepAfter): the date the final email states (null: none sent). */
   dueAt: string | null;
   /** What credit_expire_idle_plan would expire at `now` (for a warned member: if it were due now). */
   expiringPence: number;
   grants: number;
 }
 
-const DAY = 86_400_000;
 
 function sameInstant(a: string, b: string): boolean {
   const x = Date.parse(a);
@@ -333,17 +332,20 @@ function sameInstant(a: string, b: string): boolean {
 /**
  * The plan credit credit_expire_idle_plan expires for one member, given the
  * final notice's sent_at: unexpired plan grants with credit left, created
- * before the notice AND before the member's newest plan_cycle grant (created
- * at or before now). No cycle grant: nothing (noCycleGrant). `rows` are that
- * member's plan grants, spent ones included (a spent cycle grant still marks
- * the newest month). Times compare to the millisecond.
+ * before the notice AND before the newest plan_cycle grant created at or
+ * before the notice (the month that was newest when the warning went out,
+ * which the email promised never expires; a cycle grant arriving after the
+ * notice is after it and so safe too). No cycle grant at the notice: nothing
+ * (noCycleGrant). `rows` are that member's plan grants, spent ones included
+ * (a spent cycle grant still marks the newest month). Times compare to the
+ * millisecond.
  */
 export function idleExpiringPence(rows: readonly RolloverGrantRow[], sentAt: string, now: Date): { pence: number; grants: number; noCycleGrant: boolean } {
   const sent = Date.parse(sentAt);
   let newest = -Infinity;
   for (const r of rows) {
     const at = Date.parse(r.created_at);
-    if (r.plan_cycle && Number.isFinite(at) && at <= now.getTime() && at > newest) newest = at;
+    if (r.plan_cycle && Number.isFinite(at) && at <= sent && at > newest) newest = at;
   }
   if (!Number.isFinite(newest)) return { pence: 0, grants: 0, noCycleGrant: true };
   let pence = 0;
@@ -388,7 +390,7 @@ export function idleExpiryViews(input: {
       return { ...base, state: 'no_final_notice' as const, noticeSentAt: null, dueAt: null, expiringPence: 0, grants: 0 };
     }
     const sentAt = notice.sentAt;
-    const dueAt = new Date(Date.parse(sentAt) + settings.finalNoticeDays * DAY).toISOString();
+    const dueAt = firstExpirySweepAfter(sentAt, settings.finalNoticeDays).toISOString();
     const exp = idleExpiringPence(grantsBy.get(c.userId) ?? [], sentAt, now);
     const view = { ...base, noticeSentAt: sentAt, dueAt, expiringPence: exp.pence, grants: exp.grants };
     if (!expiryDue({ finalNoticeSentAt: sentAt, now, finalNoticeDays: settings.finalNoticeDays })) return { ...view, state: 'notice_too_recent' as const };

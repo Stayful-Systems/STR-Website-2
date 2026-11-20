@@ -206,3 +206,28 @@ test('expiryDue: only a sent final warning at least the notice days old', async 
   assert.equal(expiryDue({ finalNoticeSentAt: new Date(sent), now: at('2028-01-01T00:00:00Z'), finalNoticeDays: 30 }), true);
   assert.equal(expiryDue({ finalNoticeSentAt: 'garbage', now: at('2028-01-01T00:00:00Z'), finalNoticeDays: 30 }), false);
 });
+
+test('firstExpirySweepAfter: the first 03:00 UTC sweep at or after sent + notice days', async () => {
+  const { firstExpirySweepAfter, expiryDue, CREDIT_SWEEP_HOUR_UTC } = await import('./rollover.ts');
+  const iso = (d: Date) => d.toISOString();
+  assert.equal(CREDIT_SWEEP_HOUR_UTC, 3);
+  // Sent 06:43 on D: the 30 days end 06:43 on D+30, after that day's sweep, so 03:00 on D+31.
+  assert.equal(iso(firstExpirySweepAfter('2026-11-01T06:43:00Z', 30)), '2026-12-02T03:00:00.000Z');
+  // Sent 02:00 on D: the 30 days end before the 03:00 sweep on D+30.
+  assert.equal(iso(firstExpirySweepAfter('2026-11-01T02:00:00Z', 30)), '2026-12-01T03:00:00.000Z');
+  // Exactly 03:00: that sweep counts (the SQL refuses only sent_at > now - N days).
+  assert.equal(iso(firstExpirySweepAfter('2026-11-01T03:00:00Z', 30)), '2026-12-01T03:00:00.000Z');
+  // 1 ms after 03:00: the next day's sweep.
+  assert.equal(iso(firstExpirySweepAfter('2026-11-01T03:00:00.001Z', 30)), '2026-12-02T03:00:00.000Z');
+  // Across a month and a year end, and a Date input.
+  assert.equal(iso(firstExpirySweepAfter(new Date('2026-12-02T23:59:59Z'), 30)), '2027-01-02T03:00:00.000Z');
+  assert.ok(Number.isNaN(firstExpirySweepAfter('garbage', 30).getTime()));
+
+  // expiryDue (the SQL's rule) agrees: no sweep before that moment can expire, the sweep at it can.
+  for (const sent of ['2026-11-01T06:43:00Z', '2026-11-01T02:00:00Z', '2026-11-01T03:00:00Z', '2026-11-01T03:00:00.001Z']) {
+    const due = firstExpirySweepAfter(sent, 30);
+    const before = new Date(due.getTime() - 86_400_000); // the sweep the day before
+    assert.equal(expiryDue({ finalNoticeSentAt: sent, now: before, finalNoticeDays: 30 }), false, `${sent}: the sweep before`);
+    assert.equal(expiryDue({ finalNoticeSentAt: sent, now: due, finalNoticeDays: 30 }), true, `${sent}: the sweep at the stated date`);
+  }
+});

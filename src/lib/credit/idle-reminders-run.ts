@@ -30,10 +30,9 @@
  * logs carry a user id, the stage and an outcome only: never an email
  * address, a name or an email body.
  */
-import { idleStageDue, reminderDecision, type IdleNoticeRow } from './rollover.ts';
+import { firstExpirySweepAfter, idleStageDue, reminderDecision, type IdleNoticeRow } from './rollover.ts';
 
 const TIME_BUDGET_MS = 45_000;
-const DAY_MS = 86_400_000;
 
 export type IdleReminderKind = 'credit_idle' | 'credit_idle_final';
 
@@ -242,7 +241,7 @@ export async function runCreditIdleReminders(deps: IdleRemindersDeps, opts: { dr
       try {
         res =
           kind === 'credit_idle_final'
-            ? await deps.sendFinalWarning(to, { balancePence, expiringPence: c.expirablePence, expiresOn: new Date(now.getTime() + settings.finalNoticeDays * DAY_MS), months: settings.idleMonths }, key)
+            ? await deps.sendFinalWarning(to, { balancePence, expiringPence: c.expirablePence, expiresOn: firstExpirySweepAfter(now, settings.finalNoticeDays), months: settings.idleMonths }, key)
             : await deps.sendReminder(to, { months: due, balancePence }, key);
       } catch (err) {
         res = { sent: false, reason: msg(err) };

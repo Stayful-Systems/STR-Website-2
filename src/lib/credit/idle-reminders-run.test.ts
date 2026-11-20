@@ -192,7 +192,7 @@ test('the final warning ignores opt-outs', async () => {
   assert.equal(w.sent.length, 1);
   assert.equal(w.sent[0].kind, 'credit_idle_final');
   assert.equal(w.sent[0].to, EMAIL);
-  assert.deepEqual(w.sent[0].data, { balancePence: 4800, expiringPence: 1900, expiresOn: new Date(now.getTime() + 30 * 86_400_000), months: 12 });
+  assert.deepEqual(w.sent[0].data, { balancePence: 4800, expiringPence: 1900, expiresOn: new Date('2027-02-02T03:00:00Z'), months: 12 });
   assert.deepEqual(w.rows.map((r) => [r.stage, r.status]), [[3, 'skipped'], [6, 'skipped'], [12, 'sent']]);
 });
 

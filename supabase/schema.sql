@@ -9053,8 +9053,10 @@ revoke all on public.credit_idle_notices from anon, authenticated;
 -- credit_idle_plan_report), that the final-stage notice for THIS idle run was
 -- sent at least plan_credit_final_notice_days before p_now (a 'skipped' row
 -- never counts), then expires the unexpired plan credit in grants created
--- before that notice was sent AND before their newest plan_cycle grant (the
--- newest month never lapses; no cycle grant known = nothing expires). Each
+-- before that notice was sent AND before the newest plan_cycle grant created
+-- at or before that notice (the month that was newest when the warning went
+-- out never lapses, nor does anything created after it; no cycle grant at the
+-- notice = nothing expires). Each
 -- grant touched gets an 'expire' row with reason 'no_spend'. Top-up, welcome,
 -- bonus and adjustment credit is never touched; a grant never goes below
 -- zero; a second call expires nothing. Returns {expired_pence, grants} and,
@@ -9101,8 +9103,11 @@ begin
     return jsonb_build_object('expired_pence', 0, 'grants', 0, 'reason', 'notice_too_recent');
   end if;
 
+  -- The month protected is the one that was newest WHEN THE WARNING WAS SENT
+  -- (the email quoted that figure and said that month never expires); a cycle
+  -- grant created since is after v_sent and so is safe too.
   select max(created_at) into v_newest from credit_grants
-   where user_id = p_user and kind = 'plan' and plan_cycle and created_at <= v_now;
+   where user_id = p_user and kind = 'plan' and plan_cycle and created_at <= v_sent;
   if v_newest is null then
     return jsonb_build_object('expired_pence', 0, 'grants', 0, 'reason', 'no_cycle_grant');
   end if;
