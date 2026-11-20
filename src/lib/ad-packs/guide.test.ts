@@ -13,6 +13,7 @@ import {
   screenshotUrl,
   screenshotView,
   stepNumberLabel,
+  uploadHint,
 } from './guide.ts';
 
 const sentences = (s: string) => s.split(/[.!?](?:\s+|$)/).filter((x) => x.trim() !== '');
@@ -87,7 +88,7 @@ test('it covers the Traffic objective, no pixel, a Page and ad account, placemen
   assert.match(guideStep('upload-file')!.detail ?? '', /4:5/);
   assert.match(guideStep('upload-file')!.detail ?? '', /9:16/);
   assert.match(guideStep('upload-file')!.detail ?? '', /1:1/);
-  assert.match(guideStep('upload-file')!.detail ?? '', /video that arrives later/);
+  assert.match(guideStep('upload-file')!.detail ?? '', /Stories and Reels/);
   assert.match(guideStep('set-audience')!.detail ?? '', /30 to 65 and over/);
   assert.match(guideStep('publish')!.detail ?? '', /up to a day/);
   assert.match(guideStep('set-budget')!.action, /comfortable/);
@@ -101,6 +102,33 @@ test('the guide has no product name, no pound sign, no em dash, no promise, and 
   assert.doesNotMatch(text, /\d[\d,]*\s?(?:pounds|GBP)/i);
   assert.doesNotMatch(text, /guarantee(?!d)|you will earn|you.ll earn|make money|passive income/i);
   assert.doesNotMatch(text, /\b(?:optimize|color|center|organize|customize)/i);
+});
+
+test('the upload step says which file goes with which placement, for the video ad and for the two image ads', () => {
+  const step = guideStep('upload-file')!;
+  assert.equal(sentences(step.action).length, 1);
+  assert.doesNotMatch(step.action, /image file/, 'the notice ad is a video, so the step says "file"');
+  const detail = step.detail ?? '';
+  assert.match(detail, /9:16 video for Stories and Reels/);
+  assert.match(detail, /4:5 video for the Facebook and Instagram feed/);
+  assert.match(detail, /1:1 square video/);
+  assert.match(detail, /other two ads are images/);
+  assert.doesNotMatch(detail + (step.stuck), /arrives later|coming soon|later release/i);
+  const video = uploadHint(true);
+  const images = uploadHint(false);
+  assert.match(video, /9:16 video for Stories and Reels/);
+  assert.match(video, /4:5 video for the feed/);
+  assert.match(video, /1:1 video if Meta asks for a square one/);
+  assert.match(images, /4:5 images for the feed/);
+  assert.match(images, /9:16 images for Stories and Reels/);
+  assert.match(images, /1:1 images/);
+  for (const t of [video, images]) {
+    assert.equal(sentences(t).length, 2, t);
+    assert.doesNotMatch(t, /stayful|£|—/i);
+  }
+  // The hint is shown on the upload step only, by the guide's own screen.
+  const guideScreen = readFileSync(new URL('../../app/leads/ads/Guide.tsx', import.meta.url), 'utf8');
+  assert.match(guideScreen, /step\.id === "upload-file"[\s\S]*uploadHint\(ad\.isVideo\)/);
 });
 
 test('stepNumberLabel and the pager stay inside 1 to n', () => {

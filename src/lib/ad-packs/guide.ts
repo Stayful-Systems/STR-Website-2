@@ -108,13 +108,13 @@ export const GUIDE_STEPS: readonly GuideStep[] = [
   {
     id: 'upload-file',
     title: 'Upload the ad file',
-    action: 'Upload the image file for this ad from your pack.',
+    action: 'Upload the file for this ad from your pack.',
     detail:
-      'Use the 4:5 portrait file for the Facebook and Instagram feed, the 9:16 file for stories and reels, and the 1:1 square file if Meta asks for a square one. Download them from your ads above, one set for each ad. The tenant notice ad is a video that arrives later, so for now follow the steps with its texts and add the video when it is ready.',
+      'The tenant notice ad is a video: use the 9:16 video for Stories and Reels, and the 4:5 video for the Facebook and Instagram feed, or the 1:1 square video if Meta asks for a square one. The other two ads are images, and each image comes in the same three sizes. Download them from your ads above, one set for each ad.',
     copy: { kind: 'none' },
     stuck:
-      'If Meta warns that the picture is cropped on some placements, put the 9:16 file in the stories and reels slot and the 4:5 file in the rest. If you only add one file, make it the 4:5 one; on a phone the files go to your downloads or photos.',
-    screenshot: shot('upload-file', 'The media section after uploading the portrait 4:5 image'),
+      'If Meta warns that the picture or video is cropped on some placements, put the 9:16 file in the Stories and Reels slot and the 4:5 file in the rest. If you only add one file, make it the 4:5 one; on a phone the files go to your downloads or photos.',
+    screenshot: shot('upload-file', 'The media section after uploading the portrait 4:5 file'),
   },
   {
     id: 'paste-primary',
@@ -206,6 +206,16 @@ export const prevStepIndex = (i: number, n: number): number => clampStep(clampSt
 
 /** Steps that work on one particular ad (its texts, name, link or files), so the screen offers the pick of the three ads. */
 export const needsAdPicker = (step: GuideStep): boolean => step.copy.kind !== 'none' || step.id === 'upload-file';
+
+/**
+ * Which file goes where, for the ad being set up (shown under the ad picker on the upload step). The video ad has
+ * three videos; the two image ads have five images, each in the same three sizes. One sentence each.
+ */
+export function uploadHint(isVideo: boolean): string {
+  return isVideo
+    ? 'This ad is a video. Upload the 9:16 video for Stories and Reels, the 4:5 video for the feed, and the 1:1 video if Meta asks for a square one.'
+    : 'This ad is a set of images. Upload the 4:5 images for the feed, the 9:16 images for Stories and Reels, and the 1:1 images if Meta asks for a square one.';
+}
 
 /** The site path of a step's screenshot. */
 export const screenshotUrl = (id: string): string => `${GUIDE_URL_DIR}/${id}.png`;

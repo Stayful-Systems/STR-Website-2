@@ -1067,7 +1067,7 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['Will links to my old website address still work?', 'I shared the temporary link, does it break?', 'Does the old address redirect?', 'What happens to the address I had before?'],
     answer: 'It redirects to your new web address, so any link you’ve already shared keeps working and takes people to your site on its own domain.',
   },
-  // ── Batch 38: the landlord ad pack (drafts for Zac to approve; the two counts are the ad_pack_free_regens and ad_pack_voice_changes settings) ──
+  // ── Batch 38 and 38b: the landlord ad pack and its video (drafts for Zac to approve; the two counts are the ad_pack_free_regens and ad_pack_voice_changes settings) ──
   {
     slug: 'adpack_what',
     from: 'Batch 38, landlord ad pack',
@@ -1076,7 +1076,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'What is the ad pack?',
     variants: ['What do I get in my ad pack?', 'Do you make Facebook ads for me?', 'Can I get ready-made Facebook ads for landlords?', 'Does Stayful run my Facebook ads?', 'How do I use the ad pack?'],
-    answer: 'It is a set of landlord Facebook ads in your own brand, made from your website: a video ad about tenant notice, one for landlords moving abroad and one for landlords whose renting rules have changed. You upload them to your own Meta ad account with the step-by-step guide, which has a copy button for every text. Stayful runs nothing on Meta for you.',
+    answer: 'It is a set of landlord Facebook ads in your own brand, made from your website: a video ad about tenant notice, with a voiceover in a voice you pick and the words on screen, one for landlords moving abroad and one for landlords whose renting rules have changed. You upload them to your own Meta ad account with the step-by-step guide, which has a copy button for every text. Stayful runs nothing on Meta for you.',
   },
   {
     slug: 'adpack_who',
@@ -1090,13 +1090,23 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'adpack_regenerate',
-    from: 'Batch 38, landlord ad pack (free regenerates after a brand change; the video voice can be changed before approving; both counts are settings)',
+    from: 'Batch 38, landlord ad pack (free regenerates after a brand change; the video voice can be changed before approving, which makes the video again; both counts are settings)',
     category: 'how_it_works',
     channels: ['view', 'chat'],
     showWhen: null,
     question: 'Can I regenerate my ad pack?',
-    variants: ['Can I make my ad pack again?', 'How many times can I regenerate my ads?', 'I changed my logo, can I get new ads?', 'Why can’t I regenerate my ad pack?', 'Can I change the voice on my video ad?', 'Can I change the video voice after I approve?'],
-    answer: 'You get a set number of free regenerates, currently {ad_pack_free_regens}, and only after you change your logo, colour, company name, fee, photos or area, because otherwise there is nothing new to make. Before you approve, you can also change the video voice a set number of times, currently {ad_pack_voice_changes}.',
+    variants: ['Can I make my ad pack again?', 'How many times can I regenerate my ads?', 'I changed my logo, can I get new ads?', 'Why can’t I regenerate my ad pack?'],
+    answer: 'You get a set number of free regenerates, currently {ad_pack_free_regens}, and only after you change your logo, colour, company name, fee, photos or area, because otherwise there is nothing new to make. Before you approve, you can also change the video voice a set number of times, currently {ad_pack_voice_changes}, and the video is then made again.',
+  },
+  {
+    slug: 'adpack_video_voice',
+    from: 'Batch 38b, landlord ad pack (the tenant notice video: three voices with a sample to hear first, made in a few minutes, the voice can be changed before approving; the count is the ad_pack_voice_changes setting)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Which voice does my tenant notice video use?',
+    variants: ['Can I hear the voices before my video is made?', 'Who narrates my ad video?', 'Why is my ad video still being made?', 'Why does my video say a voice is not available?', 'How long does the notice video take?', 'Can I change the voice on my video ad?', 'Can I change the video voice after I approve?'],
+    answer: 'Your tenant notice video has a voiceover and the words on screen, so it works with the sound off. Before you make your ads you pick a voice from a short list and can play a sample of each first. The video takes a few minutes to make, and you can leave the page and come back. Before you approve you can change the voice a set number of times, currently {ad_pack_voice_changes}, and the video is made again; after you approve the voice is fixed. If a voice isn’t available yet you choose another, at no cost to your allowance. You can approve once the video is ready.',
   },
   {
     slug: 'adpack_tagging',

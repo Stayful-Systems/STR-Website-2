@@ -10,6 +10,8 @@
 import { ANGLE_LABELS } from './links.ts';
 import { isAngle, type Angle } from './codes.ts';
 import type { PackRow, PackStatus } from './store-types.ts';
+import { RENDER_STATES, type RenderState } from './render-store.ts';
+import { voiceByKey } from './voices.ts';
 
 /** The most packs the page lists. */
 export const ADMIN_PACK_LIMIT = 200;
@@ -34,6 +36,25 @@ export type AdminAdInput = { id: string; packId: string; version: number; angle:
 /** One website lead's link, with nothing that identifies the lead. */
 export type AdminLinkInput = { ownerId: string; packAdId: string | null; match: string };
 export type AdminOwnerInput = { company: string | null; email: string | null };
+/** One version's video render, as the table needs it (38b): states, counts and short codes only. */
+export type AdminRenderInput = { packId: string; version: number; voiceKey: string; state: string; attempts: number; errorCode: string | null; costPence: number };
+
+export const RENDER_STATE_LABELS: Record<RenderState, string> = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed' };
+
+/** The notice video of a pack: the current version's render, and what every render of the pack has cost. */
+export type AdminVideoRow = {
+  /** The current version has a render row. */
+  hasRender: boolean;
+  voiceLabel: string;
+  state: RenderState | null;
+  stateLabel: string;
+  attempts: number;
+  /** A short code for an admin to read (never shown to an operator). Null unless the render failed or retried. */
+  errorCode: string | null;
+  /** Render cost so far, every version of this pack. */
+  renderCostPence: number;
+  renderCostLabel: string;
+};
 
 export type AdminAdRow = {
   id: string;
@@ -59,6 +80,8 @@ export type AdminPackRow = {
   costPence: number;
   costLabel: string;
   ads: AdminAdRow[];
+  /** The notice video (38b). */
+  video: AdminVideoRow;
   /** Leads recorded against one of this pack's ads (every version). */
   taggedLeads: number;
   /** This owner's leads with no ad: match 'none' or 'foreign_code'. */
@@ -84,6 +107,7 @@ export function buildAdminView(input: {
   owners: ReadonlyMap<string, AdminOwnerInput>;
   ads: AdminAdInput[];
   links: AdminLinkInput[];
+  renders?: AdminRenderInput[];
 }): AdminView {
   const packs = input.packs.slice(0, ADMIN_PACK_LIMIT);
 
@@ -103,7 +127,29 @@ export function buildAdminView(input: {
     else adsOf.set(a.packId, [a]);
   }
 
+  const rendersOf = new Map<string, AdminRenderInput[]>();
+  for (const r of input.renders ?? []) {
+    const list = rendersOf.get(r.packId);
+    if (list) list.push(r);
+    else rendersOf.set(r.packId, [r]);
+  }
+
   const rows = packs.map((p): AdminPackRow => {
+    const renders = rendersOf.get(p.id) ?? [];
+    const current = renders.find((r) => r.version === p.version) ?? null;
+    const state = current && (RENDER_STATES as readonly string[]).includes(current.state) ? (current.state as RenderState) : null;
+    const renderCost = renders.reduce((n, r) => n + (Number.isFinite(r.costPence) ? r.costPence : 0), 0);
+    const video: AdminVideoRow = {
+      hasRender: current !== null,
+      voiceLabel: voiceByKey(current?.voiceKey ?? p.voiceKey)?.label ?? (current?.voiceKey || p.voiceKey || '—'),
+      state,
+      stateLabel: state ? RENDER_STATE_LABELS[state] : current ? 'Unknown' : 'No video yet',
+      attempts: current?.attempts ?? 0,
+      // A short code only: the column holds codes (60 characters at most), and only an admin sees it.
+      errorCode: current?.errorCode ? current.errorCode.slice(0, 60) : null,
+      renderCostPence: renderCost,
+      renderCostLabel: money(renderCost),
+    };
     const ads = (adsOf.get(p.id) ?? [])
       .filter((a) => isAngle(a.angle))
       .sort((x, y) => y.version - x.version || ANGLE_ORDER[x.angle as Angle] - ANGLE_ORDER[y.angle as Angle])
@@ -130,6 +176,7 @@ export function buildAdminView(input: {
       costPence: p.costPence,
       costLabel: money(p.costPence),
       ads,
+      video,
       taggedLeads: ads.reduce((n, a) => n + a.leads, 0),
       untagged: untaggedBy.get(p.ownerId) ?? 0,
       unplaced: unplacedBy.get(p.ownerId) ?? 0,

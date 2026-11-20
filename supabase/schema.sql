@@ -9304,6 +9304,85 @@ on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
 
+-- Batch 38b: notice video renders
+-- =========================
+-- The notice ad (angle 5b) becomes a real 9:16 video in the operator's brand
+-- (an ElevenLabs voiceover, burned-in captions, plus 4:5 and 1:1 crops). It is
+-- rendered in a Vercel Sandbox (Python + ffmpeg) by a cron worker, never in a
+-- request. See PLAN-batch-38.md. Checked by supabase/tests/adpacks-render-smoke.sql.
+--
+--   ad_pack_renders  one row per render of a pack version: the queue the worker
+--                    drains, its lease, attempts, cost and the files it made.
+--                    (pack_id, version) is unique: one row per version. A voice
+--                    change does NOT make a new version: the same row is reset
+--                    in place (queued again, new voice, error and files cleared,
+--                    cost kept, attempts back to 0). An operator's "Try again"
+--                    resets it the same way but keeps attempts, so the tries add
+--                    up. The worker fails a row whose version is no longer the
+--                    pack's current one with the code 'superseded'.
+--
+-- Service role only (RLS on, no policy); not in ACCESS_COLUMNS; never writes
+-- leads.status or leads.crm_pushed_at.
+--
+-- Settings (billing_settings, edited by the admin):
+--   ad_pack_render_max_seconds   hard time limit for one render (sandbox timeout)
+--   ad_pack_render_max_attempts  tries before a render is left failed (an operator's
+--                                "Try again" stops at twice this, in all)
+--   ad_pack_sandbox_vcpus        vCPUs asked for per sandbox
+-- The sandbox price is the unit_costs row ('vercel', 'sandbox_cpu_second'):
+-- cost = seconds x vcpus x that row. It is the one source of the price.
+
+create table if not exists public.ad_pack_renders (
+  id uuid primary key default gen_random_uuid(),
+  pack_id uuid not null references public.ad_packs(id) on delete cascade,
+  version integer not null,
+  voice_key text not null,
+  state text not null default 'queued',
+  sandbox_id text,
+  attempts integer not null default 0,
+  lease_until timestamptz,
+  started_at timestamptz,
+  finished_at timestamptz,
+  cost_pence integer not null default 0,
+  error_code text,
+  files jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'ad_pack_renders_pack_version_key' and conrelid = 'public.ad_pack_renders'::regclass) then
+    alter table public.ad_pack_renders add constraint ad_pack_renders_pack_version_key unique (pack_id, version);
+  end if;
+end $$;
+alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_state_check;
+alter table public.ad_pack_renders add constraint ad_pack_renders_state_check
+  check (state in ('queued', 'running', 'done', 'failed'));
+alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_counts_check;
+alter table public.ad_pack_renders add constraint ad_pack_renders_counts_check
+  check (attempts >= 0 and cost_pence >= 0);
+alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_error_code_check;
+alter table public.ad_pack_renders add constraint ad_pack_renders_error_code_check
+  check (error_code is null or char_length(error_code) <= 60);
+create index if not exists ad_pack_renders_state_idx on public.ad_pack_renders (state, created_at);
+create index if not exists ad_pack_renders_pack_idx on public.ad_pack_renders (pack_id);
+alter table public.ad_pack_renders enable row level security;
+revoke all on public.ad_pack_renders from anon, authenticated;
+
+insert into public.billing_settings (key, value) values
+  ('ad_pack_render_max_seconds', '300'::jsonb),
+  ('ad_pack_render_max_attempts', '3'::jsonb),
+  ('ad_pack_sandbox_vcpus', '2'::jsonb)
+on conflict (key) do nothing;
+
+-- The sandbox's Active CPU time. $0.128 per CPU-hour at 79p a dollar is
+-- 10.112p an hour, 0.00280889p a second (8 places is what the column keeps).
+insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, notes) values
+  ('vercel', 'sandbox_cpu_second', 'Vercel Sandbox Active CPU (per CPU-second)', 0.00280889, 5, 'Estimate: $0.128 per CPU-hour at 79p a dollar (Nov 2026); re-check against the Vercel invoice. House spend, not charged to the operator')
+on conflict (provider, unit) do nothing;
+
+notify pgrst, 'reload schema';
+
 -- Batch 31: customer websites (Phase 1: schema and settings)
 -- =========================
 -- A member who is invited gets a small white-label website at /s/<slug> whose

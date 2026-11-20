@@ -75,4 +75,15 @@ their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-b
 - **Figures and words.** Take-home is net less the operator's own fee only while `NET_INCLUDES_MANAGEMENT_FEE`
   (`area.ts`) is false. No Stayful assets, words or example figures in any pack, script or template; the fee
   comes only from the operator's own setting.
-- **Knowledge.** Five draft entries in `seed.ts` (`adpack_*`) and a block in `service-facts.ts`.
+- **Video (38b).** The notice ad (5b) is a 9:16 video plus 4:5 and 1:1 crops in the operator's brand, with an
+  ElevenLabs voiceover (Jane, Olivia or Oliver: `voices.ts`; the operator plays the free sample first, picks before
+  Generate) and burned-in captions. A cron worker (`/api/internal/ad-pack-renders`, `*/5 * * * *`, `?dry=1`) renders it
+  in a Vercel Sandbox from `ad-render/` (Python + ffmpeg), never in a request. Table `ad_pack_renders` (one row per
+  pack version: queued, running, done, failed); files `notice-9x16.mp4`, `-4x5`, `-1x1` and `notice-poster.png` in the
+  `ad-packs` bucket. Env: `ELEVENLABS_API_KEY`, `CRON_SECRET`, sandbox access (OIDC is automatic on Vercel).
+  Code `src/lib/ad-packs/{voices,voice-*,captions,render-*}.ts`; no Stayful asset under `ad-render/` (a test pins it).
+- **Screen.** Approve stays off until the video is ready (`PackView.approval`). One voice change before approving
+  (`changeVoice`; free when the voice was unavailable) and `retryVideo`, both owner-only and pinned to the version on
+  screen. While the video is made the screen asks `pollPackAction` every 8 s (read only, safe fields) and stops after
+  15 minutes. The video plays from one-hour signed links (`videoUrlAction`). `/admin/ad-packs` has a Video column.
+- **Knowledge.** Six draft entries in `seed.ts` (`adpack_*`, incl. `adpack_video_voice`) and a block in `service-facts.ts`.

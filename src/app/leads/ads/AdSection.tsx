@@ -1,5 +1,6 @@
 import { AdTexts, DownloadButton } from "./AdPackClient";
-import type { AdVm } from "./view";
+import { VideoSection } from "./VideoSection";
+import type { AdVm, VoiceVm } from "./view";
 
 /**
  * Batch 38 (Phase 8): one ad of the pack. A server component: the image
@@ -7,8 +8,12 @@ import type { AdVm } from "./view";
  * preview the texts are listed; once approved each has a Copy button and every
  * image file can be downloaded (the download links are made on tap, by an
  * action that checks the ad is the owner's).
+ *
+ * 38b: the notice ad shows its video (VideoSection) instead of images: being
+ * made, ready to play, or failed, with the voice change before approving.
+ * `pack` and `voice` are only used for that ad.
  */
-export function AdSection({ ad, approved }: { ad: AdVm; approved: boolean }) {
+export function AdSection({ ad, approved, pack, voice }: { ad: AdVm; approved: boolean; pack: { id: string; version: number; voiceKey: string | null }; voice: VoiceVm }) {
   return (
     <section className="rounded-xl border border-border bg-card p-4 sm:p-5" aria-label={ad.title}>
       <header>
@@ -16,11 +21,9 @@ export function AdSection({ ad, approved }: { ad: AdVm; approved: boolean }) {
         <p className="mt-0.5 break-all text-xs text-muted-foreground">{ad.adName}</p>
       </header>
 
-      {ad.videoText ? (
-        <div className="mt-4 flex aspect-video max-w-md flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/40 p-4 text-center">
-          <p className="text-sm font-medium text-foreground">{ad.videoText}</p>
-          <p className="mt-1 text-xs text-muted-foreground">The texts, name and link for this ad are ready below.</p>
-        </div>
+      {ad.video ? (
+        // The key holds the state, the version and the voice: when the reloaded page brings a different one (the video is ready, a voice was changed) this starts afresh.
+        <VideoSection key={`${ad.video.card.state}:${pack.version}:${pack.voiceKey ?? ""}`} adId={ad.id} packId={pack.id} version={pack.version} approved={approved} video={ad.video} voice={voice} />
       ) : null}
 
       {ad.cards.length > 0 ? (

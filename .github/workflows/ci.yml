@@ -100,5 +100,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/domains-smoke.sql
       - name: Ad pack tables and lead link checks (Batch 38)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/adpacks-smoke.sql
+      - name: Ad pack render queue checks (Batch 38b)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/adpacks-render-smoke.sql
       - name: Website edit versions, grace notices and delete-restrict checks (Batch 36)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/websites-p4-smoke.sql

@@ -4,7 +4,9 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { approvePackAction, areaPreviewAction, downloadFileAction, generatePackAction, recordCopyAction, uploadPhotoAction } from "./actions";
 import type { AdsState } from "./ops";
-import { areaPreviewView, NO_LOGO_TEXT, type AdCopy, type AreaPreviewView, type CopyItem, type LengthView } from "./view";
+import { DEFAULT_VOICE_KEY, type VoiceKey } from "@/lib/ad-packs/voices";
+import { VoiceCards } from "./VoiceCards";
+import { areaPreviewView, NO_LOGO_TEXT, VOICE_STEP_HELP, VOICE_STEP_TITLE, type AdCopy, type AreaPreviewView, type CopyItem, type LengthView } from "./view";
 
 /**
  * Batch 38 (Phase 8): the interactive parts of the ad pack screen. The page
@@ -86,6 +88,7 @@ export function GenerateForm(p: GenerateFormProps) {
   const [uploading, setUploading] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [typeOnly, setTypeOnly] = useState(false);
+  const [voiceKey, setVoiceKey] = useState<VoiceKey>(DEFAULT_VOICE_KEY);
   const asked = useRef(0);
 
   async function pickArea(next: string) {
@@ -205,6 +208,18 @@ export function GenerateForm(p: GenerateFormProps) {
         </label>
       ) : null}
 
+      {regenerate ? (
+        <p className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">Your video keeps its voice. You can change the voice on the video above, before you approve your ads.</p>
+      ) : (
+        <fieldset className="min-w-0">
+          <legend className="text-sm font-medium text-foreground">{VOICE_STEP_TITLE}</legend>
+          <p className="mt-0.5 text-xs text-muted-foreground">{VOICE_STEP_HELP}</p>
+          <div className="mt-3">
+            <VoiceCards name="voiceKey" value={voiceKey} onChange={setVoiceKey} />
+          </div>
+        </fieldset>
+      )}
+
       {p.problems.map((t) => <Alert key={t}>{t}</Alert>)}
       {state.error ? <Alert>{state.error}</Alert> : null}
 
@@ -225,14 +240,16 @@ export function GenerateForm(p: GenerateFormProps) {
 
 // ── Approve ──
 
-export function ApproveForm({ packId, version }: { packId: string; version: number }) {
+/** `blockedReason`: why Approve cannot be pressed yet (the video is still being made, or could not be); null when it can. */
+export function ApproveForm({ packId, version, blockedReason }: { packId: string; version: number; blockedReason: string | null }) {
   const [state, action, pending] = useActionState(approvePackAction, INITIAL);
   return (
     <form action={action} className={`${card} space-y-3`}>
       <input type="hidden" name="packId" value={packId} />
       <input type="hidden" name="version" value={version} />
-      <p className="text-sm text-foreground">Happy with them? Approve your ads to get the image files and every text to copy.</p>
-      <Button type="submit" size="lg" disabled={pending} className="h-11 w-full text-base sm:w-auto sm:px-6">{pending ? "Approving…" : "Approve my ads"}</Button>
+      <p className="text-sm text-foreground">Happy with them? Approve your ads to get the video, the image files and every text to copy.</p>
+      <Button type="submit" size="lg" disabled={pending || blockedReason !== null} className="h-11 w-full text-base sm:w-auto sm:px-6">{pending ? "Approving…" : "Approve my ads"}</Button>
+      {blockedReason ? <p role="status" className="text-sm text-muted-foreground">{blockedReason}</p> : null}
       {state.error ? <Alert>{state.error}</Alert> : null}
     </form>
   );

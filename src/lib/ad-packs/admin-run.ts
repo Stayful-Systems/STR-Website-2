@@ -22,6 +22,7 @@ import { isAdminEmail } from '../admin.ts';
 import { LINK_MISSING_LIMIT, type LinkMissingResult } from './attribution.ts';
 import { generateMessage, type DryPlan, type GenerateInput, type GenerateResult } from './generate-core.ts';
 import { money } from './admin-view.ts';
+import { voiceByKey } from './voices.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -121,7 +122,7 @@ function planLines(plan: DryPlan, src: Extract<RegenSource, { ok: true }>): stri
   lines.push(plan.figure ? `Example figure: ${plan.figure.label}` : 'No example figure (too few reports): the ads are made without one.');
   lines.push(plan.regenerate ? `Would make version ${plan.version}. The older versions’ codes keep working.` : `Would make the first version (${plan.version}).`);
   for (const ad of plan.ads) {
-    const what = ad.files.length > 0 ? `${ad.files.length} image files` : ad.video === 'coming' ? 'video coming' : 'no files';
+    const what = ad.files.length > 0 ? `${ad.files.length} image files` : ad.video === 'coming' ? `video, made by the render worker in ${voiceByKey(plan.voiceKey)?.label ?? plan.voiceKey}’s voice (nothing is made by a dry run)` : 'no files';
     lines.push(`${ad.adName}: ${what}.`);
   }
   if (plan.checks.ok) {

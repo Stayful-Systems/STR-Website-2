@@ -15,12 +15,17 @@ export type Signer = (path: string, expiresInSeconds: number, downloadName: stri
 /**
  * The storage path of `fileName` on one of the owner's pack ads, or null:
  * not the owner's ad, no such file, or a path outside the owner's own folder.
+ * `fileName` is an image name, or for the 5b ad (video ready) notice-9x16.mp4,
+ * notice-4x5.mp4, notice-1x1.mp4 or notice-poster.png. The voice files in the
+ * bucket (voice.mp3, script.json) are never offered.
  */
 export async function downloadPath(store: Pick<AdPackStore, 'getPackAd'>, ownerId: string, packAdId: string, fileName: string): Promise<string | null> {
   if (typeof ownerId !== 'string' || ownerId === '' || typeof packAdId !== 'string' || packAdId === '' || typeof fileName !== 'string' || fileName === '') return null;
   const ad = await store.getPackAd(ownerId, packAdId);
   if (!ad || ad.ownerId !== ownerId) return null;
-  const file = ad.files.images.find((f) => f.name === fileName);
+  const video = ad.files.video && ad.files.video.status === 'ready' ? ad.files.video : null;
+  // Images, and (5b, once ready) the three MP4s and the poster. Nothing else is ever signed.
+  const file = [...ad.files.images, ...(video ? [...video.videos, video.poster] : [])].find((f) => f.name === fileName);
   if (!file) return null;
   if (!file.path.startsWith(`${ownerId}/`) || file.path.includes('..')) return null;
   return file.path;

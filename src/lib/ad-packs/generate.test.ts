@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ANGLES } from './codes.ts';
-import { brandHash, estimateRawPence, type BrandHashInput, GENERATE_CODES, generateMessage, plannedImageNames, type GenerateInput, type GenerateOk, type GenerateResult } from './generate-core.ts';
+import { brandHash, estimateRawPence, estimateVideoPence, type BrandHashInput, GENERATE_CODES, generateMessage, plannedImageNames, type GenerateInput, type GenerateOk, type GenerateResult } from './generate-core.ts';
 import { harness, MemoryAdPackStore, type Harness } from './test-store.ts';
 import { PackConflict } from './store-types.ts';
 import { loadImagesModule } from './images-test-support.ts';
@@ -41,6 +41,13 @@ function code(r: GenerateResult): string {
   return (r as { code: string }).code;
 }
 
+/** What the video (voiceover + sandbox) adds to every estimate with the default settings, read from a dry run. */
+async function videoPence(): Promise<number> {
+  const r = await harness().engine.generatePack({ ownerId: OWNER_A, by: 'admin', dry: true, input: input() });
+  assert.ok(r.ok && r.dry && r.plan);
+  return r.ok && r.dry && r.plan ? r.plan.estimatedCostPence : 0;
+}
+
 async function first(h: Harness, owner = OWNER_A, over: Partial<GenerateInput> = {}) {
   return ok(await h.engine.generatePack({ ownerId: owner, by: 'operator', input: input(over) }));
 }
@@ -76,7 +83,7 @@ test('the first pack: three ads with codes SI-<op>-5B-1 / 3A-1 / 17-1, every lin
   assert.equal((pack.figures ?? []).length, 1);
 });
 
-test('the 5b ad has texts, code, link and script and a video slot that is "coming"; 3a and 17 have image files', async () => {
+test('the 5b ad has texts, code, link and script and a video slot that is "queued"; 3a and 17 have image files', async () => {
   const h = harness();
   const r = await first(h);
   const ads = await h.store.listAds(OWNER_A, r.packId);
@@ -86,7 +93,7 @@ test('the 5b ad has texts, code, link and script and a video slot that is "comin
   assert.equal(b.texts.headlines.length, 5);
   assert.equal(b.texts.descriptions.length, 5);
   assert.ok(b.texts.script && b.texts.script.length > 100);
-  assert.deepEqual(b.files, { images: [], video: { status: 'coming' } });
+  assert.deepEqual(b.files, { images: [], video: { status: 'queued' } });
   assert.ok(b.leadForm.length > 0);
   for (const angle of ['3a', '17'] as const) {
     const a = byAngle[angle];
@@ -248,6 +255,7 @@ test('an admin regenerate is unlimited, needs no brand change and never counts t
 test('regenerating an approved pack follows the same rule and needs approving again', async () => {
   const h = harness();
   await first(h);
+  await h.finishVideo(OWNER_A);
   assert.equal((await h.engine.approvePack({ ownerId: OWNER_A })).ok, true);
   assert.equal((await h.store.getPack(OWNER_A))?.status, 'approved');
   assert.equal(code(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input() })), 'no_brand_change');
@@ -268,7 +276,11 @@ test('a dry run for a new owner returns the whole plan and writes nothing at all
   assert.ok(r.plan);
   assert.equal(r.plan.version, 1);
   assert.equal(r.plan.operatorCode, '3F9A2C');
-  assert.equal(r.plan.estimatedCostPence, 0);
+  // 38b: the estimate is the voiceover plus the render sandbox at its time limit (images cost nothing).
+  const planLines = (r.plan.ads[0].texts.script ?? '').split(/\n\s*\n/);
+  assert.equal(r.plan.estimatedCostPence, estimateVideoPence({ lines: planLines, voiceKey: 'jane', maxSeconds: 300, vcpus: 2 }));
+  assert.ok(r.plan.estimatedCostPence > 0 && r.plan.estimatedCostPence < 100);
+  assert.equal(r.plan.voiceKey, 'jane');
   assert.deepEqual(r.plan.ads.map((a) => a.code), ['SI-3F9A2C-5B-1', 'SI-3F9A2C-3A-1', 'SI-3F9A2C-17-1']);
   assert.ok(r.plan.ads.every((a) => a.adName.startsWith(a.code) && a.link.includes(`ad=${a.code}`)));
   assert.ok(r.plan.ads[0].texts.script);
@@ -312,7 +324,7 @@ test('a dry run names the cost guard that would stop it, and its plan matches th
   assert.ok(r.ok && r.dry);
   if (r.ok && r.dry) {
     assert.equal(r.wouldBlock?.code, 'cost_cap');
-    assert.equal(r.plan?.estimatedCostPence, 600);
+    assert.equal(r.plan?.estimatedCostPence, 600 + (await videoPence()));
   }
   const g = harness();
   const dry = await g.engine.generatePack({ ownerId: OWNER_A, by: 'admin', dry: true, input: input() });
@@ -324,7 +336,10 @@ test('a dry run names the cost guard that would stop it, and its plan matches th
     for (const ad of dry.plan.ads) {
       const s = stored.find((x) => x.code === ad.code);
       assert.deepEqual(ad.files.map((f) => f.name), (s?.files.images ?? []).map((f) => f.name), 'planned file names are the real ones');
-      assert.deepEqual(ad.texts, s?.texts);
+      // The 5b ad also stores the video's pinned brand (never part of the plan's copyable texts).
+      const { brand: pinned, ...copyable } = s!.texts;
+      assert.equal(pinned !== undefined, ad.angle === '5b');
+      assert.deepEqual(ad.texts, copyable);
     }
   }
 });
@@ -362,22 +377,27 @@ test('the run row carries the cost; the pack keeps the running total', async () 
   assert.equal(await h.store.monthSpendPence('2026-11-01T00:00:00Z'), 70);
 });
 
-test('estimateRawPence is 0p in 38a (images only)', () => {
+test('estimateRawPence is 0p for the images alone, and adds the voiceover and the sandbox when asked (38b)', () => {
   assert.equal(estimateRawPence(ANGLES), 0);
+  const lines = ['A line of the script.', 'Another line of it.'];
+  const video = estimateRawPence(ANGLES, { lines, voiceKey: 'jane', maxSeconds: 300, vcpus: 2 });
+  assert.equal(video, estimateVideoPence({ lines, voiceKey: 'jane', maxSeconds: 300, vcpus: 2 }));
+  assert.ok(video > 0);
 });
 
 test('cost_cap: an estimate over ad_pack_max_raw_pence is refused before anything is rendered, uploaded or written', async () => {
-  const h = harness({ pricing: { estimate: () => 501, actual: () => 501 } });
+  const v = await videoPence(); // the voiceover and sandbox estimate is part of every estimate
+  const h = harness({ pricing: { estimate: () => 501 - v, actual: () => 501 } });
   const r = await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input() });
   assert.equal(code(r), 'cost_cap');
   assert.equal(h.renderer.calls.length, 0);
   assert.equal(h.uploader.calls, 0);
   assert.deepEqual(h.store.writes, []);
   // At the limit exactly it passes.
-  const g = harness({ pricing: { estimate: () => 500, actual: () => 500 } });
+  const g = harness({ pricing: { estimate: () => 500 - v, actual: () => 500 } });
   ok(await g.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input() }));
   // The cap applies to an admin regenerate too.
-  const a = harness({ pricing: { estimate: () => 501, actual: () => 501 } });
+  const a = harness({ pricing: { estimate: () => 501 - v, actual: () => 501 } });
   assert.equal(code(await a.engine.generatePack({ ownerId: OWNER_A, by: 'admin', input: input() })), 'cost_cap');
 });
 
@@ -455,6 +475,7 @@ test('after a fall-back, asking for the same district again is not a brand chang
 test('approve is pinned to the version the operator looked at: a stale version is refused, the right one is approved', async () => {
   const h = harness();
   await first(h);
+  await h.finishVideo(OWNER_A);
   const stale = await h.engine.approvePack({ ownerId: OWNER_A, expectedVersion: 7 });
   assert.ok(!stale.ok && stale.code === 'not_preview');
   assert.equal((await h.store.getPack(OWNER_A))?.status, 'preview', 'nothing was approved');
@@ -616,6 +637,7 @@ test('approvePack works only from preview, names the activity kind, and refuses 
   const h = harness();
   assert.deepEqual(await h.engine.approvePack({ ownerId: OWNER_A }), { ok: false, code: 'no_pack', message: 'There is no pack to approve yet.' });
   const r = await first(h);
+  await h.finishVideo(OWNER_A);
   const a = await h.engine.approvePack({ ownerId: OWNER_A });
   assert.ok(a.ok);
   if (a.ok) {

@@ -6,19 +6,25 @@
  * real ones.
  *
  *   generatePack({ownerId, by, dry, input})   make (or remake) the owner's pack
- *   approvePack({ownerId, expectedVersion?})                  preview -> approved
+ *   approvePack({ownerId, expectedVersion?})                  preview -> approved (only with the 5b video ready)
+ *   changeVoice({ownerId, voiceKey, expectedVersion?})        another voice, same version, before approving (38b)
+ *   retryVideo({ownerId, expectedVersion?})                   try a failed video render again, same version (38b)
  *   listPackForOwner(ownerId)                 the screen's read model
  *
  * ORDER of generatePack (the first refusal stops a real run; a dry run
  * reports it as `wouldBlock` and carries on, writing nothing):
  *   1  in_progress       another generation holds the pack (stale after 10 minutes)
  *   2  regen_used / no_brand_change   operator regenerate only (admin: skipped, and never counted)
- *   3  cost_cap          estimateRawPence over ad_pack_max_raw_pence   (BEFORE any paid call)
+ *   3  cost_cap          estimateRawPence (images + the voiceover + the render sandbox, 38b) over
+ *                        ad_pack_max_raw_pence   (BEFORE any paid call)
  *   4  spend_unknown / monthly_cap    this UK month's non-dry spend plus the estimate over ad_pack_monthly_cap_pence
  *   5  not_enough_data   areaFigureSource found too few reports (nothing is written)
  *   6  the pack is taken ('generating'; the operator code is allocated on the first pack),
  *      images are rendered and uploaded, runChecks runs, ads and the pack are stored,
  *      one ad_pack_runs row is written (cost, by, result summary)
+ * 7  (38b) when the pack reached 'preview': the 5b ad's video slot is {status:'queued'} (written with the ad) and the
+ *      version's render is enqueued with the pack's voice. A failed enqueue never loses the pack: the slot becomes
+ *      {status:'failed', code} and the screen offers retryVideo. A dry run enqueues and writes nothing.
  * A thrown error in step 6 sets the pack 'failed' with a short error_code
  * (render_failed, upload_failed, store_failed, generate_failed): never the
  * error's own message, which could carry user data.
@@ -31,19 +37,30 @@
  * passes its checks the older versions' ads get superseded_at; their codes
  * stay valid (a lead from an old ad still matches).
  *
+ * VOICE. The voice (a B3 VoiceKey) is chosen on the first generation (input.voiceKey, default DEFAULT_VOICE_KEY) and
+ * stored in ad_packs.voice_key. A regenerate (operator's or admin's) KEEPS the stored voice and ignores input.voiceKey:
+ * the voice changes only through changeVoice. ad_packs.voice_changes (the allowance used) is NOT reset by a regenerate:
+ * the allowance is per pack, not per version.
+ *
  * Never logs an address or a body: log lines carry a pack id and a code.
  *
  * Pure: no network, no database, no server-only.
  */
 import { createHash } from 'node:crypto';
+import { UNIT_COST_SEED } from '../credit/costs.ts';
 import { monthStartIso } from './month.ts';
-import { angleDef, renderCards, renderScript, renderTexts, type Card } from './angles.ts';
+import { angleDef, feeSentence, renderCards, renderScript, renderTexts, type Card } from './angles.ts';
 import { NET_INCLUDES_MANAGEMENT_FEE } from './area.ts';
 import { runChecks, type CheckInput, type ChecksOutput } from './checks.ts';
 import { ANGLES, operatorCode as allocateOperatorCode, packCode, type Angle } from './codes.ts';
+import { cleanLines } from './captions.ts';
 import { buildFigure, type Figure, type FigureAgg } from './figures.ts';
 import { adLink, adName } from './links.ts';
-import { fitsCap, type AdPackSettings } from './settings.ts';
+import { isRetryableRenderCode, type AdVideo, type RenderRequeue, type RenderRow, type RenderState } from './render-store.ts';
+import type { EnqueueResult } from './render-core.ts';
+import { fitsCap, SANDBOX_SECONDS_CAP, type AdPackSettings } from './settings.ts';
+import { estimateVoicePence, MAX_VOICE_CHARACTERS } from './voice-core.ts';
+import { DEFAULT_VOICE_KEY, isVoiceKey, type VoiceKey } from './voices.ts';
 import {
   PackConflict,
   StoreError,
@@ -56,6 +73,7 @@ import {
   type PackRow,
   type PackStatus,
   type RunBy,
+  type VideoBrand,
   type RunResult,
 } from './store-types.ts';
 
@@ -116,6 +134,33 @@ export function generateMessage(code: string): string {
   return (GENERATE_MESSAGES as Record<string, string>)[code] ?? TRY_AGAIN;
 }
 
+// ── The video: codes and plain messages (38b) ──
+
+/** Why approve refuses because of the video (besides the 38a codes). */
+export const VIDEO_APPROVE_CODES = ['video_pending', 'video_failed'] as const;
+/** Why changeVoice or retryVideo refuses (besides the cost codes cost_cap, monthly_cap, spend_unknown). */
+export const VIDEO_ACTION_CODES = ['invalid_input', 'no_pack', 'not_preview', 'after_approval', 'same_voice', 'voice_limit_used', 'video_running', 'not_retryable', 'store_failed'] as const;
+export type VideoActionCode = (typeof VIDEO_ACTION_CODES)[number] | 'cost_cap' | 'monthly_cap' | 'spend_unknown';
+
+export const VIDEO_MESSAGES = {
+  video_pending: 'Your video is still being made. It usually takes a few minutes.',
+  video_failed: 'We couldn’t make your video yet. Press “Try again” to have another go, and tell us if it keeps happening.',
+  voice_unavailable: 'That voice isn’t available right now. Choose another voice and we’ll make your video again. This change doesn’t count.',
+  after_approval: 'You can change the voice before you approve your ads.',
+  same_voice: 'That is the voice your video already has. Choose a different one.',
+  voice_limit_used: 'You have already used your voice change.',
+  video_running: 'Your video is being made right now. Wait until it is finished, then change the voice.',
+  not_retryable: 'There is nothing to try again right now.',
+  retries_used: 'We couldn’t make your video after several tries. Please contact support.',
+  still_checking: 'We’re still checking your video.',
+  stale: 'Your ads changed while you were looking. Please look at them again first.',
+} as const;
+
+/** The plain message for a video that could not be made (a render code in, a sentence out; never the code itself). */
+export function videoFailedMessage(code: string | null | undefined): string {
+  return code === 'voice_unavailable' ? VIDEO_MESSAGES.voice_unavailable : VIDEO_MESSAGES.video_failed;
+}
+
 export type Refusal = { code: GenerateCode; message: string };
 const refusal = (code: GenerateCode): Refusal => ({ code, message: GENERATE_MESSAGES[code] });
 
@@ -154,6 +199,11 @@ export type GenerateInput = {
   websiteId?: string | null;
   /** The operator chose to run the ads with their name in type only (no logo). */
   typeOnly?: boolean;
+  /**
+   * The voiceover (38b). Default DEFAULT_VOICE_KEY. Used on the first generation only: a regenerate keeps the pack's
+   * stored voice (an unknown key is invalid_input either way). changeVoice is how the voice changes afterwards.
+   */
+  voiceKey?: VoiceKey;
 };
 
 export type GenerateRequest = { ownerId: string; by: RunBy; dry?: boolean; input: GenerateInput };
@@ -186,8 +236,24 @@ export type Pricing = {
   actual: (angles: readonly Angle[]) => number;
 };
 
+/** The render queue as the generator needs it (render-core's RenderStore and enqueueRender satisfy it; tests use a fake). */
+export interface RenderQueue {
+  /** Queue the version's render (insert if missing; never throws). */
+  enqueue(i: { packId: string; version: number; voiceKey: VoiceKey }): Promise<EnqueueResult>;
+  /** The version's render row, or null. */
+  get(packId: string, version: number): Promise<RenderRow | null>;
+  /** Reset the version's render to start again; null while a worker is running it. */
+  requeue(i: RenderRequeue): Promise<RenderRow | null>;
+}
+
 export type GenerateDeps = {
   store: AdPackStore;
+  /** The notice video's render queue (38b). */
+  renders: RenderQueue;
+  /** Remove stored files by path (a voice change drops the version's cached voice.mp3 and script.json). */
+  deleteFiles: (paths: string[]) => Promise<{ ok: boolean }>;
+  /** Raw pence per sandbox CPU-second for the cost guard (the unit_costs row); the seed when omitted or unreadable. */
+  sandboxCpuSecondPence?: () => Promise<number>;
   now: () => Date;
   renderImages: ImageRenderer;
   upload: FileUploader;
@@ -199,14 +265,54 @@ export type GenerateDeps = {
 
 // ── Pure helpers ──
 
+/** Pence per sandbox CPU-second when the live unit cost cannot be read (the seed row, mirrors schema.sql). */
+export const SEED_SANDBOX_CPU_SECOND_PENCE: number = UNIT_COST_SEED.find((r) => r.provider === 'vercel' && r.unit === 'sandbox_cpu_second')?.unitCostPence ?? 0.00280889;
+
+export type VideoEstimateInput = {
+  /** The voiceover's script lines (what is sent to the voice). */
+  lines: readonly string[];
+  voiceKey: VoiceKey;
+  /** ad_pack_render_max_seconds (the estimate prices min(this, SANDBOX_SECONDS_CAP), what the worker really allows). */
+  maxSeconds: number;
+  /** ad_pack_sandbox_vcpus. */
+  vcpus: number;
+  /** Raw pence per sandbox CPU-second; default the seed. */
+  cpuSecondPence?: number;
+};
+
 /**
- * Worst-case raw cost of generating the angles, in pence. 38a: 0 (the images
- * are made in-process and cost nothing per call). 38b extends this with the
- * voice and the render sandbox.
+ * Worst-case raw cost of ONE video render attempt, in whole pence rounded up: the voiceover (B3
+ * estimateVoicePence, billed per character) plus the sandbox at its time limit (vcpus x seconds x the CPU-second
+ * price). Pessimistic on purpose: it prices the full time limit, not the ~30 s a render takes.
  */
-export function estimateRawPence(angles: readonly Angle[]): number {
+export function estimateVideoPence(i: VideoEstimateInput): number {
+  const voice = estimateVoicePence(i.lines, i.voiceKey);
+  const unit = i.cpuSecondPence ?? SEED_SANDBOX_CPU_SECOND_PENCE;
+  const seconds = Math.max(0, Math.min(i.maxSeconds, SANDBOX_SECONDS_CAP));
+  const raw = Math.max(0, i.vcpus) * seconds * Math.max(0, unit);
+  return voice + (raw > 0 ? Math.ceil(raw - 1e-9) : 0);
+}
+
+/**
+ * Worst-case raw cost of generating the angles, in pence. The images are made in-process and cost nothing per
+ * call, so without `video` it is 0 (38a). With `video` (38b) the voiceover and the render sandbox are added.
+ */
+export function estimateRawPence(angles: readonly Angle[], video?: VideoEstimateInput): number {
   void angles;
-  return 0;
+  return video ? estimateVideoPence(video) : 0;
+}
+
+/** The lines the 5b voiceover will say for a brand and figure (what renderScript gives, one string per line). */
+function voiceLinesFor(input: GenerateInput, source: AreaSource | null, figure: Figure | null): string[] {
+  const brand = { company: input.brand.company.trim(), area: source?.areaLabel ?? input.areaKey, bedrooms: source?.bedrooms ?? 3, feePct: input.brand.feePct ?? null };
+  const lines = renderScript({ brand, figure }).lines;
+  return lines.length > 0 ? [...lines] : ['x'.repeat(Math.min(MAX_VOICE_CHARACTERS, 600))];
+}
+
+/** The storage paths of a version's cached voiceover (mirrors render-core voicePaths; a test pins it). */
+export function voiceFilePaths(ownerId: string, packId: string, version: number): string[] {
+  const folder = `${ownerId}/${packId}/v${version}`;
+  return [`${folder}/voice.mp3`, `${folder}/script.json`];
 }
 
 export type BrandHashInput = {
@@ -243,6 +349,99 @@ export function regenerateBlock(pack: PackRow | null, currentHash: string, setti
   return null;
 }
 
+// ── The video: pure rules (38b) ──
+
+const NOT_PREVIEW_MESSAGE = 'Only a pack that is ready to look at can be approved.';
+
+/** The worker's own default (render-store DEFAULT_RENDER_SETTINGS.maxAttempts; a test pins them together). */
+const DEFAULT_RENDER_MAX_ATTEMPTS = 3;
+
+/**
+ * Whether a failed render has used up its tries for good: its cumulative attempts (an operator's retry does not reset
+ * them) reached twice ad_pack_render_max_attempts. After that only an admin can help (support), or a voice change.
+ */
+export function retriesUsed(render: RenderRow | null, maxAttempts: number): boolean {
+  return render !== null && render.state === 'failed' && render.attempts >= 2 * Math.max(1, maxAttempts);
+}
+
+/** The 5b video's live state from the ad's slot and the version's render row (see VideoView). */
+export function videoViewOf(slot: AdVideo | null | undefined, render: RenderRow | null, packStatus: PackStatus, maxAttempts: number = DEFAULT_RENDER_MAX_ATTEMPTS): VideoView {
+  let status: VideoView['status'];
+  let code: string | null = null;
+  if (render) {
+    if (render.state === 'done') status = slot?.status === 'ready' ? 'ready' : 'making';
+    else if (render.state === 'running') status = 'making';
+    else if (render.state === 'queued') status = 'queued';
+    else {
+      status = 'failed';
+      code = render.errorCode ?? 'render_failed';
+    }
+  } else if (!slot) {
+    status = 'coming';
+  } else {
+    status = slot.status;
+    if (slot.status === 'failed') code = slot.code;
+  }
+  const pending = status === 'queued' || status === 'making';
+  const retryable = packStatus === 'preview' || packStatus === 'checks_failed';
+  const spent = retriesUsed(render, maxAttempts);
+  const canRetry = retryable && status === 'failed' && isRetryableRenderCode(code) && (render === null || render.state === 'failed') && !spent;
+  return {
+    status,
+    code,
+    message: status === 'failed' ? (spent && isRetryableRenderCode(code) ? VIDEO_MESSAGES.retries_used : videoFailedMessage(code)) : pending ? VIDEO_MESSAGES.video_pending : null,
+    poll: pending,
+    canRetry,
+  };
+}
+
+/** The stored checks hold a video result that ran and passed (checks.ts mergeVideoChecks records `ran`). */
+function videoCheckPassed(checks: ChecksOutput | null | undefined): boolean {
+  return Array.isArray(checks?.results) && checks.results.some((r) => r.check === 'video' && r.ran === true && r.ok === true);
+}
+
+/**
+ * Why approvePack would refuse, or null when it would accept: the pack is in 'preview', every check passes (the
+ * video check included) and the 5b video is ready. No image-only fallback: the pack is approved with all 3 ads.
+ */
+export function approvalBlock(pack: PackRow, slot: AdVideo | null | undefined, render: RenderRow | null): { code: ApproveCode; message: string } | null {
+  if (pack.status !== 'preview') return { code: 'not_preview', message: NOT_PREVIEW_MESSAGE };
+  if (!pack.checks || pack.checks.ok !== true) return { code: 'not_preview', message: NOT_PREVIEW_MESSAGE };
+  const v = videoViewOf(slot, render, pack.status);
+  if (v.status === 'failed') return { code: 'video_failed', message: videoFailedMessage(v.code) };
+  if (v.status !== 'ready') return { code: 'video_pending', message: VIDEO_MESSAGES.video_pending };
+  // Fail closed: "ok" alone is not enough. The video check must have actually RUN on this video (the worker records
+  // it with the render) and passed; a pack that was never video-checked is not approvable.
+  if (!videoCheckPassed(pack.checks)) return { code: 'video_pending', message: VIDEO_MESSAGES.still_checking };
+  return null;
+}
+
+/**
+ * Whether the voice can change now. `free` is true when the render ended `voice_unavailable`: the voice was never
+ * heard, so the change does not use the allowance (and is allowed even when the allowance is used up).
+ * `target` is the voice asked for, when there is one (the same voice is refused).
+ */
+export function voiceChangeState(
+  pack: PackRow,
+  render: RenderRow | null,
+  settings: Pick<AdPackSettings, 'voiceChanges'>,
+  target?: VoiceKey,
+): { blocked: { code: VideoActionCode; message: string } | null; free: boolean; changesLeft: number } {
+  const free = render !== null && render.state === 'failed' && render.errorCode === 'voice_unavailable';
+  const changesLeft = Math.max(0, settings.voiceChanges - pack.voiceChanges);
+  const block = (code: VideoActionCode, message: string) => ({ blocked: { code, message }, free, changesLeft });
+  if (pack.status === 'approved') return block('after_approval', VIDEO_MESSAGES.after_approval);
+  if (pack.status !== 'preview') return block('not_preview', 'Only a pack that is ready to look at can have its voice changed.');
+  if (target !== undefined && target === pack.voiceKey) return block('same_voice', VIDEO_MESSAGES.same_voice);
+  if (render !== null && render.state === 'running') return block('video_running', VIDEO_MESSAGES.video_running);
+  if (!free && changesLeft <= 0) return block('voice_limit_used', VIDEO_MESSAGES.voice_limit_used);
+  return { blocked: null, free, changesLeft };
+}
+
+function renderViewOf(render: RenderRow | null): RenderView | null {
+  return render ? { state: render.state, errorCode: render.errorCode, attempts: render.attempts, voiceKey: render.voiceKey, retryable: render.state === 'failed' && isRetryableRenderCode(render.errorCode) } : null;
+}
+
 function validate(req: GenerateRequest): boolean {
   const i = req?.input;
   if (!req || typeof req.ownerId !== 'string' || !UUID_RE.test(req.ownerId)) return false;
@@ -252,6 +451,7 @@ function validate(req: GenerateRequest): boolean {
   if (!i.brand || typeof i.brand.company !== 'string') return false;
   if (i.brand.feePct !== null && i.brand.feePct !== undefined && (typeof i.brand.feePct !== 'number' || !Number.isFinite(i.brand.feePct))) return false;
   if (typeof i.domain !== 'string' || !HOST_RE.test(i.domain.trim().toLowerCase())) return false;
+  if (i.voiceKey !== undefined && !isVoiceKey(i.voiceKey)) return false;
   return true;
 }
 
@@ -332,6 +532,22 @@ function checkInputOf(a: { input: GenerateInput; source: AreaSource; figure: Fig
   };
 }
 
+/** The notice video's pinned look for one stored version (see store-types VideoBrand). */
+function videoBrandOf(input: GenerateInput, source: AreaSource, figure: Figure | null): VideoBrand {
+  const feePct = input.brand.feePct ?? null;
+  return {
+    company: input.brand.company.replace(/\s+/g, ' ').trim(),
+    colour: input.brand.brandColour ?? null,
+    logoRef: input.typeOnly === true ? null : input.brand.logoUrl ?? null,
+    sitePhotoRef: input.brand.photoUrl ?? null,
+    photos: [...input.photos].slice(0, 4),
+    areaLabel: source.areaLabel,
+    bedrooms: source.bedrooms,
+    feeSentence: feeSentence(feePct) || null,
+    figure: figure ? figureEntry(figure, source) : null,
+  };
+}
+
 function figureEntry(figure: Figure, source: AreaSource): Record<string, unknown> {
   return {
     areaKey: source.areaKey,
@@ -369,6 +585,9 @@ export type DryPlan = {
   bedrooms: number;
   fellBack: boolean;
   figure: Figure | null;
+  /** The voice the video would be made with (the pack's own on a regenerate). */
+  voiceKey: VoiceKey;
+  /** Worst-case raw pence: images, the voiceover and the render sandbox. */
   estimatedCostPence: number;
   /** This UK month's spend so far, or null when it could not be read. */
   monthSpendPence: number | null;
@@ -388,14 +607,65 @@ export type GenerateOk = {
   checks: ChecksOutput;
   costPence: number;
   regenCount: number;
+  voiceKey: VoiceKey;
+  /**
+   * The 5b video: 'queued' (its render is waiting for the worker; poll listPackForOwner), 'failed' (it could not
+   * even be queued: `code` is a short code, the pack is kept and retryVideo can try again), or 'coming' (the pack
+   * failed its checks, so no video is made).
+   */
+  video: { status: 'queued' | 'failed' | 'coming'; code?: string };
 };
 export type GenerateDry = { ok: true; dry: true; wouldBlock: Refusal | null; plan: DryPlan | null };
 export type GenerateFail = { ok: false; code: GenerateCode; message: string; packId?: string };
 export type GenerateResult = GenerateOk | GenerateDry | GenerateFail;
 
+export type ApproveCode = 'invalid_input' | 'no_pack' | 'not_preview' | 'store_failed' | (typeof VIDEO_APPROVE_CODES)[number];
 export type ApproveResult =
   | { ok: true; activityKind: 'ad_pack_approved'; packId: string; version: number; operatorCode: string }
-  | { ok: false; code: 'invalid_input' | 'no_pack' | 'not_preview' | 'store_failed'; message: string };
+  | { ok: false; code: ApproveCode; message: string };
+
+export type ChangeVoiceResult =
+  | { ok: true; packId: string; version: number; voiceKey: VoiceKey; /** true when it did not use the allowance (the old voice was unavailable) */ free: boolean; changesLeft: number }
+  | { ok: false; code: VideoActionCode; message: string };
+
+export type RetryVideoResult =
+  | { ok: true; packId: string; version: number; voiceKey: VoiceKey }
+  | { ok: false; code: VideoActionCode; message: string };
+
+/** The version's render row as the screen needs it (nothing but states and short codes). */
+export type RenderView = { state: RenderState; errorCode: string | null; attempts: number; voiceKey: string; retryable: boolean };
+
+/**
+ * What to show for the 5b video. `status` is the live truth: it follows the render row when there is one (a worker
+ * that has the row is 'making' even if the ad's slot still says 'queued'), else the ad's slot. `poll` is true
+ * while the video is on its way (queued or making): ask listPackForOwner again every few seconds.
+ */
+export type VideoView = {
+  status: 'coming' | 'queued' | 'making' | 'ready' | 'failed';
+  /** A short code when failed (e.g. voice_unavailable, sandbox_failed, monthly_cap). Never shown as is. */
+  code: string | null;
+  /** The plain sentence for a failed video or one still being made; null otherwise. */
+  message: string | null;
+  poll: boolean;
+  /** retryVideo would be accepted now. */
+  canRetry: boolean;
+};
+
+/** Whether (and why not) the voice can be changed now, for the voice step of the screen. */
+export type VoiceView = {
+  /** The voice the video has (or is being made with). Null before the first pack. */
+  key: VoiceKey | null;
+  changesLeft: number;
+  /** changeVoice (to a different voice) would be accepted now. */
+  canChange: boolean;
+  /** The change would not use the allowance (the current voice was unavailable). */
+  free: boolean;
+  /** Why not, as a code and a plain sentence; null when canChange. */
+  blocked: { code: VideoActionCode; message: string } | null;
+};
+
+/** Whether approvePack would accept the pack now, and if not, why. */
+export type ApprovalView = { ok: true } | { ok: false; code: ApproveCode; message: string };
 
 export type PackView = {
   pack: PackRow;
@@ -406,6 +676,14 @@ export type PackView = {
   /** Codes of older versions: still valid, never shown as current. */
   olderCodes: string[];
   freeRegensLeft: number;
+  /** The current version's render row (38b), or null when there is none. */
+  render: RenderView | null;
+  /** The 5b video's live state (38b). */
+  video: VideoView;
+  /** The voice step (38b). */
+  voice: VoiceView;
+  /** What approvePack would say right now. */
+  approval: ApprovalView;
 };
 
 const fail = (code: GenerateCode, packId?: string): GenerateFail => ({ ok: false, code, message: GENERATE_MESSAGES[code], ...(packId ? { packId } : {}) });
@@ -437,6 +715,60 @@ export function createAdPackEngine(deps: GenerateDeps) {
     throw new GenError('store_failed');
   }
 
+  // ── The video's helpers (38b) ──
+
+  async function cpuSecondPence(): Promise<number> {
+    try {
+      const v = await deps.sandboxCpuSecondPence?.();
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+    } catch {
+      // the seed stands
+    }
+    return SEED_SANDBOX_CPU_SECOND_PENCE;
+  }
+
+  /** The most one render attempt can cost us for these lines and this voice, from the settings and the live price. */
+  async function videoEstimateFor(settings: AdPackSettings, lines: readonly string[], voiceKey: VoiceKey): Promise<number> {
+    return estimateVideoPence({ lines, voiceKey, maxSeconds: settings.renderMaxSeconds, vcpus: settings.sandboxVcpus, cpuSecondPence: await cpuSecondPence() });
+  }
+
+  /** The same two caps generatePack applies, for an operation that pays for one more render (a voice change, a retry). */
+  async function capRefusal(settings: AdPackSettings, estimate: number): Promise<'cost_cap' | 'monthly_cap' | 'spend_unknown' | null> {
+    if (estimate > settings.maxRawPence) return 'cost_cap';
+    const spent = await store.monthSpendPence(monthStartIso(deps.now()));
+    if (spent === null) return 'spend_unknown';
+    return fitsCap(spent, estimate, settings.monthlyCapPence) ? null : 'monthly_cap';
+  }
+
+  /** The ad's video slot, best effort (the render row is the truth the screen follows). */
+  async function setSlot(ownerId: string, adId: string | null, packId: string, video: AdVideo): Promise<boolean> {
+    if (!adId) return false;
+    try {
+      return await store.setAdVideo(ownerId, adId, video);
+    } catch (e) {
+      log('video_slot_failed', { packId, code: e instanceof StoreError ? e.code : 'error' });
+      return false;
+    }
+  }
+
+  /** Enqueue a stored version's render. A failure is a code and a 'failed' slot, never a lost pack. Never throws. */
+  async function queueVideo(ownerId: string, packId: string, version: number, voiceKey: VoiceKey, adId: string | null): Promise<{ ok: true } | { ok: false; code: string }> {
+    let res: EnqueueResult;
+    try {
+      res = await deps.renders.enqueue({ packId, version, voiceKey });
+      // A row for this version already exists (not expected: a version is stored once): start it again with this voice.
+      if (res.ok && !res.inserted) await deps.renders.requeue({ packId, version, voiceKey });
+    } catch {
+      res = { ok: false, code: 'store_failed' };
+    }
+    if (!res.ok) {
+      log('enqueue_failed', { packId, code: res.code });
+      await setSlot(ownerId, adId, packId, { status: 'failed', code: res.code });
+      return { ok: false, code: res.code };
+    }
+    return { ok: true };
+  }
+
   async function generatePack(req: GenerateRequest): Promise<GenerateResult> {
     if (!validate(req)) return fail('invalid_input');
     const { ownerId, by, input } = req;
@@ -455,7 +787,12 @@ export function createAdPackEngine(deps: GenerateDeps) {
       const hash = brandHash({ ...input.brand, photos: input.photos, areaKey: 'error' in source ? input.areaKey : source.areaKey });
       regenerate = pack !== null && pack.generatedAt !== null;
       version = regenerate && pack ? pack.version + 1 : 1;
-      const estimate = pricing.estimate(ANGLES);
+      // The voice: chosen on the first pack; a regenerate keeps the stored one (changeVoice is the only way to change it).
+      const voiceKey: VoiceKey = pack && pack.generatedAt !== null && isVoiceKey(pack.voiceKey) ? pack.voiceKey : (input.voiceKey ?? DEFAULT_VOICE_KEY);
+      const figure: Figure | null =
+        'error' in source ? null : buildFigure({ area_label: source.areaLabel, agg: source.agg, feePct: input.brand.feePct ?? null, netIncludesFee: NET_INCLUDES_MANAGEMENT_FEE, minSamples: settings.minAreaSamples });
+      // Worst case, before any paid call: the images (free), the voiceover and the render sandbox at its time limit.
+      const estimate = pricing.estimate(ANGLES) + (await videoEstimateFor(settings, voiceLinesFor(input, 'error' in source ? null : source, figure), voiceKey));
 
       // 1-4: the rules and the cost guard, before any paid call.
       let block: Refusal | null = null;
@@ -481,13 +818,6 @@ export function createAdPackEngine(deps: GenerateDeps) {
         log('generate_refused', { packId: pack?.id, code: 'not_enough_data' });
         return fail('not_enough_data', pack?.id);
       }
-      const figure = buildFigure({
-        area_label: source.areaLabel,
-        agg: source.agg,
-        feePct: input.brand.feePct ?? null,
-        netIncludesFee: NET_INCLUDES_MANAGEMENT_FEE,
-        minSamples: settings.minAreaSamples,
-      });
 
       // A dry run: the whole plan, nothing written, nothing rendered, nothing uploaded.
       if (dry) {
@@ -511,6 +841,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
             bedrooms: source.bedrooms,
             fellBack: source.fellBack,
             figure,
+            voiceKey,
             estimatedCostPence: estimate,
             monthSpendPence: spent,
             ads: planned.map((p) => ({
@@ -585,9 +916,11 @@ export function createAdPackEngine(deps: GenerateDeps) {
         code: p.code,
         adName: p.adName,
         link: p.link,
-        texts: p.texts,
+        // 5b only: the video's pinned look, stored with the ad so the worker never reads the live website settings.
+        texts: p.angle === '5b' ? { ...p.texts, brand: videoBrandOf(input, source, figure) } : p.texts,
         leadForm: p.leadForm,
-        files: { images: imagesByAngle.get(p.angle) ?? [], video: p.video === 'coming' ? { status: 'coming' } : null } satisfies AdFiles,
+        // The 5b slot is 'queued' once the pack is good enough to render ('preview'), else 'coming' (no video is made for a failed pack).
+        files: { images: imagesByAngle.get(p.angle) ?? [], video: p.video === 'coming' ? (status === 'preview' ? { status: 'queued' } : { status: 'coming' }) : null } satisfies AdFiles,
       }));
       await store.clearAdsOfVersion(ownerId, taken.id, version);
       const stored = await store.insertAds(ownerId, newAds);
@@ -614,6 +947,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
           // keep linking leads while a new version waits to be approved.
           approvedAt: taken.approvedAt,
           regenCount,
+          // voiceChanges is deliberately NOT touched: the allowance is per pack, a regenerate does not give it back.
+          voiceKey,
           websiteId: input.websiteId ?? taken.websiteId,
         },
         { from: ['generating'] },
@@ -645,6 +980,13 @@ export function createAdPackEngine(deps: GenerateDeps) {
       }
       log('generated', { packId: taken.id, code: status });
 
+      // 7: the video. Only a pack that passed its checks is rendered (no paid call for a pack nobody will see).
+      let video: GenerateOk['video'] = { status: 'coming' };
+      if (status === 'preview') {
+        const q = await queueVideo(ownerId, taken.id, version, voiceKey, stored.find((a) => a.angle === '5b')?.id ?? null);
+        video = q.ok ? { status: 'queued' } : { status: 'failed', code: q.code };
+      }
+
       return {
         ok: true,
         dry: false,
@@ -657,6 +999,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
         checks,
         costPence: cost,
         regenCount,
+        voiceKey,
+        video,
       };
     } catch (e) {
       const code: GenerateCode = e instanceof GenError ? e.code : e instanceof StoreError || e instanceof PackConflict ? 'store_failed' : 'generate_failed';
@@ -685,7 +1029,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
   }
 
   async function approvePack(req: { ownerId: string; expectedVersion?: number }): Promise<ApproveResult> {
-    const no = (code: 'invalid_input' | 'no_pack' | 'not_preview' | 'store_failed', message: string): ApproveResult => ({ ok: false, code, message });
+    const no = (code: ApproveCode, message: string): ApproveResult => ({ ok: false, code, message });
     if (!req || typeof req.ownerId !== 'string' || !UUID_RE.test(req.ownerId)) return no('invalid_input', GENERATE_MESSAGES.invalid_input);
     try {
       const pack = await store.getPack(req.ownerId);
@@ -693,6 +1037,11 @@ export function createAdPackEngine(deps: GenerateDeps) {
       if (pack.status !== 'preview') return no('not_preview', 'Only a pack that is ready to look at can be approved.');
       // The version the operator was looking at: a regenerate in the meantime (an admin's, say) must not be approved unseen.
       if (req.expectedVersion !== undefined && req.expectedVersion !== pack.version) return no('not_preview', 'Your ads changed while you were looking. Please look at them again, then approve.');
+      // 38b: all three ads or none. The 5b video must be ready and every check (the video's included) must pass.
+      const ads = await store.listAds(req.ownerId, pack.id);
+      const slot = ads.find((a) => a.angle === '5b' && a.version === pack.version)?.files.video ?? null;
+      const block = approvalBlock(pack, slot, await deps.renders.get(pack.id, pack.version));
+      if (block) return no(block.code, block.message);
       const updated = await store.updatePack(req.ownerId, pack.id, { status: 'approved', approvedAt: pack.approvedAt ?? deps.now().toISOString() }, { from: ['preview'] });
       if (!updated) return no('not_preview', 'Only a pack that is ready to look at can be approved.');
       log('approved', { packId: pack.id, code: 'approved' });
@@ -707,19 +1056,135 @@ export function createAdPackEngine(deps: GenerateDeps) {
     if (typeof ownerId !== 'string' || ownerId === '') return null;
     const pack = await store.getPack(ownerId);
     if (!pack) return null;
-    const [all, settings] = await Promise.all([store.listAds(ownerId, pack.id), store.readSettings()]);
+    const [all, settings, renderRow] = await Promise.all([store.listAds(ownerId, pack.id), store.readSettings(), deps.renders.get(pack.id, pack.version)]);
     const ads = all.filter((a) => a.version === pack.version);
     const showAds = pack.status === 'preview' || pack.status === 'approved' || (pack.status === 'failed' && pack.generatedAt !== null && pack.checks?.ok === true);
+    const slot = ads.find((a) => a.angle === '5b')?.files.video ?? null;
+    const state = voiceChangeState(pack, renderRow, settings);
     return {
       pack,
       ads,
       showAds,
       olderCodes: all.filter((a) => a.version !== pack.version).map((a) => a.code),
       freeRegensLeft: Math.max(0, settings.freeRegens - pack.regenCount),
+      render: renderViewOf(renderRow),
+      video: videoViewOf(slot, renderRow, pack.status, settings.renderMaxAttempts),
+      voice: {
+        key: isVoiceKey(pack.voiceKey) ? pack.voiceKey : null,
+        changesLeft: state.changesLeft,
+        canChange: state.blocked === null,
+        free: state.free,
+        blocked: state.blocked,
+      },
+      approval: ((b) => (b ? { ok: false as const, ...b } : { ok: true as const }))(approvalBlock(pack, slot, renderRow)),
     };
   }
 
-  return { generatePack, approvePack, listPackForOwner };
+  /**
+   * Another voice for the SAME version, before approving. The codes do not change, no version is made. Rules (the
+   * first that fails refuses, nothing is written): owner's pack; 'preview' only (an approved pack says
+   * after_approval); a different voice; no render running; the allowance (ad_pack_voice_changes) not used up, UNLESS
+   * the render ended voice_unavailable (the voice was never heard: the change is free and does not count); and the
+   * same cost caps as generatePack, priced for one more voiceover plus sandbox, BEFORE anything is paid.
+   *
+   * Effect, in an order that leaves a consistent state on a failure: (1) ad_packs.voice_key = new and
+   * voice_changes + 1 (not for a free change), guarded on 'preview'; (2) the version's cached voice.mp3 and
+   * script.json are deleted from the bucket; (3) the render row is reset in place (queued, attempts 0, error and
+   * files cleared, voice_key = new; refused while running); (4) the 5b slot becomes {status:'queued'}. A failure at
+   * (2) or (3) puts (1) back, so the old voice and the allowance are as they were.
+   */
+  async function changeVoice(req: { ownerId: string; voiceKey: string; expectedVersion?: number }): Promise<ChangeVoiceResult> {
+    const no = (code: VideoActionCode, message: string): ChangeVoiceResult => ({ ok: false, code, message });
+    if (!req || typeof req.ownerId !== 'string' || !UUID_RE.test(req.ownerId) || !isVoiceKey(req.voiceKey)) return no('invalid_input', GENERATE_MESSAGES.invalid_input);
+    const voiceKey = req.voiceKey;
+    let reverted: PackRow | null = null;
+    try {
+      const pack = await store.getPack(req.ownerId);
+      if (!pack) return no('no_pack', 'There is no pack yet.');
+      if (req.expectedVersion !== undefined && req.expectedVersion !== pack.version) return no('not_preview', VIDEO_MESSAGES.stale);
+      const [ads, settings, render] = await Promise.all([store.listAds(req.ownerId, pack.id), store.readSettings(), deps.renders.get(pack.id, pack.version)]);
+      const state = voiceChangeState(pack, render, settings, voiceKey);
+      if (state.blocked) return no(state.blocked.code, state.blocked.message);
+
+      const ad = ads.find((a) => a.angle === '5b' && a.version === pack.version) ?? null;
+      const lines = cleanLines(String(ad?.texts.script ?? '').split(/\n\s*\n/));
+      const cap = await capRefusal(settings, await videoEstimateFor(settings, lines.length > 0 ? lines : ['x'.repeat(Math.min(MAX_VOICE_CHARACTERS, 600))], voiceKey));
+      if (cap) {
+        log('voice_change_refused', { packId: pack.id, code: cap });
+        return no(cap, GENERATE_MESSAGES[cap]);
+      }
+
+      const patched = await store.updatePack(req.ownerId, pack.id, { voiceKey, voiceChanges: state.free ? pack.voiceChanges : pack.voiceChanges + 1 }, { from: ['preview'] });
+      if (!patched) return no('not_preview', NOT_PREVIEW_MESSAGE);
+      reverted = pack;
+
+      const gone = await deps.deleteFiles(voiceFilePaths(req.ownerId, pack.id, pack.version));
+      if (!gone.ok) throw new StoreError('voice_files');
+      const row = await deps.renders.requeue({ packId: pack.id, version: pack.version, voiceKey });
+      if (!row) {
+        await revertVoice(req.ownerId, reverted);
+        return no('video_running', VIDEO_MESSAGES.video_running);
+      }
+      reverted = null;
+      await setSlot(req.ownerId, ad?.id ?? null, pack.id, { status: 'queued' });
+      log('voice_changed', { packId: pack.id, code: state.free ? 'free' : 'counted' });
+      return { ok: true, packId: pack.id, version: pack.version, voiceKey, free: state.free, changesLeft: Math.max(0, settings.voiceChanges - patched.voiceChanges) };
+    } catch (e) {
+      if (reverted) await revertVoice(req.ownerId, reverted);
+      log('voice_change_failed', { code: e instanceof StoreError ? e.code : 'error' });
+      return no('store_failed', TRY_AGAIN);
+    }
+  }
+
+  async function revertVoice(ownerId: string, before: PackRow): Promise<void> {
+    try {
+      await store.updatePack(ownerId, before.id, { voiceKey: before.voiceKey, voiceChanges: before.voiceChanges }, { from: ['preview'] });
+    } catch {
+      log('voice_revert_failed', { packId: before.id, code: 'store_failed' });
+    }
+  }
+
+  /**
+   * Try a failed video render again: the SAME version and voice, no new version, no voice change counted. Only for
+   * the owner's pack in 'preview' or 'checks_failed', only when the render failed with a retryable code (not
+   * voice_unavailable, which is changeVoice's job, and not bad_brief), or when it could not be queued at all
+   * (slot failed, no render row). Same cost caps as generatePack, BEFORE anything is paid. Attempts are NOT reset (the row keeps counting, so each retry is
+   * one more try); once they reach twice ad_pack_render_max_attempts the retry is refused (not_retryable, "contact support").
+   */
+  async function retryVideo(req: { ownerId: string; expectedVersion?: number }): Promise<RetryVideoResult> {
+    const no = (code: VideoActionCode, message: string): RetryVideoResult => ({ ok: false, code, message });
+    if (!req || typeof req.ownerId !== 'string' || !UUID_RE.test(req.ownerId)) return no('invalid_input', GENERATE_MESSAGES.invalid_input);
+    try {
+      const pack = await store.getPack(req.ownerId);
+      if (!pack) return no('no_pack', 'There is no pack yet.');
+      if (req.expectedVersion !== undefined && req.expectedVersion !== pack.version) return no('not_preview', VIDEO_MESSAGES.stale);
+      const [ads, settings, render] = await Promise.all([store.listAds(req.ownerId, pack.id), store.readSettings(), deps.renders.get(pack.id, pack.version)]);
+      const ad = ads.find((a) => a.angle === '5b' && a.version === pack.version) ?? null;
+      if (pack.status === 'approved') return no('after_approval', VIDEO_MESSAGES.not_retryable);
+      if (render && render.state === 'running') return no('video_running', VIDEO_MESSAGES.video_running);
+      // Bounded: an operator's retry keeps the row's attempts, so after twice the worker's limit in all there is no more "Try again".
+      if (retriesUsed(render, settings.renderMaxAttempts)) return no('not_retryable', VIDEO_MESSAGES.retries_used);
+      if (!videoViewOf(ad?.files.video ?? null, render, pack.status, settings.renderMaxAttempts).canRetry) return no('not_retryable', VIDEO_MESSAGES.not_retryable);
+
+      const voiceKey: VoiceKey = isVoiceKey(render?.voiceKey) ? render.voiceKey : isVoiceKey(pack.voiceKey) ? pack.voiceKey : DEFAULT_VOICE_KEY;
+      const lines = cleanLines(String(ad?.texts.script ?? '').split(/\n\s*\n/));
+      const cap = await capRefusal(settings, await videoEstimateFor(settings, lines.length > 0 ? lines : ['x'.repeat(Math.min(MAX_VOICE_CHARACTERS, 600))], voiceKey));
+      if (cap) {
+        log('video_retry_refused', { packId: pack.id, code: cap });
+        return no(cap, GENERATE_MESSAGES[cap]);
+      }
+      const row = await deps.renders.requeue({ packId: pack.id, version: pack.version, voiceKey, keepAttempts: true });
+      if (!row) return no('video_running', VIDEO_MESSAGES.video_running);
+      await setSlot(req.ownerId, ad?.id ?? null, pack.id, { status: 'queued' });
+      log('video_retried', { packId: pack.id, code: 'queued' });
+      return { ok: true, packId: pack.id, version: pack.version, voiceKey };
+    } catch (e) {
+      log('video_retry_failed', { code: e instanceof StoreError ? e.code : 'error' });
+      return no('store_failed', TRY_AGAIN);
+    }
+  }
+
+  return { generatePack, approvePack, changeVoice, retryVideo, listPackForOwner };
 }
 
 export type AdPackEngine = ReturnType<typeof createAdPackEngine>;

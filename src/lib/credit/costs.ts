@@ -115,6 +115,8 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'si', unit: 'call_minute', label: 'Stayful Intelligence call (per minute)', unitCostPence: 13, notes: 'ESTIMATE — ElevenLabs agent ≈ 8p + Twilio UK mobile voice ≈ 3p + LLM ≈ 2p a minute (Oct 2026); reconcile against both invoices' },
   // ── Twilio SMS (house spend: texts are free to members, never charged) ──
   { provider: 'twilio', unit: 'sms', label: 'Twilio SMS to a UK mobile (per segment)', unitCostPence: 0.056 * USD, notes: 'ESTIMATE — Twilio UK list price $0.056 per outbound segment (Sep 2026); confirm against the Twilio console. House spend: never charged to a member' },
+  // ── Batch 38b: the ad pack's notice video renders in a Vercel Sandbox (house spend: never charged). Mirrors schema.sql. ──
+  { provider: 'vercel', unit: 'sandbox_cpu_second', label: 'Vercel Sandbox Active CPU (per CPU-second)', unitCostPence: 0.00280889, notes: 'Estimate: $0.128 per CPU-hour at 79p a dollar (Nov 2026); re-check against the Vercel invoice. House spend, not charged to the operator' },
 ];
 
 export interface UnitCost {

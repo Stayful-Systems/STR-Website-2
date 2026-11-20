@@ -1,0 +1,653 @@
+{
+  "version": 1,
+  "brand": {
+    "company": "Harbour & Pine Lettings",
+    "colour": "#1F5F8B",
+    "logo": "logo.png"
+  },
+  "photos": [
+    "photo1.jpg",
+    "photo2.jpg"
+  ],
+  "area": "Northfield",
+  "bedrooms": 2,
+  "figure": {
+    "label": "Example: a typical 2-bed in Northfield, from 14 reports. Every property is different.",
+    "sentence": "Here's a typical example: a two-bed in Northfield could take home about one thousand eight hundred and fifty pounds a month, after every cost.",
+    "gross": 2650,
+    "net": 2050,
+    "takeHome": 1850,
+    "occupancyPct": 68,
+    "basis": "take-home"
+  },
+  "fee_sentence": "Our management fee is 12%.",
+  "script": {
+    "lines": [
+      {
+        "id": "L1",
+        "text": "Has your tenant handed in their notice? We're Harbour & Pine Lettings, and before your agent lines up the next one, there's another way to let it.",
+        "start": 0.3,
+        "end": 8.72
+      },
+      {
+        "id": "L2",
+        "text": "It's a short-term let, like an Airbnb. Guests book a few nights at a time, and we run it all for you in Northfield.",
+        "start": 8.77,
+        "end": 16.24
+      },
+      {
+        "id": "L3",
+        "text": "Here's a typical example: a two-bed in Northfield could take home about one thousand eight hundred and fifty pounds a month, after every cost.",
+        "start": 16.29,
+        "end": 23.77
+      },
+      {
+        "id": "L4",
+        "text": "And when guests check out, there's no tenancy to get stuck in. You stay the owner. Our management fee is 12%.",
+        "start": 23.82,
+        "end": 30.35
+      },
+      {
+        "id": "L5",
+        "text": "So while they're working out their notice, have a look at our website. It takes about a minute, and there's no commitment.",
+        "start": 30.4,
+        "end": 37.25
+      }
+    ],
+    "words": [
+      {
+        "text": "Has",
+        "start": 0.3,
+        "end": 0.57
+      },
+      {
+        "text": "your",
+        "start": 0.61,
+        "end": 0.88
+      },
+      {
+        "text": "tenant",
+        "start": 0.93,
+        "end": 1.19
+      },
+      {
+        "text": "handed",
+        "start": 1.24,
+        "end": 1.51
+      },
+      {
+        "text": "in",
+        "start": 1.55,
+        "end": 1.82
+      },
+      {
+        "text": "their",
+        "start": 1.87,
+        "end": 2.13
+      },
+      {
+        "text": "notice?",
+        "start": 2.18,
+        "end": 2.45
+      },
+      {
+        "text": "We're",
+        "start": 2.49,
+        "end": 2.76
+      },
+      {
+        "text": "Harbour",
+        "start": 2.81,
+        "end": 3.07
+      },
+      {
+        "text": "&",
+        "start": 3.12,
+        "end": 3.39
+      },
+      {
+        "text": "Pine",
+        "start": 3.44,
+        "end": 3.7
+      },
+      {
+        "text": "Lettings,",
+        "start": 3.75,
+        "end": 4.02
+      },
+      {
+        "text": "and",
+        "start": 4.06,
+        "end": 4.33
+      },
+      {
+        "text": "before",
+        "start": 4.38,
+        "end": 4.64
+      },
+      {
+        "text": "your",
+        "start": 4.69,
+        "end": 4.96
+      },
+      {
+        "text": "agent",
+        "start": 5.0,
+        "end": 5.27
+      },
+      {
+        "text": "lines",
+        "start": 5.32,
+        "end": 5.58
+      },
+      {
+        "text": "up",
+        "start": 5.63,
+        "end": 5.9
+      },
+      {
+        "text": "the",
+        "start": 5.94,
+        "end": 6.21
+      },
+      {
+        "text": "next",
+        "start": 6.26,
+        "end": 6.52
+      },
+      {
+        "text": "one,",
+        "start": 6.57,
+        "end": 6.84
+      },
+      {
+        "text": "there's",
+        "start": 6.88,
+        "end": 7.15
+      },
+      {
+        "text": "another",
+        "start": 7.2,
+        "end": 7.46
+      },
+      {
+        "text": "way",
+        "start": 7.51,
+        "end": 7.78
+      },
+      {
+        "text": "to",
+        "start": 7.83,
+        "end": 8.09
+      },
+      {
+        "text": "let",
+        "start": 8.14,
+        "end": 8.41
+      },
+      {
+        "text": "it.",
+        "start": 8.45,
+        "end": 8.72
+      },
+      {
+        "text": "It's",
+        "start": 8.77,
+        "end": 9.03
+      },
+      {
+        "text": "a",
+        "start": 9.08,
+        "end": 9.35
+      },
+      {
+        "text": "short-term",
+        "start": 9.39,
+        "end": 9.66
+      },
+      {
+        "text": "let,",
+        "start": 9.71,
+        "end": 9.97
+      },
+      {
+        "text": "like",
+        "start": 10.02,
+        "end": 10.29
+      },
+      {
+        "text": "an",
+        "start": 10.33,
+        "end": 10.6
+      },
+      {
+        "text": "Airbnb.",
+        "start": 10.65,
+        "end": 10.91
+      },
+      {
+        "text": "Guests",
+        "start": 10.96,
+        "end": 11.23
+      },
+      {
+        "text": "book",
+        "start": 11.27,
+        "end": 11.54
+      },
+      {
+        "text": "a",
+        "start": 11.59,
+        "end": 11.85
+      },
+      {
+        "text": "few",
+        "start": 11.9,
+        "end": 12.17
+      },
+      {
+        "text": "nights",
+        "start": 12.22,
+        "end": 12.48
+      },
+      {
+        "text": "at",
+        "start": 12.53,
+        "end": 12.8
+      },
+      {
+        "text": "a",
+        "start": 12.84,
+        "end": 13.11
+      },
+      {
+        "text": "time,",
+        "start": 13.16,
+        "end": 13.42
+      },
+      {
+        "text": "and",
+        "start": 13.47,
+        "end": 13.74
+      },
+      {
+        "text": "we",
+        "start": 13.78,
+        "end": 14.05
+      },
+      {
+        "text": "run",
+        "start": 14.1,
+        "end": 14.36
+      },
+      {
+        "text": "it",
+        "start": 14.41,
+        "end": 14.68
+      },
+      {
+        "text": "all",
+        "start": 14.72,
+        "end": 14.99
+      },
+      {
+        "text": "for",
+        "start": 15.04,
+        "end": 15.3
+      },
+      {
+        "text": "you",
+        "start": 15.35,
+        "end": 15.62
+      },
+      {
+        "text": "in",
+        "start": 15.66,
+        "end": 15.93
+      },
+      {
+        "text": "Northfield.",
+        "start": 15.98,
+        "end": 16.24
+      },
+      {
+        "text": "Here's",
+        "start": 16.29,
+        "end": 16.56
+      },
+      {
+        "text": "a",
+        "start": 16.61,
+        "end": 16.87
+      },
+      {
+        "text": "typical",
+        "start": 16.92,
+        "end": 17.19
+      },
+      {
+        "text": "example:",
+        "start": 17.23,
+        "end": 17.5
+      },
+      {
+        "text": "a",
+        "start": 17.55,
+        "end": 17.81
+      },
+      {
+        "text": "two-bed",
+        "start": 17.86,
+        "end": 18.13
+      },
+      {
+        "text": "in",
+        "start": 18.17,
+        "end": 18.44
+      },
+      {
+        "text": "Northfield",
+        "start": 18.49,
+        "end": 18.75
+      },
+      {
+        "text": "could",
+        "start": 18.8,
+        "end": 19.07
+      },
+      {
+        "text": "take",
+        "start": 19.11,
+        "end": 19.38
+      },
+      {
+        "text": "home",
+        "start": 19.43,
+        "end": 19.69
+      },
+      {
+        "text": "about",
+        "start": 19.74,
+        "end": 20.01
+      },
+      {
+        "text": "one",
+        "start": 20.05,
+        "end": 20.32
+      },
+      {
+        "text": "thousand",
+        "start": 20.37,
+        "end": 20.63
+      },
+      {
+        "text": "eight",
+        "start": 20.68,
+        "end": 20.95
+      },
+      {
+        "text": "hundred",
+        "start": 20.99,
+        "end": 21.26
+      },
+      {
+        "text": "and",
+        "start": 21.31,
+        "end": 21.58
+      },
+      {
+        "text": "fifty",
+        "start": 21.62,
+        "end": 21.89
+      },
+      {
+        "text": "pounds",
+        "start": 21.94,
+        "end": 22.2
+      },
+      {
+        "text": "a",
+        "start": 22.25,
+        "end": 22.52
+      },
+      {
+        "text": "month,",
+        "start": 22.56,
+        "end": 22.83
+      },
+      {
+        "text": "after",
+        "start": 22.88,
+        "end": 23.14
+      },
+      {
+        "text": "every",
+        "start": 23.19,
+        "end": 23.46
+      },
+      {
+        "text": "cost.",
+        "start": 23.5,
+        "end": 23.77
+      },
+      {
+        "text": "And",
+        "start": 23.82,
+        "end": 24.08
+      },
+      {
+        "text": "when",
+        "start": 24.13,
+        "end": 24.4
+      },
+      {
+        "text": "guests",
+        "start": 24.44,
+        "end": 24.71
+      },
+      {
+        "text": "check",
+        "start": 24.76,
+        "end": 25.02
+      },
+      {
+        "text": "out,",
+        "start": 25.07,
+        "end": 25.34
+      },
+      {
+        "text": "there's",
+        "start": 25.38,
+        "end": 25.65
+      },
+      {
+        "text": "no",
+        "start": 25.7,
+        "end": 25.96
+      },
+      {
+        "text": "tenancy",
+        "start": 26.01,
+        "end": 26.28
+      },
+      {
+        "text": "to",
+        "start": 26.33,
+        "end": 26.59
+      },
+      {
+        "text": "get",
+        "start": 26.64,
+        "end": 26.91
+      },
+      {
+        "text": "stuck",
+        "start": 26.95,
+        "end": 27.22
+      },
+      {
+        "text": "in.",
+        "start": 27.27,
+        "end": 27.53
+      },
+      {
+        "text": "You",
+        "start": 27.58,
+        "end": 27.85
+      },
+      {
+        "text": "stay",
+        "start": 27.89,
+        "end": 28.16
+      },
+      {
+        "text": "the",
+        "start": 28.21,
+        "end": 28.47
+      },
+      {
+        "text": "owner.",
+        "start": 28.52,
+        "end": 28.79
+      },
+      {
+        "text": "Our",
+        "start": 28.83,
+        "end": 29.1
+      },
+      {
+        "text": "management",
+        "start": 29.15,
+        "end": 29.41
+      },
+      {
+        "text": "fee",
+        "start": 29.46,
+        "end": 29.73
+      },
+      {
+        "text": "is",
+        "start": 29.77,
+        "end": 30.04
+      },
+      {
+        "text": "12%.",
+        "start": 30.09,
+        "end": 30.35
+      },
+      {
+        "text": "So",
+        "start": 30.4,
+        "end": 30.67
+      },
+      {
+        "text": "while",
+        "start": 30.72,
+        "end": 30.98
+      },
+      {
+        "text": "they're",
+        "start": 31.03,
+        "end": 31.3
+      },
+      {
+        "text": "working",
+        "start": 31.34,
+        "end": 31.61
+      },
+      {
+        "text": "out",
+        "start": 31.66,
+        "end": 31.92
+      },
+      {
+        "text": "their",
+        "start": 31.97,
+        "end": 32.24
+      },
+      {
+        "text": "notice,",
+        "start": 32.28,
+        "end": 32.55
+      },
+      {
+        "text": "have",
+        "start": 32.6,
+        "end": 32.86
+      },
+      {
+        "text": "a",
+        "start": 32.91,
+        "end": 33.18
+      },
+      {
+        "text": "look",
+        "start": 33.22,
+        "end": 33.49
+      },
+      {
+        "text": "at",
+        "start": 33.54,
+        "end": 33.8
+      },
+      {
+        "text": "our",
+        "start": 33.85,
+        "end": 34.12
+      },
+      {
+        "text": "website.",
+        "start": 34.16,
+        "end": 34.43
+      },
+      {
+        "text": "It",
+        "start": 34.48,
+        "end": 34.74
+      },
+      {
+        "text": "takes",
+        "start": 34.79,
+        "end": 35.06
+      },
+      {
+        "text": "about",
+        "start": 35.11,
+        "end": 35.37
+      },
+      {
+        "text": "a",
+        "start": 35.42,
+        "end": 35.69
+      },
+      {
+        "text": "minute,",
+        "start": 35.73,
+        "end": 36.0
+      },
+      {
+        "text": "and",
+        "start": 36.05,
+        "end": 36.31
+      },
+      {
+        "text": "there's",
+        "start": 36.36,
+        "end": 36.63
+      },
+      {
+        "text": "no",
+        "start": 36.67,
+        "end": 36.94
+      },
+      {
+        "text": "commitment.",
+        "start": 36.99,
+        "end": 37.25
+      }
+    ],
+    "duration": 38.0
+  },
+  "audio": "voice.mp3",
+  "out_dir": "out"
+}
