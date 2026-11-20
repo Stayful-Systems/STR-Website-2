@@ -167,3 +167,12 @@ test("Batch 33's web address choice is registered and record only", () => {
   assert.equal(isQualifying('website_domain_chosen'), false);
   assert.equal(isCounted('website_domain_chosen'), false);
 });
+
+test('Batch 34b: the plan credit reminder and expiry are recorded, and are record only', () => {
+  for (const k of ['credit_idle_reminder', 'credit_idle_expired']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), false, k);
+    assert.equal(isCounted(k), false, k);
+    assert.ok(!QUALIFYING_KINDS.includes(k as never), k);
+  }
+});

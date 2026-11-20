@@ -1,6 +1,7 @@
 -- Batch 34 checks: plan credit rollover. A renewal adds to unused plan credit
 -- instead of wiping it, the spend order, refunds, the idle-member report and
--- the targeted removal of a refunded payment's or a trial's plan credit. Run
+-- the targeted removal of a refunded payment's or a trial's plan credit, and
+-- (Batch 34b) the no-spend notices table and the live expiry. Run
 -- AFTER schema.sql: by hand in the Supabase SQL editor, or by CI
 -- (.github/workflows/ci.yml, job "schema", after the other smoke files). One
 -- transaction, rolled back at the end: it leaves no data behind. A failing
@@ -15,13 +16,26 @@ declare
   i12 uuid := gen_random_uuid(); -- idle 12 months and a day
   i11 uuid := gen_random_uuid(); -- idle 11 months
   i0 uuid := gen_random_uuid();  -- never spent: idle since the launch date
+  i4 uuid := gen_random_uuid();  -- idle 4 months (p_min_months)
   c uuid := gen_random_uuid();   -- clawback
   d uuid := gen_random_uuid();   -- the one-off's cycle flag skips an upgrade top-up
   e uuid := gen_random_uuid();   -- cumulative totals and an annual year's window
+  f uuid := gen_random_uuid();   -- the live no-spend expiry (Batch 34b)
+  h uuid := gen_random_uuid();   -- the no-spend expiry: no cycle grant, then the newest month
+  s uuid := gen_random_uuid();   -- the no-spend expiry: a spend after the final warning
+  w uuid := gen_random_uuid();   -- the no-spend expiry: a new monthly grant between the warning and the expiry
   rate numeric := credit_spend_rate('topup');
   g1 uuid; g2 uuid; g_extra uuid; g_bonus uuid; g_welcome uuid; g_top uuid;
   c1 uuid; c2 uuid; t1 uuid; t2 uuid; c_top uuid; c_trial_top uuid;
   d1 uuid; d2 uuid; d_up uuid; e1 uuid; y1 uuid; y1b uuid; y2 uuid;
+  f_old uuid; f_mid uuid; f_new uuid; f_after uuid; f_top uuid; f_wel uuid;
+  h_old uuid; h_new uuid; h_x uuid; s1 uuid; s2 uuid;
+  w_o1 uuid; w_o2 uuid; w_g uuid; w_g1 uuid; w_after uuid; w_top uuid;
+  v_quoted numeric;
+  v_since timestamptz;
+  v_dry numeric;
+  v_dry_n int;
+  v_report numeric;
   j jsonb;
   tx bigint;
   n integer;
@@ -30,8 +44,8 @@ declare
 begin
   insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
   select i, 'rollover-smoke-' || i::text || '@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now()
-    from unnest(array[a, b, i12, i11, i0, c, d, e]) as i;
-  insert into profiles (id, email) select i, 'rollover-smoke-' || i::text || '@example.test' from unnest(array[a, b, i12, i11, i0, c, d, e]) as i on conflict (id) do nothing;
+    from unnest(array[a, b, i12, i11, i0, i4, c, d, e, f, h, s, w]) as i;
+  insert into profiles (id, email) select i, 'rollover-smoke-' || i::text || '@example.test' from unnest(array[a, b, i12, i11, i0, i4, c, d, e, f, h, s, w]) as i on conflict (id) do nothing;
 
   -- ── Settings and the one-off ──
   if credit_setting_num('plan_credit_idle_months', 0) <> 12 then raise exception 'plan_credit_idle_months should be seeded at 12'; end if;
@@ -149,6 +163,18 @@ begin
   if not found or r.last_spent_at is not null or r.idle_since <> now() - interval '3 years' then raise exception 'a member who never spent is idle since the launch date: %', r; end if;
   if r.expirable_pence <> 0 then raise exception 'a member with one cycle grant has nothing expirable, got %', r.expirable_pence; end if;
   if exists (select 1 from credit_idle_plan_report() where user_id in (a, b, c)) then raise exception 'active members must not be in the report'; end if;
+  -- p_min_months: a member idle about 4 months is listed for the 3-month reminder, not by the default call.
+  j := credit_plan_cycle(i4, 1900, null, 'inv:idle1_' || i4::text, 'Plan credit');
+  perform credit_debit(i4, 400, null, false, '{}'::jsonb);
+  update credit_transactions set at = now() - interval '4 months' where user_id = i4 and kind = 'debit';
+  update credit_grants set created_at = now() - interval '5 months' where id = (j->>'grant_id')::uuid;
+  if exists (select 1 from credit_idle_plan_report() where user_id = i4) then raise exception 'a member idle 4 months must not be in the default report'; end if;
+  if exists (select 1 from credit_idle_plan_report(now(), null) where user_id = i4) then raise exception 'p_min_months null must behave as the default'; end if;
+  select * into r from credit_idle_plan_report(now(), 3) where user_id = i4;
+  if not found or r.idle_since <> now() - interval '4 months' or r.plan_remaining_pence <> 1500 then raise exception 'a member idle 4 months should be listed with p_min_months => 3: %', r; end if;
+  if not exists (select 1 from credit_idle_plan_report(p_min_months => 3) where user_id = i12) then raise exception 'p_min_months => 3 should still list the 12-month member'; end if;
+  if exists (select 1 from credit_idle_plan_report(now(), 6) where user_id = i4) then raise exception 'a member idle 4 months must not be listed with p_min_months => 6'; end if;
+  if exists (select 1 from credit_idle_plan_report(now(), 3) where user_id in (a, b, c)) then raise exception 'active members must not be in the 3-month report'; end if;
 
   perform credit_debit(i12, 1, null, false, '{}'::jsonb);   -- a 1p spend resets the clock
   if exists (select 1 from credit_idle_plan_report() where user_id = i12) then raise exception 'a 1p debit should take the member out of the report'; end if;
@@ -265,17 +291,209 @@ begin
   if exists (select 1 from credit_grants where user_id = e and remaining_pence < 0) then raise exception 'no grant may go below zero'; end if;
   raise notice 'cumulative totals and annual window ok';
 
+  -- ── Batch 34b: the live no-spend expiry (credit_expire_idle_plan) ──
+  -- The launch date is 3 years ago (set above). f: a cycle grant 15 months
+  -- ago, last spent 13 months ago; a trial plan grant 3 months ago; the
+  -- latest month's cycle grant 40 days ago (the newest when the final warning
+  -- went out, 31 days ago); a plan grant 10 days ago (after the warning); a
+  -- top-up and welcome credit.
+  update billing_settings set value = to_jsonb(now() - interval '3 years') where key = 'plan_credit_rollover_from';
+  f_old := (credit_plan_cycle(f, 1900, null, 'inv:nospend1_' || f::text, 'Plan credit')->>'grant_id')::uuid;
+  perform credit_debit(f, 100, null, false, '{}'::jsonb);   -- 1800 left on f_old
+  update credit_transactions set at = now() - interval '13 months' where user_id = f and kind = 'debit';
+  update credit_grants set created_at = now() - interval '15 months' where id = f_old;
+  f_mid := credit_grant(f, 'plan', 500, null, 'trial:smoke_nospend_' || f::text || ':1', 'Trial credit');
+  update credit_grants set plan_cycle = false, created_at = now() - interval '3 months' where id = f_mid;
+  f_new := (credit_plan_cycle(f, 1900, null, 'inv:nospend2_' || f::text, 'Plan credit')->>'grant_id')::uuid;
+  update credit_grants set created_at = now() - interval '40 days' where id = f_new;
+  f_after := credit_grant(f, 'plan', 200, null, 'trial:smoke_nospend_' || f::text || ':2', 'Trial credit');
+  update credit_grants set plan_cycle = false, created_at = now() - interval '10 days' where id = f_after;
+  f_top := credit_grant(f, 'topup', 1000, null, 'smoke_nospend_top:' || f::text, 'Top-up');
+  update credit_grants set created_at = now() - interval '14 months' where id = f_top;
+  f_wel := credit_grant(f, 'welcome', 100, null, 'welcome:smoke_nospend_' || f::text, 'Welcome');
+  update credit_grants set created_at = now() - interval '14 months' where id = f_wel;
+
+  select idle_since into v_since from credit_idle_plan_report() where user_id = f;
+  if v_since is null or v_since <> now() - interval '13 months' then raise exception 'f should be idle since its last spend: %', v_since; end if;
+
+  j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> 0 or j->>'reason' <> 'no_final_notice' then raise exception 'no notice: nothing expires: %', j; end if;
+
+  insert into credit_idle_notices (user_id, idle_since, stage, status, sent_at) values (f, v_since, 12, 'sent', now() - interval '10 days');
+  j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> 0 or j->>'reason' <> 'notice_too_recent' then raise exception 'a final notice 10 days old expires nothing: %', j; end if;
+
+  update credit_idle_notices set status = 'skipped', sent_at = null where user_id = f and stage = 12;
+  j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> 0 or j->>'reason' <> 'no_final_notice' then raise exception 'a skipped final stage never counts: %', j; end if;
+  update credit_idle_notices set sent_at = now() - interval '31 days' where user_id = f and stage = 12;
+  j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> 0 then raise exception 'a skipped final stage never counts, even with a date: %', j; end if;
+
+  insert into credit_idle_notices (user_id, idle_since, stage, status, sent_at) values (f, v_since, 6, 'sent', now() - interval '200 days');
+  j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> 0 then raise exception 'only the final stage (12) allows the expiry: %', j; end if;
+  insert into credit_idle_notices (user_id, idle_since, stage, status, sent_at) values (f, v_since - interval '1 day', 12, 'sent', now() - interval '60 days');
+  j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> 0 then raise exception 'a final notice from another idle run never counts: %', j; end if;
+  if exists (select 1 from credit_transactions where user_id = f and kind = 'expire') then raise exception 'nothing may have expired yet'; end if;
+
+  update credit_idle_notices set status = 'sent' where user_id = f and idle_since = v_since and stage = 12;   -- sent 31 days ago
+  -- Phase 13: the credit sweep's dry run (rollover-measure.ts idleExpiryViews /
+  -- idleExpiringPence) computes what will expire from reads only: this idle
+  -- run's final 'sent' notice, then unexpired plan grants with credit left
+  -- created before it AND before the newest plan_cycle grant created at or
+  -- before it. The same query here must give exactly what
+  -- credit_expire_idle_plan then expires (w below: the report's
+  -- expirable_pence at expiry time can over-count; here it agrees).
+  select coalesce(sum(cg.remaining_pence), 0), count(*) into v_dry, v_dry_n
+    from credit_grants cg
+    join credit_idle_notices ni on ni.user_id = cg.user_id and ni.idle_since = v_since and ni.stage = 12 and ni.status = 'sent'
+   where cg.user_id = f and cg.kind = 'plan' and cg.remaining_pence > 0 and (cg.expires_at is null or cg.expires_at > now())
+     and cg.created_at < ni.sent_at
+     and cg.created_at < (select max(x.created_at) from credit_grants x where x.user_id = f and x.kind = 'plan' and x.plan_cycle and x.created_at <= ni.sent_at);
+  select expirable_pence into v_report from credit_idle_plan_report() where user_id = f;
+  if v_report <> v_dry then raise exception 'with no cycle grant since the notice, the report and the dry run agree: % vs %', v_report, v_dry; end if;
+  j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> v_dry or (j->>'grants')::int <> v_dry_n then
+    raise exception 'the dry-run computation (%p in % grants) must equal what the expiry expires: %', v_dry, v_dry_n, j;
+  end if;
+  if (j->>'expired_pence')::numeric <> 2300 or (j->>'grants')::int <> 2 or j ? 'reason' then
+    raise exception 'an old enough final notice expires the two plan grants made before it and before the newest month (1800 + 500): %', j;
+  end if;
+  if (select remaining_pence from credit_grants where id = f_old) <> 0 or (select remaining_pence from credit_grants where id = f_mid) <> 0 then
+    raise exception 'the old plan grants should be zero';
+  end if;
+  if (select remaining_pence from credit_grants where id = f_new) <> 1900 then raise exception 'the newest month must be kept'; end if;
+  if (select remaining_pence from credit_grants where id = f_after) <> 200 then raise exception 'a plan grant made after the final notice must be kept'; end if;
+  if (select remaining_pence from credit_grants where id = f_top) <> 1000 or (select remaining_pence from credit_grants where id = f_wel) <> 100 then
+    raise exception 'top-up and welcome credit must never expire for no spend';
+  end if;
+  if (select count(*) from credit_transactions where user_id = f and kind = 'expire' and metadata->>'reason' = 'no_spend'
+        and description = 'Plan credit expired' and grant_id in (f_old, f_mid)) <> 2
+     or exists (select 1 from credit_transactions where user_id = f and kind = 'expire' and metadata->>'reason' is distinct from 'no_spend') then
+    raise exception 'each expired grant gets one expire row with reason no_spend';
+  end if;
+  j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> 0 or j->>'reason' <> 'none_expirable'
+     or (select count(*) from credit_transactions where user_id = f and kind = 'expire') <> 2 then
+    raise exception 'a second call expires nothing more: %', j;
+  end if;
+  raise notice 'no-spend expiry ok';
+
+  -- h: no cycle grant known = nothing expires; then the newest cycle grant
+  -- (40 days ago) protects a plan grant made after it (35 days ago), even
+  -- though that grant is older than the final notice (31 days ago).
+  h_old := credit_grant(h, 'plan', 1000, null, 'trial:smoke_nospend_' || h::text || ':1', 'Trial credit');
+  update credit_grants set plan_cycle = false, created_at = now() - interval '15 months' where id = h_old;
+  select idle_since into v_since from credit_idle_plan_report() where user_id = h;
+  if v_since is null or v_since <> now() - interval '3 years' then raise exception 'h never spent: idle since the launch date: %', v_since; end if;
+  insert into credit_idle_notices (user_id, idle_since, stage, status, sent_at) values (h, v_since, 12, 'sent', now() - interval '31 days');
+  j := credit_expire_idle_plan(h);
+  if (j->>'expired_pence')::numeric <> 0 or j->>'reason' <> 'no_cycle_grant' then raise exception 'no cycle grant known: nothing expires: %', j; end if;
+  h_new := (credit_plan_cycle(h, 1900, null, 'inv:nospend1_' || h::text, 'Plan credit')->>'grant_id')::uuid;
+  update credit_grants set created_at = now() - interval '40 days' where id = h_new;
+  h_x := credit_grant(h, 'plan', 300, null, 'trial:smoke_nospend_' || h::text || ':2', 'Trial credit');
+  update credit_grants set plan_cycle = false, created_at = now() - interval '35 days' where id = h_x;
+  j := credit_expire_idle_plan(h);
+  if (j->>'expired_pence')::numeric <> 1000 or (j->>'grants')::int <> 1 then raise exception 'only the grant before the newest cycle grant expires: %', j; end if;
+  if (select remaining_pence from credit_grants where id = h_new) <> 1900 or (select remaining_pence from credit_grants where id = h_x) <> 300 then
+    raise exception 'the newest month and a grant made after it must be kept';
+  end if;
+  raise notice 'no-spend expiry newest month ok';
+
+  -- w: never spent (idle since the launch date). Cycle grants 15 months and 3
+  -- months ago (older months) and 40 days ago (G: the newest when the final
+  -- warning went out, 31 days ago). The member stays subscribed, so G+1
+  -- arrives 5 days ago, between the warning and the expiry, then a plan grant
+  -- 2 days ago. The warning said the latest month (G) never expires: only the
+  -- two older months may go; G, G+1 and later credit are kept.
+  w_o1 := (credit_plan_cycle(w, 1900, null, 'inv:nospend1_' || w::text, 'Plan credit')->>'grant_id')::uuid;
+  update credit_grants set created_at = now() - interval '15 months' where id = w_o1;
+  w_o2 := (credit_plan_cycle(w, 700, null, 'inv:nospend2_' || w::text, 'Plan credit')->>'grant_id')::uuid;
+  update credit_grants set created_at = now() - interval '3 months' where id = w_o2;
+  w_g := (credit_plan_cycle(w, 1900, null, 'inv:nospend3_' || w::text, 'Plan credit')->>'grant_id')::uuid;
+  update credit_grants set created_at = now() - interval '40 days' where id = w_g;
+  w_top := credit_grant(w, 'topup', 1000, null, 'smoke_nospend_top:' || w::text, 'Top-up');
+  update credit_grants set created_at = now() - interval '14 months' where id = w_top;
+  select idle_since into v_since from credit_idle_plan_report() where user_id = w;
+  if v_since is null or v_since <> now() - interval '3 years' then raise exception 'w never spent: idle since the launch date: %', v_since; end if;
+  insert into credit_idle_notices (user_id, idle_since, stage, status, sent_at) values (w, v_since, 12, 'sent', now() - interval '31 days');
+  -- What the warning quoted: the report's expirable_pence at the time it was sent.
+  select expirable_pence into v_quoted from credit_idle_plan_report(now() - interval '31 days') where user_id = w;
+  if v_quoted is distinct from 2600 then raise exception 'the warning would have quoted the two older months (1900 + 700): %', v_quoted; end if;
+  w_g1 := (credit_plan_cycle(w, 1900, null, 'inv:nospend4_' || w::text, 'Plan credit')->>'grant_id')::uuid;
+  update credit_grants set created_at = now() - interval '5 days' where id = w_g1;
+  w_after := credit_grant(w, 'plan', 200, null, 'trial:smoke_nospend_' || w::text || ':1', 'Trial credit');
+  update credit_grants set plan_cycle = false, created_at = now() - interval '2 days' where id = w_after;
+  -- The dry-run read (as for f) on this fixture.
+  select coalesce(sum(cg.remaining_pence), 0), count(*) into v_dry, v_dry_n
+    from credit_grants cg
+    join credit_idle_notices ni on ni.user_id = cg.user_id and ni.idle_since = v_since and ni.stage = 12 and ni.status = 'sent'
+   where cg.user_id = w and cg.kind = 'plan' and cg.remaining_pence > 0 and (cg.expires_at is null or cg.expires_at > now())
+     and cg.created_at < ni.sent_at
+     and cg.created_at < (select max(x.created_at) from credit_grants x where x.user_id = w and x.kind = 'plan' and x.plan_cycle and x.created_at <= ni.sent_at);
+  select expirable_pence into v_report from credit_idle_plan_report() where user_id = w;
+  if v_report <> v_dry + 1900 then raise exception 'the report now counts G (older than G+1), the dry run does not: % vs %', v_report, v_dry; end if;
+  j := credit_expire_idle_plan(w);
+  if (j->>'expired_pence')::numeric <> v_dry or (j->>'grants')::int <> v_dry_n then
+    raise exception 'w: the dry-run computation (%p in % grants) must equal what the expiry expires: %', v_dry, v_dry_n, j;
+  end if;
+  if (j->>'expired_pence')::numeric <> v_quoted or (j->>'grants')::int <> 2 or j ? 'reason' then
+    raise exception 'only the months older than G expire, exactly what the warning quoted (%): %', v_quoted, j;
+  end if;
+  if (select remaining_pence from credit_grants where id = w_o1) <> 0 or (select remaining_pence from credit_grants where id = w_o2) <> 0 then
+    raise exception 'the months older than G should be zero';
+  end if;
+  if (select remaining_pence from credit_grants where id = w_g) <> 1900 then raise exception 'G, the latest month when the warning went out, must be kept'; end if;
+  if (select remaining_pence from credit_grants where id = w_g1) <> 1900 then raise exception 'G+1, created after the warning, must be kept'; end if;
+  if (select remaining_pence from credit_grants where id = w_after) <> 200 then raise exception 'plan credit created after the warning must be kept'; end if;
+  if (select remaining_pence from credit_grants where id = w_top) <> 1000 then raise exception 'top-up credit must never expire for no spend'; end if;
+  j := credit_expire_idle_plan(w);
+  if (j->>'expired_pence')::numeric <> 0 or j->>'reason' <> 'none_expirable' then raise exception 'w: a second call expires nothing more: %', j; end if;
+  raise notice 'no-spend expiry protects the month newest at the warning ok';
+
+  -- s: final warning sent 40 days ago, then a 1p spend: the member is not
+  -- idle now, and a year later it is a new idle run the old notice does not match.
+  s1 := (credit_plan_cycle(s, 1900, null, 'inv:nospend1_' || s::text, 'Plan credit')->>'grant_id')::uuid;
+  update credit_grants set created_at = now() - interval '15 months' where id = s1;
+  s2 := (credit_plan_cycle(s, 1900, null, 'inv:nospend2_' || s::text, 'Plan credit')->>'grant_id')::uuid;
+  update credit_grants set created_at = now() - interval '1 month' where id = s2;
+  select idle_since into v_since from credit_idle_plan_report() where user_id = s;
+  insert into credit_idle_notices (user_id, idle_since, stage, status, sent_at) values (s, v_since, 12, 'sent', now() - interval '40 days');
+  perform credit_debit(s, 1, null, false, '{}'::jsonb);
+  j := credit_expire_idle_plan(s);
+  if (j->>'expired_pence')::numeric <> 0 or j->>'reason' <> 'not_idle' then raise exception 'a 1p spend after the notice: nothing expires: %', j; end if;
+  j := credit_expire_idle_plan(s, now() + interval '13 months');
+  if (j->>'expired_pence')::numeric <> 0 or j->>'reason' <> 'no_final_notice' then raise exception 'a new idle run needs its own final notice: %', j; end if;
+  if exists (select 1 from credit_transactions where user_id = s and kind = 'expire') then raise exception 'a spend after the notice must expire nothing'; end if;
+  raise notice 'no-spend expiry after a spend ok';
+
   -- ── Service role only ──
-  if has_function_privilege('authenticated', 'public.credit_idle_plan_report(timestamptz)', 'execute')
-     or has_function_privilege('anon', 'public.credit_idle_plan_report(timestamptz)', 'execute')
+  if has_function_privilege('authenticated', 'public.credit_idle_plan_report(timestamptz, int)', 'execute')
+     or has_function_privilege('anon', 'public.credit_idle_plan_report(timestamptz, int)', 'execute')
      or has_function_privilege('authenticated', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute')
      or has_function_privilege('anon', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute') then
     raise exception 'the rollover functions are service-role only';
   end if;
-  if not has_function_privilege('service_role', 'public.credit_idle_plan_report(timestamptz)', 'execute')
+  if not has_function_privilege('service_role', 'public.credit_idle_plan_report(timestamptz, int)', 'execute')
      or not has_function_privilege('service_role', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute')
-     or to_regprocedure('public.credit_expire_plan_source(uuid, text, numeric, text)') is not null then
+     or to_regprocedure('public.credit_expire_plan_source(uuid, text, numeric, text)') is not null
+     or to_regprocedure('public.credit_idle_plan_report(timestamptz)') is not null then
     raise exception 'the service role should run the rollover functions';
+  end if;
+  if has_function_privilege('authenticated', 'public.credit_expire_idle_plan(uuid, timestamptz)', 'execute')
+     or has_function_privilege('anon', 'public.credit_expire_idle_plan(uuid, timestamptz)', 'execute')
+     or has_function_privilege('authenticated', 'public.credit_plan_idle_since(timestamptz, timestamptz)', 'execute')
+     or has_function_privilege('anon', 'public.credit_plan_idle_after()', 'execute')
+     or not has_function_privilege('service_role', 'public.credit_expire_idle_plan(uuid, timestamptz)', 'execute') then
+    raise exception 'credit_expire_idle_plan is service-role only';
+  end if;
+  if has_table_privilege('anon', 'public.credit_idle_notices', 'select')
+     or has_table_privilege('authenticated', 'public.credit_idle_notices', 'select')
+     or has_table_privilege('authenticated', 'public.credit_idle_notices', 'insert')
+     or not (select relrowsecurity from pg_class where oid = 'public.credit_idle_notices'::regclass) then
+    raise exception 'credit_idle_notices is service-role only (RLS on, no grants to anon/authenticated)';
   end if;
   raise notice 'privileges ok';
 end $$;

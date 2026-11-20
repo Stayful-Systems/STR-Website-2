@@ -327,10 +327,16 @@ export interface IdlePlanRow {
   expirablePence: number;
 }
 
-/** Batch 34: members holding plan credit with no spend for plan_credit_idle_months (credit_idle_plan_report; read only). */
-export async function idlePlanReport(now: Date = new Date()): Promise<IdlePlanRow[]> {
+/**
+ * Batch 34: members holding plan credit with no spend for plan_credit_idle_months (credit_idle_plan_report; read only).
+ * minMonths (Batch 34b): list members idle at least this many months instead (the reminder cron's smallest stage);
+ * omitted or null keeps plan_credit_idle_months.
+ */
+export async function idlePlanReport(now: Date = new Date(), minMonths: number | null = null): Promise<IdlePlanRow[]> {
   if (!hasServiceRole()) return [];
-  const { data, error } = await (await adminClient()).rpc('credit_idle_plan_report', { p_now: now.toISOString() });
+  const args: Record<string, unknown> = { p_now: now.toISOString() };
+  if (minMonths != null && Number.isFinite(minMonths)) args.p_min_months = Math.max(1, Math.round(minMonths));
+  const { data, error } = await (await adminClient()).rpc('credit_idle_plan_report', args);
   if (error) throwRpc(error, 'credit_idle_plan_report');
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
     userId: String(r.user_id),
@@ -339,6 +345,46 @@ export async function idlePlanReport(now: Date = new Date()): Promise<IdlePlanRo
     planRemainingPence: round4(Number(r.plan_remaining_pence ?? 0) || 0),
     expirablePence: round4(Number(r.expirable_pence ?? 0) || 0),
   }));
+}
+
+/** The function or table is not there yet (schema.sql not run, or PostgREST not reloaded). */
+export function isSchemaMissing(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!err) return false;
+  if (['PGRST202', 'PGRST205', '42P01', '42883'].includes(err.code ?? '')) return true;
+  return /could not find the (function|table)|does not exist/i.test(err.message ?? '');
+}
+
+/** Thrown by expireIdlePlan when credit_expire_idle_plan (or the table it reads) is missing. */
+export class IdleExpiryUnavailableError extends Error {
+  readonly schemaMissing = true;
+}
+
+export interface IdleExpiryResult {
+  expiredPence: number;
+  grants: number;
+  /** When nothing expired, the SQL's reason: no_plan_credit | not_idle | no_final_notice | notice_too_recent | no_cycle_grant | none_expirable. */
+  reason?: string;
+}
+
+/**
+ * Batch 34b: the live no-spend expiry for one member (credit_expire_idle_plan).
+ * The SQL is the only authority: under the member's lock it re-checks they are
+ * still idle and that this idle run's final notice was sent at least
+ * plan_credit_final_notice_days ago, then expires plan grants created before
+ * that notice and before the newest cycle grant. This only passes its answer
+ * through. A missing function throws IdleExpiryUnavailableError.
+ */
+export async function expireIdlePlan(userId: string, now: Date = new Date()): Promise<IdleExpiryResult> {
+  if (!hasServiceRole()) return { expiredPence: 0, grants: 0, reason: 'not_configured' };
+  const { data, error } = await (await adminClient()).rpc('credit_expire_idle_plan', { p_user: userId, p_now: now.toISOString() });
+  if (error) {
+    if (isSchemaMissing(error)) throw new IdleExpiryUnavailableError(`[credit] credit_expire_idle_plan unavailable (schema.sql Batch 34b section not run?): ${error.message ?? 'unknown error'}`);
+    throwRpc(error, 'credit_expire_idle_plan');
+  }
+  const d = (data ?? {}) as { expired_pence?: number | string; grants?: number | string; reason?: string | null };
+  const out: IdleExpiryResult = { expiredPence: round4(Number(d.expired_pence ?? 0) || 0), grants: Number(d.grants ?? 0) || 0 };
+  if (typeof d.reason === 'string' && d.reason) out.reason = d.reason;
+  return out;
 }
 
 export async function expireDueGrants(): Promise<number> {

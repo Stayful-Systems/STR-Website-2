@@ -8876,6 +8876,30 @@ begin
   end if;
 end $$;
 
+-- The no-spend clock, one definition shared by credit_idle_plan_report and
+-- credit_expire_idle_plan (Batch 34b), so the report and the expiry can never
+-- disagree on who is idle or since when:
+--   credit_plan_idle_after()  plan_credit_idle_months as an interval (at least a month)
+--   credit_plan_idle_since(last_spent_at, first_plan_at)
+--                             the later of the last debit and plan_credit_rollover_from;
+--                             with neither, the first plan grant still held
+create or replace function public.credit_plan_idle_after()
+returns interval language sql stable security definer set search_path = public as $$
+  select make_interval(months => greatest(1, round(credit_setting_num('plan_credit_idle_months', 12)))::int);
+$$;
+revoke all on function public.credit_plan_idle_after() from public, anon, authenticated;
+grant execute on function public.credit_plan_idle_after() to service_role;
+
+create or replace function public.credit_plan_idle_since(p_last_spent_at timestamptz, p_first_plan_at timestamptz)
+returns timestamptz language sql stable security definer set search_path = public as $$
+  select coalesce(greatest(p_last_spent_at,
+           (select (b.value #>> '{}')::timestamptz from billing_settings b
+             where b.key = 'plan_credit_rollover_from' and jsonb_typeof(b.value) = 'string')),
+         p_first_plan_at);
+$$;
+revoke all on function public.credit_plan_idle_since(timestamptz, timestamptz) from public, anon, authenticated;
+grant execute on function public.credit_plan_idle_since(timestamptz, timestamptz) to service_role;
+
 -- credit_idle_plan_report(p_now): read only. One row per member holding plan
 -- credit who has spent nothing for at least plan_credit_idle_months:
 --   last_spent_at         their latest debit (any debit that moved credit:
@@ -8887,14 +8911,17 @@ end $$;
 --   expirable_pence       the part of it in grants created BEFORE their newest
 --                         plan_cycle grant: the newest month never lapses
 -- Batch 34b's reminders and expiry read it; nothing here changes credit.
-create or replace function public.credit_idle_plan_report(p_now timestamptz default now())
+-- p_min_months (Batch 34b, Phase 12): list members idle at least this many
+-- months instead (the reminder cron passes its smallest stage, 3); null keeps
+-- plan_credit_idle_months, exactly as before. The old one-argument version is
+-- dropped first so a one-argument call is never ambiguous.
+drop function if exists public.credit_idle_plan_report(timestamptz);
+create or replace function public.credit_idle_plan_report(p_now timestamptz default now(), p_min_months int default null)
 returns table (user_id uuid, last_spent_at timestamptz, idle_since timestamptz, plan_remaining_pence numeric, expirable_pence numeric)
 language sql stable security definer set search_path = public as $$
   with s as (
-    select
-      (select (b.value #>> '{}')::timestamptz from billing_settings b
-        where b.key = 'plan_credit_rollover_from' and jsonb_typeof(b.value) = 'string') as rollover_from,
-      make_interval(months => greatest(1, round(credit_setting_num('plan_credit_idle_months', 12)))::int) as idle_after
+    select case when p_min_months is null then credit_plan_idle_after()
+                else make_interval(months => greatest(1, p_min_months)) end as idle_after
   ), newest as (
     select g.user_id as uid, max(g.created_at) as newest_cycle_at
       from credit_grants g
@@ -8915,7 +8942,7 @@ language sql stable security definer set search_path = public as $$
              where t.user_id = h.uid and t.kind = 'debit' and t.amount_pence < 0 and t.at <= p_now) as last_at
       from held h
   ), idle as (
-    select sp.*, coalesce(greatest(sp.last_at, s.rollover_from), sp.first_plan_at) as since, s.idle_after
+    select sp.*, credit_plan_idle_since(sp.last_at, sp.first_plan_at) as since, s.idle_after
       from spent sp cross join s
   )
   select i.uid, i.last_at, i.since, i.plan_remaining, i.expirable
@@ -8923,8 +8950,8 @@ language sql stable security definer set search_path = public as $$
    where i.since <= p_now - i.idle_after
    order by i.since, i.uid;
 $$;
-revoke all on function public.credit_idle_plan_report(timestamptz) from public, anon, authenticated;
-grant execute on function public.credit_idle_plan_report(timestamptz) to service_role;
+revoke all on function public.credit_idle_plan_report(timestamptz, int) from public, anon, authenticated;
+grant execute on function public.credit_idle_plan_report(timestamptz, int) to service_role;
 
 -- credit_expire_plan_source(p_user, p_source_like, p_max_pence, p_reason,
 --   p_total, p_created_from, p_created_to):
@@ -8998,6 +9025,117 @@ end;
 $$;
 revoke all on function public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz) from public, anon, authenticated;
 grant execute on function public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz) to service_role;
+
+-- ── Batch 34b: no-spend reminders and the live expiry ──
+-- credit_idle_notices: one row per reminder stage (the months in
+-- plan_credit_idle_reminder_months: 3, 6, 12) per idle run. idle_since is the
+-- run's start as credit_plan_idle_since computes it; any spend moves it, so a
+-- new run gets fresh rows. 'sent' = actually emailed (sent_at set); 'skipped'
+-- = a missed lower stage recorded without sending. The final stage (the one
+-- equal to plan_credit_idle_months) sent at least plan_credit_final_notice_days
+-- ago is what credit_expire_idle_plan requires. Service role only.
+create table if not exists public.credit_idle_notices (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  idle_since timestamptz not null,
+  stage int not null check (stage > 0),
+  status text not null check (status in ('sent', 'skipped')),
+  sent_at timestamptz,
+  created_at timestamptz not null default now(),
+  primary key (user_id, idle_since, stage),
+  check (status <> 'sent' or sent_at is not null)
+);
+alter table public.credit_idle_notices enable row level security;  -- no policies: service role only
+revoke all on public.credit_idle_notices from anon, authenticated;
+
+-- credit_expire_idle_plan(p_user, p_now): the live no-spend expiry for one
+-- member. Under the member's profile row lock it re-checks that they are
+-- still idle (credit_plan_idle_since / credit_plan_idle_after, as
+-- credit_idle_plan_report), that the final-stage notice for THIS idle run was
+-- sent at least plan_credit_final_notice_days before p_now (a 'skipped' row
+-- never counts), then expires the unexpired plan credit in grants created
+-- before that notice was sent AND before the newest plan_cycle grant created
+-- at or before that notice (the month that was newest when the warning went
+-- out never lapses, nor does anything created after it; no cycle grant at the
+-- notice = nothing expires). Each
+-- grant touched gets an 'expire' row with reason 'no_spend'. Top-up, welcome,
+-- bonus and adjustment credit is never touched; a grant never goes below
+-- zero; a second call expires nothing. Returns {expired_pence, grants} and,
+-- when nothing expired, reason: no_plan_credit | not_idle | no_final_notice |
+-- notice_too_recent | no_cycle_grant | none_expirable.
+create or replace function public.credit_expire_idle_plan(p_user uuid, p_now timestamptz default now())
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  g record;
+  v_now timestamptz := coalesce(p_now, now());
+  v_final int := greatest(1, round(credit_setting_num('plan_credit_idle_months', 12)))::int;
+  v_wait interval := make_interval(days => greatest(1, round(credit_setting_num('plan_credit_final_notice_days', 30)))::int);
+  v_first timestamptz;
+  v_last timestamptz;
+  v_since timestamptz;
+  v_sent timestamptz;
+  v_newest timestamptz;
+  v_total numeric := 0;
+  n int := 0;
+begin
+  if p_user is null then raise exception 'credit_expire_idle_plan_bad_input'; end if;
+  perform 1 from profiles where id = p_user for update;
+
+  -- Still idle? The same figures credit_idle_plan_report reads.
+  select min(created_at) into v_first from credit_grants
+   where user_id = p_user and kind = 'plan' and remaining_pence > 0 and (expires_at is null or expires_at > v_now);
+  if v_first is null then
+    return jsonb_build_object('expired_pence', 0, 'grants', 0, 'reason', 'no_plan_credit');
+  end if;
+  select max(at) into v_last from credit_transactions
+   where user_id = p_user and kind = 'debit' and amount_pence < 0 and at <= v_now;
+  v_since := credit_plan_idle_since(v_last, v_first);
+  if v_since is null or v_since > v_now - credit_plan_idle_after() then
+    return jsonb_build_object('expired_pence', 0, 'grants', 0, 'reason', 'not_idle');
+  end if;
+
+  -- The final warning for this idle run, actually sent, long enough ago.
+  select sent_at into v_sent from credit_idle_notices
+   where user_id = p_user and idle_since = v_since and stage = v_final and status = 'sent' and sent_at is not null;
+  if v_sent is null then
+    return jsonb_build_object('expired_pence', 0, 'grants', 0, 'reason', 'no_final_notice');
+  end if;
+  if v_sent > v_now - v_wait then
+    return jsonb_build_object('expired_pence', 0, 'grants', 0, 'reason', 'notice_too_recent');
+  end if;
+
+  -- The month protected is the one that was newest WHEN THE WARNING WAS SENT
+  -- (the email quoted that figure and said that month never expires); a cycle
+  -- grant created since is after v_sent and so is safe too.
+  select max(created_at) into v_newest from credit_grants
+   where user_id = p_user and kind = 'plan' and plan_cycle and created_at <= v_sent;
+  if v_newest is null then
+    return jsonb_build_object('expired_pence', 0, 'grants', 0, 'reason', 'no_cycle_grant');
+  end if;
+
+  for g in
+    select id, remaining_pence from credit_grants
+     where user_id = p_user and kind = 'plan'
+       and remaining_pence > 0 and (expires_at is null or expires_at > v_now)
+       and created_at < v_sent and created_at < v_newest
+     order by created_at, id
+     for update
+  loop
+    if g.remaining_pence <= 0 then continue; end if;
+    insert into credit_transactions (user_id, kind, amount_pence, grant_id, description, metadata)
+    values (p_user, 'expire', -g.remaining_pence, g.id, 'Plan credit expired',
+      jsonb_build_object('reason', 'no_spend', 'idle_since', v_since, 'notice_sent_at', v_sent));
+    update credit_grants set remaining_pence = 0 where id = g.id;
+    v_total := v_total + g.remaining_pence;
+    n := n + 1;
+  end loop;
+  if n = 0 then
+    return jsonb_build_object('expired_pence', 0, 'grants', 0, 'reason', 'none_expirable');
+  end if;
+  return jsonb_build_object('expired_pence', v_total, 'grants', n);
+end;
+$$;
+revoke all on function public.credit_expire_idle_plan(uuid, timestamptz) from public, anon, authenticated;
+grant execute on function public.credit_expire_idle_plan(uuid, timestamptz) to service_role;
 
 -- Batch 31: customer websites (Phase 1: schema and settings)
 -- =========================

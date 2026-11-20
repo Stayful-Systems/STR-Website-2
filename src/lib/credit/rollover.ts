@@ -116,3 +116,113 @@ export function planCycleView(
     endsAt: nextPlanCreditAt(newest, opts.currentPeriodEnd) ?? opts.fallbackEndsAt,
   };
 }
+
+/* ------------------------------------------------------------------------- *
+ * Batch 34b (Phase 11): the no-spend reminders and the final warning, as pure
+ * rules. The cron (idle-reminders-run.ts) reads credit_idle_notices for the
+ * member's CURRENT idle run (same idle_since) and asks these; the SQL function
+ * credit_expire_idle_plan stays the authority on expiry (expiryDue mirrors it
+ * for dry runs and listings).
+ * ------------------------------------------------------------------------- */
+
+/** One credit_idle_notices row of this idle run. */
+export interface IdleNoticeRow {
+  stage: number;
+  status: 'sent' | 'skipped';
+}
+
+/**
+ * The reminder stages, in months, from plan_credit_idle_reminder_months (a
+ * settings array such as [3, 6, 12]): whole, positive, unique, sorted, none
+ * past the final stage, and always ending with the final stage itself
+ * (plan_credit_idle_months, rounded as the SQL rounds it). Unreadable input
+ * leaves only the final stage; an unreadable final stage gives [].
+ */
+export function idleStages(reminderMonths: unknown, idleMonths: unknown): number[] {
+  const final = Math.round(Number(idleMonths));
+  if (!Number.isFinite(final) || final <= 0) return [];
+  const raw = Array.isArray(reminderMonths) ? reminderMonths : [];
+  const set = new Set<number>([final]);
+  for (const v of raw) {
+    const n = Math.round(Number(v));
+    if (Number.isFinite(n) && n > 0 && n <= final) set.add(n);
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+/**
+ * Which stage is due for this idle run. A stage is due once
+ * addMonthsClamped(idleSince, stage) <= now. `due` is the HIGHEST due stage
+ * with no row yet; `skipped` are the lower due stages with no row, which the
+ * caller records as 'skipped' (a missed reminder is never sent late, so a
+ * member who missed 3 and 6 gets one email, the highest due). A stage with any
+ * row, sent or skipped, is never due again. A spend starts a new run (a new
+ * idleSince) and the caller passes only that run's rows, so it starts fresh.
+ */
+export function idleStageDue(input: { idleSince: Date | string; now: Date; stages: readonly number[]; existing: readonly IdleNoticeRow[] }): { due: number | null; skipped: number[] } {
+  const since = input.idleSince instanceof Date ? input.idleSince : new Date(input.idleSince);
+  if (!Number.isFinite(since.getTime())) return { due: null, skipped: [] };
+  const handled = new Set(input.existing.map((r) => Number(r.stage)));
+  const open = [...new Set(input.stages)]
+    .filter((s) => Number.isFinite(s) && s > 0 && !handled.has(s) && addMonthsClamped(since, s).getTime() <= input.now.getTime())
+    .sort((a, b) => a - b);
+  if (open.length === 0) return { due: null, skipped: [] };
+  return { due: open[open.length - 1], skipped: open.slice(0, -1) };
+}
+
+export type IdleReminderDecision =
+  | { decision: 'send'; reason: 'ok' }
+  | { decision: 'wait'; reason: 'cap_used' }
+  | { decision: 'skip'; reason: 'no_credit' | 'nothing_expirable' | 'alerts_off' };
+
+/**
+ * Whether to send the due stage today:
+ * - skip: no plan credit to lose (for the final stage, also nothing that
+ *   would expire), or a non-final stage with the "credit alerts" switch off.
+ *   The FINAL stage (plan_credit_idle_months) is a billing notice and ignores
+ *   the switch entirely. The caller records a skip.
+ * - wait: today's one-a-day cap is already used. Record nothing: the same
+ *   stage is due again tomorrow (a cap-skipped reminder is never recorded as
+ *   skipped).
+ * - send: otherwise.
+ */
+export function reminderDecision(input: { stage: number; finalStage: number; alertsOn: boolean; capUsedToday: boolean; planCreditPence: number; expirablePence: number }): IdleReminderDecision {
+  const final = input.stage >= input.finalStage;
+  if (!(Number(input.planCreditPence) > 0)) return { decision: 'skip', reason: 'no_credit' };
+  if (final && !(Number(input.expirablePence) > 0)) return { decision: 'skip', reason: 'nothing_expirable' };
+  if (!final && !input.alertsOn) return { decision: 'skip', reason: 'alerts_off' };
+  if (input.capUsedToday) return { decision: 'wait', reason: 'cap_used' };
+  return { decision: 'send', reason: 'ok' };
+}
+
+/**
+ * Whether earlier months' plan credit may now expire: the final warning was
+ * actually SENT (never a skipped or missing one) at least finalNoticeDays ago.
+ * Mirrors credit_expire_idle_plan (sent_at <= now - final notice days).
+ */
+export function expiryDue(input: { finalNoticeSentAt: Date | string | null | undefined; now: Date; finalNoticeDays: number }): boolean {
+  if (input.finalNoticeSentAt == null) return false;
+  const sent = input.finalNoticeSentAt instanceof Date ? input.finalNoticeSentAt.getTime() : Date.parse(input.finalNoticeSentAt);
+  const days = Number(input.finalNoticeDays);
+  if (!Number.isFinite(sent) || !Number.isFinite(days) || days < 0) return false;
+  return sent <= input.now.getTime() - days * 86_400_000;
+}
+
+/** The credit sweep's hour (vercel.json /api/internal/credit-sweep, "0 3 * * *": 03:00 UTC daily). */
+export const CREDIT_SWEEP_HOUR_UTC = 3;
+
+/**
+ * The first credit sweep that can expire the plan credit a final warning
+ * covered: the first 03:00 UTC at or after sentAt + finalNoticeDays days
+ * (credit_expire_idle_plan needs sent_at <= sweep time - finalNoticeDays days,
+ * and the sweep only runs at 03:00 UTC). The date the email states and the
+ * admin "Warned" list shows. Invalid input gives an invalid Date.
+ */
+export function firstExpirySweepAfter(sentAt: Date | string, finalNoticeDays: number): Date {
+  const sent = sentAt instanceof Date ? sentAt.getTime() : Date.parse(sentAt);
+  const days = Number(finalNoticeDays);
+  if (!Number.isFinite(sent) || !Number.isFinite(days) || days < 0) return new Date(NaN);
+  const earliest = new Date(sent + days * 86_400_000);
+  const sweep = Date.UTC(earliest.getUTCFullYear(), earliest.getUTCMonth(), earliest.getUTCDate(), CREDIT_SWEEP_HOUR_UTC);
+  return new Date(sweep >= earliest.getTime() ? sweep : sweep + 86_400_000);
+}

@@ -1,5 +1,5 @@
 import { loadRolloverMeasure } from "@/lib/admin/rollover-measure-server";
-import { SMALL_NUMBERS, type ActiveShare, type PeriodRate } from "@/lib/admin/rollover-measure";
+import { SMALL_NUMBERS, type ActiveShare, type IdleExpiryListRow, type IdleExpiryLists, type PeriodRate } from "@/lib/admin/rollover-measure";
 
 /**
  * Batch 34, Phase 7: "Plan credit rollover", the success measure. Did plan
@@ -7,6 +7,11 @@ import { SMALL_NUMBERS, type ActiveShare, type PeriodRate } from "@/lib/admin/ro
  * plan members using the app less? The maths is
  * src/lib/admin/rollover-measure.ts; counts and pence only, nobody is named.
  * The page's admin gate covers it (page.tsx).
+ *
+ * Batch 34b: below it, "Warned" (final no-spend warning sent, still inside
+ * the notice window, with the day it becomes due) and "Due to expire" (what
+ * the next 03:00 credit sweep expires). These name members by email, as the
+ * weekly-active drill-down above does, for the admin only.
  */
 
 const money = (p: number) => `£${(p / 100).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -23,6 +28,10 @@ function rateText(r: PeriodRate): string {
 function rateLine(r: PeriodRate): string {
   if (r.months === 0) return "No whole month yet.";
   return `${r.cancelled} cancelled over ${r.months} month${r.months === 1 ? "" : "s"}, about ${r.averageMembers ?? 0} plan members at each month's start.`;
+}
+
+function dayTime(iso: string): string {
+  return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 }
 
 function shareText(s: ActiveShare): string {
@@ -74,6 +83,8 @@ function Body({ load }: { load: Extract<Awaited<ReturnType<typeof loadRolloverMe
         />
       </div>
 
+      <IdleLists idle={load.idle} />
+
       {load.notes.length > 0 && (
         <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
           {load.notes.map((n) => (
@@ -82,6 +93,61 @@ function Body({ load }: { load: Extract<Awaited<ReturnType<typeof loadRolloverMe
         </ul>
       )}
     </>
+  );
+}
+
+function IdleLists({ idle }: { idle: IdleExpiryLists | null }) {
+  if (!idle) return null;
+  return (
+    <div className="mt-6 grid gap-4 lg:grid-cols-2">
+      <IdleTable
+        title={`Due to expire (${idle.due.length})`}
+        blurb={`Final warning sent long enough ago and still no spend: the next 03:00 sweep expires ${money(idle.duePence)} of plan credit from earlier months. The newest month is never touched.`}
+        rows={idle.due}
+        empty="Nobody is due."
+      />
+      <IdleTable
+        title={`Warned (${idle.warned.length})`}
+        blurb={`Final warning sent, still inside the notice window. Any spend before the due time cancels it. ${money(idle.warnedPence)} would expire if all of them stay idle.`}
+        rows={idle.warned}
+        empty="Nobody is inside the notice window."
+      />
+    </div>
+  );
+}
+
+function IdleTable({ title, blurb, rows, empty }: { title: string; blurb: string; rows: IdleExpiryListRow[]; empty: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="text-sm font-medium text-foreground">{title}</div>
+      <p className="mt-1 text-xs text-muted-foreground">{blurb}</p>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted-foreground">
+                <th className="py-1 pr-3 font-medium">Member</th>
+                <th className="py-1 pr-3 font-medium">Warned</th>
+                <th className="py-1 pr-3 font-medium">Due from</th>
+                <th className="py-1 text-right font-medium">Expires</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.userId} className="border-t border-border">
+                  <td className="py-1 pr-3 text-foreground">{r.email ?? r.userId.slice(0, 8)}</td>
+                  <td className="py-1 pr-3 tabular-nums text-muted-foreground">{dayTime(r.noticeSentAt)}</td>
+                  <td className="py-1 pr-3 tabular-nums text-muted-foreground">{dayTime(r.dueAt)}</td>
+                  <td className="py-1 text-right tabular-nums text-foreground">{money(r.expiringPence)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

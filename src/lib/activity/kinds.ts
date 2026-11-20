@@ -103,6 +103,10 @@ export const ACTIVITY_KINDS = {
   plan_resume: inApp('Resumed their plan'),
   plan_cancel: inApp('Cancelled their plan'),
   plan_cancel_undone: inApp('Kept their plan after cancelling'),
+  // Batch 34b: plan credit left unspent (src/lib/credit/rollover.ts). Record only: the system emailed the
+  // member, or expired earlier months' plan credit after the final warning; neither is the member doing anything.
+  credit_idle_reminder: recordOnly('Was sent a reminder about unspent plan credit'),
+  credit_idle_expired: recordOnly('Had unspent plan credit from earlier months expire'),
   // Batch 31a: an Academy purchase linked to the account started its free Pro months (src/lib/academy/link.ts).
   academy_trial_started: inApp('Academy trial started'),
 

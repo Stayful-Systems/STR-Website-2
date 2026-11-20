@@ -108,3 +108,126 @@ test('summary view: an annual member gets a monthly endsAt; unreadable grants fa
   const unread = planCycleView(null, { planMonthlyCreditPence: 4900, currentPeriodEnd: '2026-04-01T00:00:00Z', fallbackEndsAt: '2026-04-01T00:00:00Z', now: NOW });
   assert.deepEqual(unread, { allowancePence: 4900, rolledOverPence: 0, endsAt: '2026-04-01T00:00:00Z' });
 });
+
+// ---- Batch 34b (Phase 11): reminders, the final warning and expiry ----
+
+const STAGES = [3, 6, 12];
+const SINCE = '2026-11-20T00:00:00Z';
+const at = (iso: string) => new Date(iso);
+const base = { finalStage: 12, alertsOn: true, capUsedToday: false, planCreditPence: 3800, expirablePence: 1900 };
+
+test('idleStages: clean, sorted, unique, always ends with the final stage', async () => {
+  const { idleStages } = await import('./rollover.ts');
+  assert.deepEqual(idleStages([3, 6, 12], 12), [3, 6, 12]);
+  assert.deepEqual(idleStages([6, '3', 3, 24, -1, 'x', null], 12), [3, 6, 12]);
+  assert.deepEqual(idleStages([3, 6], 12), [3, 6, 12]);
+  assert.deepEqual(idleStages(null, 12), [12]);
+  assert.deepEqual(idleStages([3], 0), []);
+});
+
+test('each stage sends once', async () => {
+  const { idleStageDue } = await import('./rollover.ts');
+  // Before 3 months nothing is due.
+  assert.deepEqual(idleStageDue({ idleSince: SINCE, now: at('2027-02-19T23:59:00Z'), stages: STAGES, existing: [] }), { due: null, skipped: [] });
+  // At 3 months the 3-month stage is due…
+  assert.deepEqual(idleStageDue({ idleSince: SINCE, now: at('2027-02-20T06:43:00Z'), stages: STAGES, existing: [] }), { due: 3, skipped: [] });
+  // …and once recorded (sent or skipped) it is never due again.
+  for (const status of ['sent', 'skipped'] as const) {
+    assert.deepEqual(idleStageDue({ idleSince: SINCE, now: at('2027-03-20T06:43:00Z'), stages: STAGES, existing: [{ stage: 3, status }] }), { due: null, skipped: [] });
+  }
+  // 6 then 12, each once.
+  assert.deepEqual(idleStageDue({ idleSince: SINCE, now: at('2027-05-20T06:43:00Z'), stages: STAGES, existing: [{ stage: 3, status: 'sent' }] }), { due: 6, skipped: [] });
+  const all = [{ stage: 3, status: 'sent' as const }, { stage: 6, status: 'sent' as const }];
+  assert.deepEqual(idleStageDue({ idleSince: SINCE, now: at('2027-11-20T06:43:00Z'), stages: STAGES, existing: all }), { due: 12, skipped: [] });
+  assert.deepEqual(idleStageDue({ idleSince: SINCE, now: at('2028-06-01T06:43:00Z'), stages: STAGES, existing: [...all, { stage: 12, status: 'sent' }] }), { due: null, skipped: [] });
+});
+
+test('a member who missed 3 and 6 gets only the highest due stage; the lower ones are skipped', async () => {
+  const { idleStageDue } = await import('./rollover.ts');
+  assert.deepEqual(idleStageDue({ idleSince: SINCE, now: at('2027-11-21T06:43:00Z'), stages: STAGES, existing: [] }), { due: 12, skipped: [3, 6] });
+  // 3 was sent, 6 was missed: only 6 is skipped.
+  assert.deepEqual(idleStageDue({ idleSince: SINCE, now: at('2027-11-21T06:43:00Z'), stages: STAGES, existing: [{ stage: 3, status: 'sent' }] }), { due: 12, skipped: [6] });
+  // Month ends are clamped: idle since 31 August, 6 months is 28 February.
+  assert.deepEqual(idleStageDue({ idleSince: '2027-08-31T10:00:00Z', now: at('2028-02-29T10:00:00Z'), stages: STAGES, existing: [{ stage: 3, status: 'sent' }] }), { due: 6, skipped: [] });
+});
+
+test('a cap-skipped reminder sends next day', async () => {
+  const { idleStageDue, reminderDecision } = await import('./rollover.ts');
+  const existing: { stage: number; status: 'sent' | 'skipped' }[] = [];
+  const day1 = idleStageDue({ idleSince: SINCE, now: at('2027-02-20T06:43:00Z'), stages: STAGES, existing });
+  assert.equal(day1.due, 3);
+  const d1 = reminderDecision({ ...base, stage: day1.due!, capUsedToday: true });
+  assert.deepEqual(d1, { decision: 'wait', reason: 'cap_used' });
+  // A wait records nothing, so the same stage is due the next day, and goes.
+  const day2 = idleStageDue({ idleSince: SINCE, now: at('2027-02-21T06:43:00Z'), stages: STAGES, existing });
+  assert.deepEqual(day2, { due: 3, skipped: [] });
+  assert.deepEqual(reminderDecision({ ...base, stage: day2.due!, capUsedToday: false }), { decision: 'send', reason: 'ok' });
+  // The final warning waits for the cap too.
+  assert.deepEqual(reminderDecision({ ...base, stage: 12, alertsOn: false, capUsedToday: true }), { decision: 'wait', reason: 'cap_used' });
+});
+
+test('a spend resets', async () => {
+  const { idleStageDue } = await import('./rollover.ts');
+  const oldRun = [{ stage: 3, status: 'sent' as const }, { stage: 6, status: 'sent' as const }];
+  // The member spent on 1 June 2027: a new idle run, whose rows are none yet.
+  const newSince = idleSince('2027-06-01T09:00:00Z', SINCE)!;
+  assert.deepEqual(idleStageDue({ idleSince: newSince, now: at('2027-07-01T06:43:00Z'), stages: STAGES, existing: [] }), { due: null, skipped: [] });
+  assert.deepEqual(idleStageDue({ idleSince: newSince, now: at('2027-09-01T09:00:00Z'), stages: STAGES, existing: [] }), { due: 3, skipped: [] });
+  // Passing the old run's rows by mistake would wrongly block 3 and 6: the caller must pass this run's rows only.
+  assert.deepEqual(idleStageDue({ idleSince: newSince, now: at('2027-12-01T09:00:00Z'), stages: STAGES, existing: oldRun }), { due: null, skipped: [] });
+  assert.deepEqual(idleStageDue({ idleSince: newSince, now: at('2027-12-01T09:00:00Z'), stages: STAGES, existing: [] }), { due: 6, skipped: [3] });
+});
+
+test('the final warning ignores opt-outs', async () => {
+  const { reminderDecision } = await import('./rollover.ts');
+  assert.deepEqual(reminderDecision({ ...base, stage: 12, alertsOn: false }), { decision: 'send', reason: 'ok' });
+  assert.deepEqual(reminderDecision({ ...base, stage: 3, alertsOn: false }), { decision: 'skip', reason: 'alerts_off' });
+  assert.deepEqual(reminderDecision({ ...base, stage: 6, alertsOn: false }), { decision: 'skip', reason: 'alerts_off' });
+  assert.deepEqual(reminderDecision({ ...base, stage: 3, alertsOn: true }), { decision: 'send', reason: 'ok' });
+});
+
+test('no credit to lose means skip', async () => {
+  const { reminderDecision } = await import('./rollover.ts');
+  for (const stage of [3, 6, 12]) assert.deepEqual(reminderDecision({ ...base, stage, planCreditPence: 0 }), { decision: 'skip', reason: 'no_credit' }, String(stage));
+  // Only this month's credit left: nothing would expire, so no final warning (a reminder still goes).
+  assert.deepEqual(reminderDecision({ ...base, stage: 12, expirablePence: 0 }), { decision: 'skip', reason: 'nothing_expirable' });
+  assert.deepEqual(reminderDecision({ ...base, stage: 3, expirablePence: 0 }), { decision: 'send', reason: 'ok' });
+  // No credit wins over the cap: skip, never wait.
+  assert.equal(reminderDecision({ ...base, stage: 3, planCreditPence: 0, capUsedToday: true }).decision, 'skip');
+});
+
+test('expiryDue: only a sent final warning at least the notice days old', async () => {
+  const { expiryDue } = await import('./rollover.ts');
+  const sent = '2027-11-20T06:43:00Z';
+  assert.equal(expiryDue({ finalNoticeSentAt: null, now: at('2028-06-01T00:00:00Z'), finalNoticeDays: 30 }), false);
+  assert.equal(expiryDue({ finalNoticeSentAt: undefined, now: at('2028-06-01T00:00:00Z'), finalNoticeDays: 30 }), false);
+  assert.equal(expiryDue({ finalNoticeSentAt: sent, now: at('2027-12-20T06:42:59Z'), finalNoticeDays: 30 }), false);
+  assert.equal(expiryDue({ finalNoticeSentAt: sent, now: at('2027-12-20T06:43:00Z'), finalNoticeDays: 30 }), true);
+  assert.equal(expiryDue({ finalNoticeSentAt: new Date(sent), now: at('2028-01-01T00:00:00Z'), finalNoticeDays: 30 }), true);
+  assert.equal(expiryDue({ finalNoticeSentAt: 'garbage', now: at('2028-01-01T00:00:00Z'), finalNoticeDays: 30 }), false);
+});
+
+test('firstExpirySweepAfter: the first 03:00 UTC sweep at or after sent + notice days', async () => {
+  const { firstExpirySweepAfter, expiryDue, CREDIT_SWEEP_HOUR_UTC } = await import('./rollover.ts');
+  const iso = (d: Date) => d.toISOString();
+  assert.equal(CREDIT_SWEEP_HOUR_UTC, 3);
+  // Sent 06:43 on D: the 30 days end 06:43 on D+30, after that day's sweep, so 03:00 on D+31.
+  assert.equal(iso(firstExpirySweepAfter('2026-11-01T06:43:00Z', 30)), '2026-12-02T03:00:00.000Z');
+  // Sent 02:00 on D: the 30 days end before the 03:00 sweep on D+30.
+  assert.equal(iso(firstExpirySweepAfter('2026-11-01T02:00:00Z', 30)), '2026-12-01T03:00:00.000Z');
+  // Exactly 03:00: that sweep counts (the SQL refuses only sent_at > now - N days).
+  assert.equal(iso(firstExpirySweepAfter('2026-11-01T03:00:00Z', 30)), '2026-12-01T03:00:00.000Z');
+  // 1 ms after 03:00: the next day's sweep.
+  assert.equal(iso(firstExpirySweepAfter('2026-11-01T03:00:00.001Z', 30)), '2026-12-02T03:00:00.000Z');
+  // Across a month and a year end, and a Date input.
+  assert.equal(iso(firstExpirySweepAfter(new Date('2026-12-02T23:59:59Z'), 30)), '2027-01-02T03:00:00.000Z');
+  assert.ok(Number.isNaN(firstExpirySweepAfter('garbage', 30).getTime()));
+
+  // expiryDue (the SQL's rule) agrees: no sweep before that moment can expire, the sweep at it can.
+  for (const sent of ['2026-11-01T06:43:00Z', '2026-11-01T02:00:00Z', '2026-11-01T03:00:00Z', '2026-11-01T03:00:00.001Z']) {
+    const due = firstExpirySweepAfter(sent, 30);
+    const before = new Date(due.getTime() - 86_400_000); // the sweep the day before
+    assert.equal(expiryDue({ finalNoticeSentAt: sent, now: before, finalNoticeDays: 30 }), false, `${sent}: the sweep before`);
+    assert.equal(expiryDue({ finalNoticeSentAt: sent, now: due, finalNoticeDays: 30 }), true, `${sent}: the sweep at the stated date`);
+  }
+});

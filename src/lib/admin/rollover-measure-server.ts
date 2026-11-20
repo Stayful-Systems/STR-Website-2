@@ -5,7 +5,20 @@ import { adminEmails } from '../admin';
 import { loadSubscriptionEvents } from '../billing/churn-server';
 import { COUNTED_KINDS, QUALIFYING_KINDS } from '../activity/kinds';
 import { computeWeeklyActive, type WeeklyFacts } from '../activity/metrics';
-import { rolloverMeasure, type MeasureGrantRow, type MeasureMember, type RolloverMeasure } from './rollover-measure';
+import { recordActivity } from '../activity/log';
+import { expireIdlePlan, idlePlanReport } from '../credit/ledger';
+import { readIdleReminderSettings } from '../credit/idle-reminders-server';
+import {
+  idleExpiryLists,
+  idleExpiryViews,
+  rolloverMeasure,
+  type IdleExpiryDeps,
+  type IdleExpiryLists,
+  type IdleNoticeRecord,
+  type MeasureGrantRow,
+  type MeasureMember,
+  type RolloverMeasure,
+} from './rollover-measure';
 
 /**
  * Batch 34, Phase 7: the reads behind "Plan credit rollover" on
@@ -18,16 +31,25 @@ import { rolloverMeasure, type MeasureGrantRow, type MeasureMember, type Rollove
  *     reach 12 weeks before the launch
  *   - every plan grant (credit_grants, kind 'plan'), for banked and rolled over
  *
+ * Batch 34b (Phase 13) adds the "Warned" and "Due to expire" lists: the idle
+ * candidates (credit_idle_plan_report), the two settings, this idle run's
+ * final notices (credit_idle_notices) and the members' emails (profiles; the
+ * page is admin-gated, as the weekly-active drill-down that shows emails).
+ * It also holds the credit sweep's live wiring for the no-spend expiry
+ * (liveIdleExpiryDeps).
+ *
  * Service role only; the page checks the admin session first. Never throws:
- * a part that cannot be read comes back null with a note. Only counts and
- * pence leave this file.
+ * a part that cannot be read comes back null with a note. The measure leaves
+ * this file as counts and pence; only the two admin lists carry an email.
  */
 
 const PAGE = 1000;
 const MAX_ROWS = 50_000;
 const WEEK = 7 * 86_400_000;
 
-export type RolloverMeasureLoad = { ok: true; measure: RolloverMeasure; notes: string[] } | { ok: false; error: string };
+const ID_CHUNK = 150;
+
+export type RolloverMeasureLoad = { ok: true; measure: RolloverMeasure; idle: IdleExpiryLists | null; notes: string[] } | { ok: false; error: string };
 
 async function launchAt(admin: ReturnType<typeof createAdminClient>): Promise<string | null> {
   const { data, error } = await admin.from('billing_settings').select('value').eq('key', 'plan_credit_rollover_from').maybeSingle();
@@ -70,14 +92,92 @@ async function planGrants(): Promise<{ grants: MeasureGrantRow[] | null; note: s
   return { grants: out, note: null };
 }
 
+/** This stage's 'sent' credit_idle_notices rows of these members (every idle run; the caller matches idle_since). Throws when the table is missing. */
+async function finalNotices(userIds: readonly string[], stage: number): Promise<IdleNoticeRecord[]> {
+  const admin = createAdminClient();
+  const out: IdleNoticeRecord[] = [];
+  for (let i = 0; i < userIds.length; i += ID_CHUNK) {
+    const { data, error } = await admin
+      .from('credit_idle_notices')
+      .select('user_id, idle_since, stage, status, sent_at')
+      .in('user_id', userIds.slice(i, i + ID_CHUNK))
+      .eq('stage', stage)
+      .eq('status', 'sent');
+    if (error) throw new Error(`credit_idle_notices unreadable: ${error.message}`);
+    for (const r of (data ?? []) as { user_id: string; idle_since: string; stage: number; status: 'sent' | 'skipped'; sent_at: string | null }[]) {
+      out.push({ userId: r.user_id, idleSince: r.idle_since, stage: Number(r.stage), status: r.status, sentAt: r.sent_at });
+    }
+  }
+  return out;
+}
+
+/** These members' plan grants, spent ones included (a spent cycle grant still marks the newest month). */
+async function memberPlanGrants(userIds: readonly string[]): Promise<MeasureGrantRow[]> {
+  const admin = createAdminClient();
+  const out: MeasureGrantRow[] = [];
+  for (let i = 0; i < userIds.length; i += ID_CHUNK) {
+    const { data, error } = await admin
+      .from('credit_grants')
+      .select('user_id, amount_pence, remaining_pence, created_at, plan_cycle, source_ref, expires_at')
+      .eq('kind', 'plan')
+      .in('user_id', userIds.slice(i, i + ID_CHUNK));
+    if (error) throw new Error(`plan grants unreadable: ${error.message}`);
+    out.push(...((data ?? []) as MeasureGrantRow[]));
+  }
+  return out;
+}
+
+/**
+ * The credit sweep's live wiring for the no-spend expiry (rollover-measure.ts
+ * idleExpiryLive / idleExpiryDry). expire is credit_expire_idle_plan, the only
+ * authority; the dry run uses only the reads.
+ */
+export function liveIdleExpiryDeps(): IdleExpiryDeps {
+  return {
+    expire: (userId, now) => expireIdlePlan(userId, now),
+    recordExpired: (userId, { dedupeKey, expiredPence, grants }) => recordActivity(userId, 'credit_idle_expired', { dedupeKey, extras: { expiredPence, grants } }),
+    settings: async () => {
+      const s = await readIdleReminderSettings(createAdminClient());
+      return { idleMonths: s.idleMonths, finalNoticeDays: s.finalNoticeDays };
+    },
+    finalNotices,
+    planGrants: memberPlanGrants,
+    log: (line) => console.log(line),
+  };
+}
+
+/** "Warned" and "Due to expire" for the admin page; null with a note when a part cannot be read. */
+async function idleLists(now: Date): Promise<{ idle: IdleExpiryLists | null; note: string | null }> {
+  try {
+    const admin = createAdminClient();
+    const [candidates, s] = await Promise.all([idlePlanReport(now), readIdleReminderSettings(admin)]);
+    const settings = { idleMonths: s.idleMonths, finalNoticeDays: s.finalNoticeDays };
+    const ids = candidates.map((c) => c.userId);
+    if (ids.length === 0) return { idle: idleExpiryLists([], new Map()), note: null };
+    const [notices, grants] = await Promise.all([finalNotices(ids, settings.idleMonths), memberPlanGrants(ids)]);
+    const views = idleExpiryViews({ candidates, notices, grants, settings, now });
+    const listed = views.filter((v) => v.state === 'notice_too_recent' || v.state === 'due').map((v) => v.userId);
+    const emails = new Map<string, string | null>();
+    for (let i = 0; i < listed.length; i += ID_CHUNK) {
+      const { data, error } = await admin.from('profiles').select('id, email').in('id', listed.slice(i, i + ID_CHUNK));
+      if (error) break; // the lists still show, by short id
+      for (const r of (data ?? []) as { id: string; email: string | null }[]) emails.set(r.id, r.email ?? null);
+    }
+    return { idle: idleExpiryLists(views, emails), note: null };
+  } catch (err) {
+    return { idle: null, note: `warned / due-to-expire lists unreadable (schema.sql Batch 34b section not run?): ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 export async function loadRolloverMeasure(now: Date = new Date()): Promise<RolloverMeasureLoad> {
   if (!hasServiceRole()) return { ok: false, error: 'Storage not configured' };
   try {
     const launch = await launchAt(createAdminClient());
     const [events, weekly, grants] = await Promise.all([loadSubscriptionEvents(), weeklyMembers(now, weeksToRead(launch, now)), planGrants()]);
-    const notes = [weekly.note, grants.note].filter((n): n is string => n !== null);
+    const idle = await idleLists(now);
+    const notes = [weekly.note, grants.note, idle.note].filter((n): n is string => n !== null);
     if (!launch) notes.unshift('No launch date yet (billing_settings plan_credit_rollover_from is set when schema.sql’s Batch 34 section runs): everything counts as before.');
-    return { ok: true, measure: rolloverMeasure({ launchAt: launch, now, events, members: weekly.members, grants: grants.grants }), notes };
+    return { ok: true, measure: rolloverMeasure({ launchAt: launch, now, events, members: weekly.members, grants: grants.grants }), idle: idle.idle, notes };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[rollover-measure] read failed:', message);
