@@ -117,3 +117,17 @@ test('no SERVICE_FACTS line uses a retired question’s placeholder (btl_cash_ba
   assert.doesNotMatch(SERVICE_FACTS, /2–3-year/, 'no typed rate term');
   assert.match(SERVICE_FACTS, /their Buying cash/);
 });
+
+test('Batch 36: the website grace placeholders resolve from the schema seeds and are strict about bad values', async () => {
+  const { PLACEHOLDERS } = await import('./placeholders.ts');
+  const { schemaSnapshot } = await import('./test-fixtures.ts');
+  const g = schemaSnapshot();
+  assert.equal(PLACEHOLDERS.website_abandon_days.resolve(g, null), '90');
+  assert.equal(PLACEHOLDERS.website_warning_days.resolve(g, null), '30, 14 and 3');
+  assert.equal(PLACEHOLDERS.website_delete_after_days.resolve(g, null), '90');
+  assert.equal(PLACEHOLDERS.website_warning_days.resolve(schemaSnapshot({ settings: { website_warning_days: '21' } }), null), '21');
+  assert.equal(PLACEHOLDERS.website_warning_days.resolve(schemaSnapshot({ settings: { website_warning_days: '5,5' } }), null), null, 'a bad list does not resolve');
+  assert.equal(PLACEHOLDERS.website_abandon_days.resolve(schemaSnapshot({ settings: { website_abandon_days: 0 } }), null), null);
+  assert.equal(PLACEHOLDERS.website_delete_after_days.resolve(schemaSnapshot({ drop: ['website_delete_after_days'] }), null), null);
+  for (const n of ['website_abandon_days', 'website_warning_days', 'website_delete_after_days']) assert.equal(PLACEHOLDERS[n].scope, 'global');
+});

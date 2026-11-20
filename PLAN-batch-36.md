@@ -33,8 +33,8 @@ Baseline: `npm test` 3989 pass / 0 fail, `npm run lint` 0 errors (79 pre-existin
   Notes:
 - [ ] Phase 8 — Admin website console
   Notes:
-- [ ] Phase 9 — Knowledge drafts
-  Notes:
+- [x] Phase 9 — Knowledge drafts
+  Notes: 3 new placeholders (website_abandon_days, website_warning_days ("30, 14 and 3"), website_delete_after_days), strict like the others; 6 draft entries in seed.ts (edit yourself, change requests, switch-off, switch-off for plan/unpaid with the two existing conditions, deletion, switch back on) — one more than the plan's five because the 600-character answer limit forced the switch-off entry to split; a CUSTOMER WEBSITES: EDITING AND SWITCH-OFF block in service-facts.ts. No figure typed anywhere (the monthly rewrite limit and version count are deliberately not stated). 69 knowledge tests pass.
 - [ ] Phase 10 — Final checks, push, PR
   Notes:
 
