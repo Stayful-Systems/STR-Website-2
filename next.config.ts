@@ -16,6 +16,14 @@ const PDF_ASSETS = [
   "public/assets/stayful-logo.png",
 ];
 
+/**
+ * Batch 36: the ad pack's image cards read their OFL typefaces from disk at
+ * render time (src/lib/ad-packs/images.tsx), for the same reason as the PDF.
+ * List every route that can call the generator (the /leads/ads page covers its
+ * server actions).
+ */
+const AD_PACK_FONTS = ["src/lib/ad-packs/fonts/**/*"];
+
 const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/generate-pdf": PDF_ASSETS,
@@ -25,6 +33,7 @@ const nextConfig: NextConfig = {
     "/api/internal/crm-deliveries": PDF_ASSETS,
     // Batch 23: Stayful Intelligence's contact card embeds its photo.
     "/si/card": ["public/images/si-contact.png"],
+    "/leads/ads": AD_PACK_FONTS,
   },
   images: {
     formats: ["image/avif", "image/webp"],

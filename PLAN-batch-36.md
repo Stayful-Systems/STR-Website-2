@@ -89,8 +89,15 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   code in this repo writes analyser_reports.net_revenue). `NET_INCLUDES_MANAGEMENT_FEE = false` (pinned by test): take-home =
   net minus the operator's own fee, which can only UNDERSTATE (by about 15% of gross if the stored column really includes a
   15% fee). Contrast check can never fail (best of white/near-black >= 4.35:1); below 4.5:1 is a warning only.
-- [ ] **Phase 5 — Image ads.** `images.tsx` (next/og, 1:1 / 4:5 / 9:16) + fonts.
-  Notes:
+- [x] **Phase 5 — Image ads.** `images.tsx` (next/og, 1:1 / 4:5 / 9:16) + fonts.
+  Notes: 99 ad-packs tests pass, tsc/eslint/build OK; coordinator viewed 3 sample PNGs (no clipping, label fully visible).
+  API: `renderCardPng({card,brand:{company,brandColour,logoUrl},photoUrl,size,fetchImage?}) -> Buffer`;
+  `renderAdImages({angle,cards,brand,photos:{pack:string[],site:string|null},fetchImage?,sizes?}) -> [{name,width,height,png}]`
+  (names like `3a-card1-4x5.png`); also `deriveTints, paletteFor, layoutFor, planCard, photoCandidates, defaultFetchImage`.
+  Fonts (Anton, Archivo Medium/SemiBold, OFL.txt) in src/lib/ad-packs/fonts/. next.config.ts: `outputFileTracingIncludes`
+  `/leads/ads` -> fonts. ANY OTHER ROUTE THAT CALLS THE GENERATOR (e.g. an admin action page /admin/ad-packs, a cron) needs
+  its own entry (Phase 10 must add `/admin/ad-packs`). Tests bundle images.tsx with esbuild (node can't load JSX). Figure
+  cards never use a photo; WebP photos fall back to type-only.
 - [ ] **Phase 6 — Generator and store.** `store-server.ts`, `generate-server.ts`.
   Notes:
 - [ ] **Phase 7 — Attribution on arrival.** `attribution.ts`, `attribution-server.ts`, one line in the lead route,
