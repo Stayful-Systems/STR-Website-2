@@ -33,6 +33,11 @@ export function Notice({ ctx }: { ctx: Exclude<SetupContext, { kind: "ready" }> 
         </p>
       )}
       {paused ? null : <DomainSection site={site} />}
+      {paused ? null : (
+        <p className="mt-6 text-sm">
+          <Link href="/leads/website/edit" className="font-medium underline underline-offset-2">Edit your website</Link>
+        </p>
+      )}
       <p className="mt-6 text-xs text-muted-foreground">
         See your landlords in <Link href="/leads" className="underline underline-offset-2">Leads</Link>.
       </p>
