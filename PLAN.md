@@ -1,319 +1,304 @@
-# PLAN — Batch 31a: Stayful Academy checkout + 90-day Pro trial
+# PLAN — Batch 32: Plan credit rollover
 
-Planned against origin/main a0fa9c2 (re-checked 19 Nov 2026: main has not moved).
-Branch: batch-31a-academy-trial. Full detail for every phase is below the checklist.
+Planned against origin/main cf6935e (Batch 31 merged; re-checked 20 Nov 2026: main has not moved).
+Branch: claude/dazzling-babbage-5j0m9x (the plan named claude/epic-ramanujan-rcv4gz; this session is bound to the former).
 
-## Progress
-- [x] Phase 0 — Setup (npm ci, baseline tests + lint)
-  Notes: main still a0fa9c2. Baseline: npm test 3343/3343 pass; lint 0 errors, 79 existing warnings. Schema-twice check script: /tmp/claude-0/-home-user-STR-Website-2/9f47ba7d-c597-516e-8b28-449ceff23206/scratchpad/schema-check.sh (passes on baseline).
-- [x] Phase 1 — Pure rules + schema
-  Notes: tests 3359 pass; schema-check OK. rules.ts exports: ACADEMY_FACTS, emailKey, maskEmail, academyTrialEnd(start),
-  trialSlotKey(subId,'YYYY-MM'), trialSlots(start,end), trialMonthDue(start,end,now), linkDecision({purchase, profile,
-  profileCustomerHasLivePlan, purchaseCustomerHasLivePlan, emailHadEarlierTrial, by}) → start{customer, customerId,
-  previousCustomerId} | already{userId} | refuse_* (incl. extra refuse_no_card: no customer/saved card on the purchase),
-  daysBeforeTrialEnd(end,now), reminderDecision(end,now,{slotFree,sentAt,trialing,cancelling,refunded}) →
-  skip|not_yet|wait|send|send_anyway. annual.ts adds monthSlots/monthSlotAt (annual = count 12). Extra index on user_id.
-- [x] Phase 2 — Linking + starting the trial
-  Notes: tests 3380 pass, tsc 0 errors. deps.ts (server-only) exports linkAcademyPurchase(purchaseId,userId,by,{dry}),
-  linkPendingForUser(userId), unlinkAcademyPurchase(purchaseId,{dry}), cancelTrialForRefund(piId,fullyRefunded),
-  liveAcademyDeps(), academyCustomerFor(userId,email). link.ts = same core with (deps, ...) + HOLDS_A_PLAN,
-  trialSubscriptionParams, trialIdempotencyKey, flagReasonFor. emails.ts has the refund email only (Phase 5 adds the
-  reminder). Activity via recordActivity (awaitable). Unlink also restores the profile's previous customer and clears
-  the buyer's card. customer.ts +6 lines, kinds.ts +2 lines.
-- [x] Phase 3 — Webhook + monthly trial credit
-  Notes: tests 3391 pass. deps.academy {recordPurchase, linkAfterPurchase(purchaseId,userId), cancelTrialForRefund};
-  purchase upsert lives in src/lib/stripe/deps.ts. grants.ts: ensureAcademyTrialMonthlyGrant + pure academyTrialSlotDue.
-  Sweep returns academyTrialGranted / dry academyTrialDue. Dispute path left unchanged (harmless for academy).
-- [x] Phase 4 — Checkout + pages
-  Notes: tests 3403 pass, build OK; proxy leaves /academy public, not in sitemap. src/lib/academy/cancel-link.ts exports
-  academyCancelUrl(subId, trialEndsAt) (falls back to /account/billing without a signing key) and
-  verifyAcademyCancelToken(token). Checkout params builder in checkout-params.ts; 503 if Pro price isn't monthly GBP.
-  Welcome page has extra short messages for refunded / flagged / linked-elsewhere purchases (flag to Zac in the PR).
-- [x] Phase 5 — Reminder email + daily cron
-  Notes: tests 3408 pass. runAcademyReminders({dry, now?}) → {status, body} in src/lib/academy/reminders-run.ts.
-  Cron 06:47 UTC (picks emails start 07:00). Email builders: academyReminderEmail, academyRefundEmail. cap.ts +4 lines;
-  cap.test.ts +5 lines (its test required every kind to have an unsubscribe switch; academy_reminder must have none).
-- [x] Phase 6 — Admin panel
-  Notes: tests 3408, build OK. academy-actions.ts (link/unlink/reminders, each requireAdmin + dry run first),
-  AcademyPanel.tsx + AcademyPanelClient.tsx; page.tsx +2 lines. Unlink hidden for refunded/cancelled trials too.
-- [x] Phase 7 — Account line + sign-in linking
-  Notes: tests 3408, build OK. account-view.ts (new); ManagePlan +8/−4, account/page.tsx +4/−2 (PROFILE_COLUMNS gains
-  stripe_default_payment_method_id; not ACCESS_COLUMNS), sign-in-hooks +8. "Manage or cancel" links to /account/billing
-  (the portal button lives there; no portal button on /account to reuse).
-- [x] Phase 8 — Stayful Intelligence knowledge drafts
-  Notes: tests 3408. Placeholders pro_plan_cost, academy_trial_months, academy_reminder_days. Draft slugs academy_includes,
-  academy_trial_end, academy_cancel, academy_no_trial (word "free" left out of two questions so existing matching tests
-  keep routing "is the service free" correctly). service-facts entry under CREDIT, PLANS AND PAYING.
-- [x] Phase 9 — Final checks + review
-  Notes: tests 3417 pass, lint 0 errors (79 old warnings), tsc 0, build OK, schema twice OK; no ACCESS_COLUMNS / funnels /
-  price changes. Independent review found 6 bugs, all fixed: admin Unlink now sticks (flag unlinked_admin, per-attempt
-  Stripe key, never records a non-trialing sub); late first invoice after refund grants nothing; strict payment-intent
-  lookup + replay fills missing card; profile switched only after the trial is claimed (month 1 granted at link time);
-  cancel portal redirects back after cancelling; refund email sent once even after a partial failure.
+- **32a** = Zac's Phase 1: rollover, display, dry-run sweep, measure. One PR.
+- **32b** = Zac's Phase 2: reminders and live expiry. Built ONLY after 32a is merged, `schema.sql` is run and Zac has checked it.
+
+Coordinator rules: one subagent per phase, each replies in 150 words or fewer. After each phase: `git diff --stat`, re-run that phase's check, tick it below, commit "Phase N: <name>". Stop and ask if anything breaks the plan. Never redo ticked phases.
+
+## Progress (32a)
+- [ ] Phase 0 — Setup
+- [ ] Phase 1 — Database
+- [ ] Phase 2 — Grant and Stripe paths
+- [ ] Phase 3 — Pure rollover rules and summary
+- [ ] Phase 4 — Chip, banner and Usage page
+- [ ] Phase 5 — Account and billing screens
+- [ ] Phase 6 — Public wording
+- [ ] Phase 7 — Dry-run sweep and success measure
+- [ ] Phase 8 — Stayful Intelligence knowledge
+- [ ] Phase 9 — Final checks and review, push, draft PR
+
+## Progress (32b) — NOT STARTED, waits for 32a to be merged + schema.sql run + Zac's check
+- [ ] Phase 10 — Database
+- [ ] Phase 11 — Rules, cap, emails, activity
+- [ ] Phase 12 — Reminder cron
+- [ ] Phase 13 — Live expiry, admin, knowledge
+- [ ] Phase 14 — Final checks
 
 ---
 
-
 ## Context
-Zac sells the Stayful Academy as a one-off Stripe payment. Buyers get 3 months of Intelligence Pro free on the
-card they paid with, then £39.99/month (`STRIPE_PRICE_PRO`) unless they cancel, with a reminder 7 days before
-the first charge. Must merge before Batch 31 (customer websites ride on this plan).
 
-Planned against origin/main **a0fa9c2** (the brief said 8bdbf9d; main has 7 newer R4 commits). In owned files
-those touched: `webhook.ts` (dispute recording; the `charge.refunded` case also records disputes now),
-`deps.ts` (recordDispute), `account/billing` + `account/usage` pages (bonusLineFor), `schema.sql` (+173 lines,
-R4 blocks at the end). No conflict: academy code goes in new, labelled blocks. Before building, `git fetch` and
-re-check the ownership files again if main has moved past a0fa9c2.
+A monthly plan buys lead credit. Today, unused plan credit is lost. Zac wants it to roll over so members always get what they paid for. The aim is fewer plan cancellations. There are only 3 plan members today, so it is measured from day one.
 
-## Recon findings that change the brief
-1. **Stripe cannot move a saved card to another customer** (a card saved on customer A can never be attached to
-   B; detaching makes it unusable). Brief step D's "attach the card to the profile's customer" is impossible.
-   → Q2: switch the profile to the academy customer when the old one holds no live plan.
-2. `checkout.session.completed` writes the session's customer onto the profile for every one-off payment and gives
-   up when there's no account. The academy branch must run first and return, or it would overwrite customers.
-3. **£0 trial invoice bug confirmed**: today it grants Pro credit expiring at the trial end (day 90): one month's
-   credit for three months. Fix: month 1 keyed `trial:<sub>:<YYYY-MM>` expiring after one month; the 03:00 credit
-   sweep grants months 2 and 3 the same way annual plans get theirs.
-4. `annualSlots` is hard-wired to 12 → generalised to `monthSlots(start, end, count)`; the last slot always ends at
-   the trial end, so 3 slots cover exactly the 90 days whatever the month lengths.
-5. Password sign-in never runs `runSignInHooks` (only email-link sign-ins do). New sign-ups are covered (their
-   confirmation link runs it). Safety net: the daily academy cron also links unlinked purchases whose email now
-   matches a confirmed account (shown in its dry run).
-6. The existing checkout helper silently drops the terms tick box when Stripe has no Terms URL. The academy
-   checkout fails closed instead: the tick box is the saved-card consent.
-7. Custom tick-box wording: `consent_collection.terms_of_service: 'required'` +
-   `custom_text.terms_of_service_acceptance.message` (needs a Terms URL in the Stripe dashboard).
-8. Billing emails are never capped today (`src/lib/notify/cap.ts`). To count the reminder against the
-   one-a-day cap it becomes a new capped kind `academy_reminder` with no unsubscribe switch.
-9. Stripe portal links expire within minutes, so the email can't hold one. → Q4: signed one-tap link.
-10. Access: a trial gets everything a paid member gets (picks/Today/deals skip the 48h delay via `hasEverPaid`;
-    reports; digests). Only labels/weighting differ, none block: sourcing-demand weighting counts a trial as not
-    paying; Monday "Monthly value" counts a trial at full price; weekly-active billing shows "Never paid";
-    ManagePlan says "Renews on…" (fixed by H); a trial cancelled before paying keeps the no-delay (existing
-    lapsed rule). Default: leave all as they are.
-11. Day-91 card failure → `past_due` keeps Pro while Stripe retries, then free when Stripe gives up (existing).
-    Click-through step 8 must move the test clock past the retry schedule.
-12. Link only to accounts whose sign-in email is confirmed (stops someone claiming a trial with an unverified
-    address). Academy checkout is card-only (a trial needs a card; no delayed payment methods).
-13. `node_modules` isn't installed here: phase 0 runs `npm ci`.
+### What recon confirmed
+Plan credit lapses today, in four places:
+1. `expires_at` is set to the period end on every plan grant (`src/lib/stripe/webhook.ts:669,706-716`; annual and trial grants in `src/lib/stripe/grants.ts:162-230`).
+2. Every renewal wipes the old grant: `credit_plan_cycle` → `credit_expire_plan_grants` (`supabase/schema.sql:5815-5830, 1011-1029`).
+3. Cancelling wipes it (`webhook.ts:786-811`).
+4. The 03:00 sweep (`credit_expire_due`, `schema.sql:1034`).
 
-## Zac's answers (19 Nov)
-- Q1: keep all five brief defaults.
-- Q2: different Stripe customer → switch the profile to the academy customer, only if the old customer holds no
-  live plan (checked in Stripe); old customer untouched, its id saved in `previous_customer_id`. If the old one
-  has a live plan → no trial, flagged (brief question 3).
-- Q3: reminder first: the cron runs before the morning picks; the reminder takes the day's slot 7 days before
-  the charge (the picks email moves to the next day). If the slot is already taken (e.g. an SI call), wait a day;
-  on day 5 send anyway.
-- Q4: one-tap signed link (HMAC via `src/lib/crypto/sign.ts`, expires at trial end) → Stripe portal
-  `subscription_cancel` flow for that trial, no sign-in. Invalid/expired → `/account/billing`.
+Other credit already never expires: top-ups, the pack's £10 and welcome credit. The pack's £20 bonus keeps its 30-day rule.
 
-## Decisions (brief defaults + recon defaults)
-- 90 days start at link; unlinked purchases older than 14 days flagged in admin.
-- One purchase = one trial ever; a second purchase by the same email is flagged, no second trial.
-- Buyer with a live plan (active/trialing/past_due/paused/unpaid/incomplete, checked in Stripe): no trial, flagged.
-- Team members (billing owned by a team owner): no trial, flagged for admin.
-- Full refund while trialing: cancel the trial now + refund email. Partial refund: recorded only, no cancel.
-  Dispute: nothing automatic (visible in admin).
-- Refund email: subject "Your Academy refund"; body "Your Stayful Academy purchase has been refunded, so your free
-  months of Stayful Intelligence Pro have ended today. You won't be charged anything. Your account, deals and
-  history stay as they are on the free plan."
-- Admin Unlink (only while no invoice has been paid): cancels the trial subscription now and frees the purchase
-  to be linked to another account (fresh 90 days).
-- Academy money is not added to the member's Intelligence "Total paid", Monday row or Meta events.
-- `/academy` is not in the nav, sitemap or search (noindex). No promo codes on the academy checkout.
-- Amounts in the wording (£39.99) are read from the Stripe Pro price at send time, so the text stays exact if
-  the price changes (same words today).
-- Welcome page masks the purchase email (j•••@gmail.com) — never shown in full to whoever opens the URL.
+How plan grants are made: the Stripe `invoice.paid` webhook (idempotent through `stripe_events` and the unique `source_ref`). Annual and Academy trial grants come from the 03:00 credit-sweep cron.
 
-## FINAL COMPLETE PLAN (phases; each ≤ ~5 files, one subagent each)
+The spend order already matches Zac's rule: bonus (where allowed), then plan oldest-first once plan grants have no expiry, then welcome, then top-ups and adjustments (`schema.sql:883-888, 7666-7671`). `credit_debit` and `credit_debit_face` are NOT changed. Tests pin the order.
 
-### Phase 0 — Setup (no deps)
-1. Branch `batch-31a-academy-trial` from origin/main (a0fa9c2 or newer; report changes to owned files).
-2. `npm ci`; baseline `npm test`, `npm run lint` pass. ✔ check: both green before any change.
+Nothing existing does rollover or no-spend expiry. "Last spent" is read from `credit_transactions` (kind debit, amount < 0, existing `(user_id, at desc)` index).
 
-### Phase 1 — Pure rules + schema (deps: 0)
-Files: `src/lib/academy/rules.ts` (new), `src/lib/academy/rules.test.ts` (new), `src/lib/stripe/annual.ts`,
-`src/lib/stripe/annual.test.ts`, `supabase/schema.sql`.
-1. `rules.ts` (pure): `ACADEMY_FACTS` {trialDays 90, trialMonths 3, reminderDaysBefore 7, reminderLatestDaysBefore 5,
-   chaseUnlinkedDays 14}; `emailKey`; `linkDecision(purchase, profile, facts)` → start | already | refuse_* (live
-   plan, email mismatch, unconfirmed email, refunded, team member, no consent, repeat purchase);
-   `reminderDecision(trialEnd, now, slotFree, sentAt, state)` → wait | send | send_anyway | skip;
-   `trialSlotKey(subId, slot)`; masked email.
-2. `annual.ts`: add `monthSlots(start, end, count)` + `monthSlotAt`; `annualSlots` becomes `monthSlots(…, 12)`
-   (identical output; existing annual tests unchanged).
-3. `schema.sql`: new block `academy_purchases` — `create table if not exists` + `add column if not exists` only:
-   id, email (check lower-case), stripe_customer_id, stripe_payment_intent_id (unique), stripe_payment_method_id,
-   amount_pence, paid_at, user_id (nullable → profiles), linked_at, linked_by ('auto'|'admin'),
-   trial_subscription_id, refunded_at, **plus** stripe_checkout_session_id, terms_accepted_at, trial_started_at,
-   trial_ends_at, previous_customer_id, flag_reason, reminder_sent_at, trial_cancelled_at, created_at, updated_at.
-   Indexes `if not exists` (email where user_id is null; unique trial_subscription_id where not null).
-   RLS on, no policies, `revoke all … from anon, authenticated` (as notification_sends). Nothing in ACCESS_COLUMNS.
-4. Tests: link decisions (non-matching email doesn't link, live plan refused, repeat purchase flagged); trial slots
-   for start days 1–31 in every month: exactly 3 slots, keys distinct, last ends at trial end; simulated sweep
-   day 0→100 grants months 2 and 3 exactly once each; reminder decision (day 7 free slot → send; slot used →
-   wait; day 5 → send anyway; sent → skip; cancelled/refunded → skip).
-✔ Check: `npm test` green; locally on Postgres 16: shim.sql → schema.sql → dump → schema.sql again → no index
-rebuilt, no diff (the CI "schema" job steps).
+Refunds: a failed-action refund already goes back to its source grant (`credit_refund`). A refunded or charged-back plan payment claws nothing back today.
 
-### Phase 2 — Linking + starting the trial (deps: 1)
-Files: `src/lib/academy/link.ts` (new, core with injected deps), `src/lib/academy/link.test.ts` (new),
-`src/lib/academy/deps.ts` (new, live Supabase/Stripe wiring, server-only), `src/lib/stripe/customer.ts`,
-`src/lib/activity/kinds.ts`.
-1. `linkAcademyPurchase(purchaseId, userId, by, { dry })` → returns a plan of exactly what will happen (used by
-   admin Dry run) and, when not dry, does it:
-   - refuses per `linkDecision`; Stripe is asked for live subscriptions on both customers (copy subscribe's
-     HOLDS_A_PLAN check); returns `already` if `trial_subscription_id` is set.
-   - customer: profile has none → set it to the purchase's customer. Profile has a different customer → if it holds no live plan, switch the profile to the purchase customer and save the old id in `previous_customer_id`; otherwise refuse and flag.
-   - `savePaymentMethod`; `subscriptions.create` {Pro price, `trial_period_days: 90`, `default_payment_method`,
-     `trial_settings.end_behavior.missing_payment_method: 'cancel'`, metadata {user_id, plan_code 'pro',
-     source 'academy', academy_purchase_id}}, idempotency key `academy-trial:<purchaseId>`. Before creating, look
-     for an existing subscription with that `academy_purchase_id` (idempotency keys expire after 24h).
-   - conditional write (`trial_subscription_id is null`) of trial id/start/end, user_id, linked_at/by; stamp the
-     profile's subscription id + 'trialing' (as subscribe does) so a second run sees a live plan.
-   - `logActivity('academy_trial_started', dedupe academy_trial_started:<subId>)`.
-2. `unlinkAcademyPurchase(purchaseId, { dry })`: only if no paid invoice on the trial; cancels it now.
-3. `cancelTrialForRefund(paymentIntentId, fullyRefunded)`: sets refunded_at; full refund + still trialing →
-   cancel now + refund email.
-4. `customer.ts` `ensureStripeCustomer`: before creating a new customer, reuse the customer of an academy purchase
-   linked to this user, or unlinked with the same email (≈5 lines; listed in the PR).
-5. `kinds.ts`: `academy_trial_started: inApp('Academy trial started')` (1 line; counts for weekly active).
-6. Tests (fake deps): linking twice starts one subscription; live plan refused, nothing created; non-matching
-   email doesn't link; unconfirmed email refused; refunded purchase refused; different-customer case switches only when the old customer has no live plan.
-✔ Check: `npm test` green; `git diff` on customer.ts ≤ ~8 lines.
+ACCESS_COLUMNS: no change. Nothing treats plan credit as proof of being on a plan.
 
-### Phase 3 — Webhook + monthly trial credit (deps: 1, 2)
-Files: `src/lib/stripe/webhook.ts`, `src/lib/stripe/webhook.test.ts`, `src/lib/stripe/deps.ts`,
-`src/lib/stripe/grants.ts`, `src/app/api/internal/credit-sweep/route.ts`.
-1. Webhook (new academy block, optional `deps.academy`):
-   - `checkout.session.completed` with `metadata.kind = 'academy'`: handled first and returned. Record the
-     purchase idempotently on the payment intent id (consent from `session.consent`), then try to link
-     (client_reference_id, else the purchase email). Never touches the profile's customer itself.
-   - `invoice.paid`: subscription `metadata.source = 'academy'`, `trialing`, `subscription_create` → grant month 1
-     as `trial:<sub>:<YYYY-MM of trial start>`, expiring at min(start + 1 month, trial end). Day-91 invoice
-     (`subscription_cycle`) is unchanged: normal Pro cycle, which also expires leftover trial credit.
-   - `charge.refunded`: payment intent `metadata.kind = 'academy'` → `cancelTrialForRefund`; skip the member
-     refund ledger for it. Disputes: no automatic action.
-2. `grants.ts`: `ensureAcademyTrialMonthlyGrant(purchase)` — current slot via `monthSlotAt(trialStart, trialEnd,
-   now, 3)`, only while the profile's subscription is that trial and `trialing` and not refunded;
-   `grantPlanCycle(user, 'pro', 'trial:<sub>:<key>', slot.to, { notify: slot > 0, periodStart: trialStart })`.
-3. Credit sweep: loop academy trials after the annual loop; dry run lists the trial months it would grant.
-4. Tests: £0 trial invoice grants month 1 with the right key and expiry; a non-academy £0 invoice unchanged;
-   academy checkout records + links and doesn't overwrite the profile's customer; checkout with no account
-   records only; full refund cancels the trial; partial refund doesn't; replayed events change nothing.
-✔ Check: `npm test` green; existing webhook tests untouched and passing.
+### Rules (Zac's, plus the answers of 20 Nov)
+- No cap on rollover.
+- Spend order: expiring pack bonus, then oldest plan credit, then welcome (unchanged), then top-ups and adjustments.
+- 12-month expiry (plan credit only).
+- What counts as spend: any debit, including automatic daily-deal charges and team members' spending (they spend the owner's balance).
+- The clock runs from the later of the last spend and the launch date (`plan_credit_rollover_from`).
+- The newest month is protected: the most recent month's plan credit (the newest renewal grant and anything added after it) never expires this way.
+- Not covered: top-ups, the pack's £10, welcome and promo credit are outside this rule; they keep their own rules (top-ups and the £10 never expire). This keeps the "top-up credit never expires" promise.
+- Reminders at 3, 6 and 12 months of no spend.
+  - All three go through the one-a-day cap. If the cap skips one, it waits for the next day.
+  - The 3- and 6-month reminders respect the "credit alerts" switch. The 12-month final warning is a billing notice and ignores opt-outs.
+- Credit expires 30 days after the final warning was actually sent, if there has still been no spend.
+  - Only grants that existed when the warning was sent can expire, and never the newest month.
+  - The final warning and the expiry never run in the same job: reminders run at 06:43, expiry at 03:00, with at least 30 days between them.
+- Cancel, pause, downgrade: none of them forfeit credit. Re-subscribing adds new credit on top.
+- Refunded or charged-back plan payment: that payment's unspent credit is removed (never below zero, other credit untouched). A won chargeback puts it back.
+- Academy trials:
+  - Refunded purchase: its trial credit is removed (today's behaviour, kept).
+  - Trial cancelled before the first paid month: its trial credit is removed.
+  - After one paid month: trial credit rolls over like any plan credit.
+- Usage chip: shows the balance and "about X days of daily deals" (on a phone the days stay in the tooltip, as today), plus "£Y of your balance rolled over" when Y > 0. No % ring.
 
-### Phase 4 — Checkout + pages (deps: 1, 2)
-Files: `src/app/api/billing/academy/checkout/route.ts`, `src/app/api/billing/academy/cancel/route.ts`,
-`src/app/academy/page.tsx` (+ small client button), `src/app/academy/welcome/page.tsx`, `.env.example`.
-1. Checkout: Stripe Checkout `mode: 'payment'`, card only, price `STRIPE_PRICE_ACADEMY`,
-   `payment_intent_data.setup_future_usage: 'off_session'`, `metadata.kind = 'academy'` on session and payment
-   intent, terms tick box required with the exact section-6 wording (amount from the Stripe Pro price). Signed in
-   (not a team member): `customer` = their customer + `client_reference_id`; signed out: `customer_creation:
-   'always'`. Refuses to open (503) if the price, Pro price or Terms URL is missing — never without the tick box.
-2. `/academy`: one "Buy the Academy" button; public, noindex, not in nav/sitemap (check the proxy/middleware lets
-   it through signed out).
-3. `/academy/welcome?session_id=…`: signed in + linked → "Your 3 free months have started"; signed out, or emails
-   differ → "Use the email you bought the Academy with, or contact us." (masked email, sign-up link).
-4. Cancel link route: GET with a signed token (expires at trial end, `src/lib/crypto/sign.ts`) → fresh Stripe portal `subscription_cancel` flow for that trial, no sign-in; bad/expired token → `/account/billing`.
-5. `.env.example`: `STRIPE_PRICE_ACADEMY=` with a comment (one-off GBP price Zac creates; Terms URL required).
-✔ Check: `npm run build` green; `/academy` loads signed out; checkout route unit-checked for both signed-in and
-signed-out parameter sets (no `customer` + `customer_creation` together).
+### Applied defaults (say if wrong)
+- After cancelling, leftover plan credit is spent at the plan rate (1×), not the top-up rate.
+- A £0.01 spend resets the clock (intended).
+- A refunded action doesn't un-reset the clock.
 
-### Phase 5 — Reminder email + daily cron (deps: 1, 2)
-Files: `src/lib/academy/emails.ts` (+ `emails.test.ts`), `src/lib/academy/reminders-run.ts`,
-`src/lib/notify/cap.ts`, `src/app/api/internal/academy-reminders/route.ts`, `vercel.json`.
-1. `emails.ts`: reminder (exact subject/body from section 6; date, amount, last4, cancel link) and refund email.
-2. `cap.ts`: new kind `academy_reminder` → daily slot, no unsubscribe switch (2 lines).
-3. `runAcademyReminders({ dry })`: (a) link any unlinked purchase whose email matches a confirmed account;
-   (b) per trialing, not-cancelling, not-refunded trial with no reminder sent: `reminderDecision`; claim the day's
-   slot (`claimSlot`) or, on the last allowed day (5 days before), send anyway; send with Resend idempotency key
-   `academy-trial-reminder:<subId>`; stamp `reminder_sent_at`. Ignores marketing unsubscribe. Dry run: who would
-   get it today, who waits, full email preview, links it would make — sends and writes nothing.
-4. Route: same shape as other internal crons (404 without secrets, 401 without auth, `?dry=1`).
-5. `vercel.json`: one cron line, daily, scheduled before the morning picks email (check the picks cron time in vercel.json).
-6. Tests: sends once (second run skips); waits when the day's slot is taken; sends anyway on day 5; never for a
-   cancelled or refunded trial; email text matches section 6 exactly.
-✔ Check: `npm test` green; `vercel.json` diff is one cron entry.
+### Problems found and fixed in the plan
+| Problem | Fix |
+|---|---|
+| Upgrade top-up (`grantUpgradeDifference`) counts banked credit, so upgraders would get nothing. | Compare against this cycle's grants only. |
+| Chip/Usage "allowance" sums every open plan grant (`summary.ts:63-76`), and the Usage period starts at the oldest grant (`usage-server.ts:37-55`). | New `credit_grants.plan_cycle` flag marks renewal grants; measure from the newest one. |
+| The 80% rule and once-a-cycle emails use `cycle.endsAt` (`after-debit.ts:97`). Annual members would get an end date a year away, so the emails could repeat. | `endsAt` = when the next plan credit arrives. |
+| Academy refund relied on "cancel wipes credit". | Targeted trial-credit removal. |
+| Wording that promises credit resets. | Updated in Phases 5 and 6. |
+| The code could deploy before `schema.sql` is run. | Code passes no expiry, the SQL ignores any expiry, and `schema.sql` is run the same day. |
 
-### Phase 6 — Admin panel (deps: 2, 5)
-Files: `src/app/admin/billing/academy-actions.ts` (new), `src/app/admin/billing/AcademyPanel.tsx` (new),
-`src/app/admin/billing/page.tsx` (import + render, 2 lines).
-1. "Academy purchases": every purchase — email, paid date/amount, linked to whom (auto/admin), trial status, trial
-   end, reminder sent, flags (unlinked > 14 days, repeat purchase, live plan, team member, refunded).
-2. "Link to member": search by email → Dry run shows exactly what will happen (customer used, card, trial dates,
-   any refusal) → Run enabled only after a clean dry run (TidyPanel pattern).
-3. "Unlink": only while nothing has been charged; Dry run → Run.
-4. Reminder cron Dry run / Run buttons (calls the runner directly, like other admin crons).
-✔ Check: `npm run build` green; every action has a dry run; all actions call `requireAdmin`.
+---
 
-### Phase 7 — Account line + sign-in linking (deps: 2)
-Files: `src/app/account/page.tsx`, `src/app/account/ManagePlan.tsx`, `src/lib/auth/sign-in-hooks.ts`.
-1. Account plan card for an academy trial: "Academy: Pro free until <date>. Then £39.99/month on card ending
-   <last4>. [Manage or cancel]" (amount from Stripe price; existing portal button).
-2. `runSignInHooks`: if the email is confirmed, after the response, link any unlinked purchase with that email
-   (≈6 lines).
-✔ Check: `npm run build` green; diffs listed line by line in the PR.
+# Batch 32a — Rollover and display
 
-### Phase 8 — Stayful Intelligence knowledge drafts (deps: 1)
-Files: `src/lib/knowledge/placeholders.ts`, `src/lib/knowledge/seed.ts`, `src/lib/knowledge/service-facts.ts`.
-1. Placeholders: `academy_trial_months`, `academy_reminder_days` (from `ACADEMY_FACTS`), `pro_plan_cost`
-   (billing_plans 'pro').
-2. Draft entries (never approved in code), every figure a placeholder: what the Academy includes; when the free
-   months end and what's charged after; how to cancel; "I bought the Academy but have no free months" (same email
-   or contact us). Appended in one labelled block (Batch 31 may also edit seed.ts).
-3. service-facts: the academy trial fact the nightly job drafts from.
-✔ Check: `npm test` green (seed tests: every placeholder resolves, no typed figure).
+## Phase 0 — Setup (no dependencies)
+- Re-check origin/main against cf6935e and rebase if it has moved.
+- Write PLAN.md from this plan (replacing the merged 31a plan, which stays in git history) and commit it.
+- Run `npm ci` and record the baseline for `npm test`, `npm run lint` and `npm run build`.
+- Create a scratchpad script that loads `supabase/tests/shim.sql` and runs `schema.sql` twice plus every smoke file on a local Postgres 16, as CI does. If there is no local Postgres, CI is the check.
 
-### Phase 9 — Final checks + review (deps: all)
-1. `npm test`, `npm run lint`, `npm run build`, schema twice locally — failures only.
-2. Review: no double/missing trial months; no trial without a purchase; no access gap for trials; no full email
-   on public pages or logs; every cron/admin action has a dry run; schema additive only; `git diff` shows no
-   `ACCESS_COLUMNS`, `src/lib/funnels/**`, pricing settings or plan price changes; no duplicate Stripe customers;
-   no off-session charge without the tick-box consent.
-3. Stripe test mode end to end needs Stripe test keys (the Stripe connector here needs signing in): done by Zac
-   with the click-through list.
-4. PR (draft) listing every line changed in customer.ts, sign-in-hooks.ts, account/**, cap.ts, kinds.ts,
-   credit-sweep, admin billing page.
+**Check:** the baseline numbers are recorded in the Notes line.
 
-## Files
-Create: `src/lib/academy/{rules,rules.test,link,link.test,deps,emails,emails.test,reminders-run}.ts`,
-`src/app/academy/page.tsx` (+ button), `src/app/academy/welcome/page.tsx`,
-`src/app/api/billing/academy/{checkout,cancel}/route.ts`, `src/app/api/internal/academy-reminders/route.ts`,
-`src/app/admin/billing/{academy-actions.ts,AcademyPanel.tsx}`.
-Change: `supabase/schema.sql`, `src/lib/stripe/{annual,annual.test,webhook,webhook.test,deps,grants}.ts`,
-`src/app/api/internal/credit-sweep/route.ts`, `vercel.json`, `.env.example`, `src/app/admin/billing/page.tsx`.
-Minimal (every line listed): `src/lib/stripe/customer.ts`, `src/lib/auth/sign-in-hooks.ts`,
-`src/app/account/{page.tsx,ManagePlan.tsx}`, `src/lib/notify/cap.ts`, `src/lib/activity/kinds.ts`,
-`src/lib/knowledge/{placeholders,seed,service-facts}.ts`.
-Do not touch: `ACCESS_COLUMNS`, `src/lib/funnels/**`, pricing settings, plan prices, `src/app/(auth)/actions.ts`.
+## Phase 1 — Database (depends on 0)
+Files: `supabase/schema.sql`, new `supabase/tests/rollover-smoke.sql`, `.github/workflows/ci.yml` (one line to run the new smoke file).
 
-## Remaining risks (each with rollback)
-- A typo'd email at checkout that matches someone else's confirmed account gives them the trial on the buyer's card
-  (reminder goes to that account). Rollback: admin Unlink before day 91; refund.
-- A bank asks for 3-D Secure on day 91 → invoice fails → past_due → free after retries (as today). Rollback: none
-  needed; Stripe's "payment needs action" email if enabled.
-- Stripe Terms URL not set → academy checkout refuses to open. Rollback: set it in the Stripe dashboard.
-- seed.ts / admin billing page also edited by Batch 31 → merge conflict. Rollback: append-only blocks; rebase.
-- Anything wrong after deploy: unset `STRIPE_PRICE_ACADEMY` (checkout closes), remove the cron line; the table
-  stays (additive).
+- Settings (`insert … on conflict do nothing`): `plan_credit_idle_months` 12, `plan_credit_idle_reminder_months` [3,6,12], `plan_credit_final_notice_days` 30.
+- Flag column: `alter table credit_grants add column if not exists plan_cycle boolean not null default false`.
+- Run-once migration guarded by the `batch32_rollover_from` key in `billing_settings`. It:
+  - stores `plan_credit_rollover_from = now()`;
+  - sets `expires_at = null` on plan grants where `remaining_pence > 0 and expires_at > now()`;
+  - sets `plan_cycle = true` on existing plan grants.
+  - Credit that lapsed before launch is not restored.
+- `credit_plan_cycle`: same signature. Remove the `credit_expire_plan_grants` call. The grant always has `expires_at = null` and `plan_cycle = true`. It still returns `expired 0`. A replay of the same `source_ref` still creates nothing. (The SQL ignores any expiry passed in, so code deployed before schema.sql is run is safe.)
+- New, read-only, service-role only: `credit_idle_plan_report(p_now timestamptz default now())`. It returns, for members holding plan credit whose idle time (`p_now − greatest(last debit at, rollover_from)`) is at least `plan_credit_idle_months`:
+  - `user_id, last_spent_at, idle_since, plan_remaining_pence`;
+  - `expirable_pence`: plan credit in grants created before the newest `plan_cycle` grant.
+- New, service-role only: `credit_expire_plan_source(p_user, p_source_like, p_max_pence, p_reason)`.
+  - Locks the profile, then zeroes up to `p_max_pence` of matching plan grants.
+  - Writes expire ledger rows with the reason. Never goes below zero.
+  - Used for clawing back refunded invoices (`inv:<id>`) and trial credit (`trial:<sub>:%`).
+- Left unchanged: `credit_debit`, `credit_debit_face`, `credit_reserve`, `credit_refund`, `credit_expire_due`, `funnel_lead_charge`, `website_report_charge`. `credit_expire_plan_grants` stays, but is no longer called by renewal or cancel.
+- Smoke test (`rollover-smoke.sql`):
+  - Grant £19, spend £6, next cycle: £13 + £19 = £32.
+  - A replayed cycle adds nothing.
+  - Spend order: bonus, then old plan, then new plan, then welcome, then top-up.
+  - Refund goes back to the source grant.
+  - The idle report includes a member idle 12 months and excludes one idle 11 months. It excludes the newest month from `expirable_pence`. A 1p debit removes the member from the report.
+  - The clawback stops at zero and touches only matching grants.
 
-## Handover (after approval)
-Save this plan as `PLAN.md` at the repo root as a checkbox list of phases with a blank "Notes:" line under each,
-commit it on `batch-31a-academy-trial`, then build phase by phase as a coordinator (one subagent per phase,
-≤150-word reports, tick + commit "Phase N: <name>" after each check passes; stop and ask on any blocker).
+**Check:** `schema.sql` runs twice cleanly; all smoke files pass; `npm test` is unchanged. Rollback: revert the commit. The migration only nulls expiry dates; to undo, re-set `expires_at` to the period end.
 
-## Verification
-Unit tests per phase; schema twice on local Postgres 16; `npm run build`; then Zac's test-mode click-through
-(section 10 of the brief), with step 8 advancing the clock past Stripe's retry schedule.
+## Phase 2 — Grant and Stripe paths (depends on 1)
+Files: `src/lib/stripe/grants.ts`, `src/lib/stripe/webhook.ts`, `src/lib/stripe/deps.ts`, `src/lib/credit/ledger.ts`, plus the existing webhook/grants test files.
 
-## Exact wording (Zac's section 6 — use exactly; £39.99 rendered from the Stripe Pro price, 3 months / 7 days from ACADEMY_FACTS)
-- Checkout terms: "Includes 3 months of Stayful Intelligence Pro free, starting when you create your Intelligence
-  account with this email. After that it's £39.99/month on this card until you cancel. Cancel any time in
-  Account → Billing."
-- Reminder email subject: "Your free Academy months end on <date>"
-- Reminder email body: "Your 3 free months of Stayful Intelligence Pro end on <date>. From then it's £39.99/month
-  on your card ending <last4>. Nothing to do if you'd like to keep it. To cancel, tap here: <portal link>."
-- No-match message: "Use the email you bought the Academy with, or contact us."
-- Account line: "Academy: Pro free until <date>. Then £39.99/month on card ending <last4>. [Manage or cancel]"
-- Refund email: subject "Your Academy refund"; body as in Decisions above.
+- `ledger.ts`: wrappers for `idlePlanReport` and `expirePlanSource`. `planCycle` and `grant` pass no expiry for plan grants.
+- `grants.ts`:
+  - `grantPlanCycle`, the annual and the trial grants all use no expiry.
+  - The fallback path (when the RPC is missing) no longer calls `expirePlanGrants` and marks `plan_cycle`.
+  - `grantUpgradeDifference` = new plan credit − this cycle's plan grants (the newest `plan_cycle` grant onwards), not all open plan credit.
+- `webhook.ts`:
+  - Subscription ended: no longer wipes plan credit.
+  - Academy refund: expire `trial:<sub>:%`.
+  - Academy trial ending before any paid invoice: expire `trial:<sub>:%` (use the existing paid-payments record; check it before relying on it).
+  - `charge.refunded` / `charge.dispute.created` on a plan invoice: `expirePlanSource('inv:<invoice>', the refunded share)`.
+  - `charge.dispute.closed` won: put back what was removed, as a plan grant with `source_ref inv:<id>:dispute_won`. Idempotent through the unique `source_ref`.
+- Tests:
+  - Webhook redelivery: no double grant.
+  - Cancel keeps credit.
+  - Upgrade with banked credit still gets its top-up.
+  - Refund and chargeback claw back only that invoice's leftover credit; a won dispute restores it once.
+  - Academy refund and unpaid trial forfeit only trial credit.
+  - Pause and downgrade keep credit.
+
+**Check:** `npm test` passes, `tsc` reports 0 errors.
+
+## Phase 3 — Pure rollover rules and summary (depends on 1)
+Files: new `src/lib/credit/rollover.ts` and `rollover.test.ts` (pure); `src/lib/credit/summary.ts`; `src/lib/credit/usage-server.ts`; `src/components/credit/CreditProvider.tsx` (snapshot type).
+
+- `rollover.ts`:
+  - `currentCycleGrants(grants)` and `rolledOverPence(grants)` (plan credit left in older grants).
+  - `nextPlanCreditAt(newestCycleGrant, currentPeriodEnd)`: the earlier of `addMonthsClamped(created, 1)` and the period end.
+  - `idleSince(lastSpentAt, rolloverFrom)`.
+- `summary.ts`: allowance = this cycle's grants; add `rolledOverPence`; `endsAt = nextPlanCreditAt(...)`. The low-balance rule then means "plan credit below 20% of one month's".
+- `usage-server.ts`: the period starts at the newest cycle grant.
+- Tests:
+  - Rollover across a month end.
+  - Rolled-over amount after spending (oldest is spent first).
+  - An annual member's `endsAt` is about a month away, not a year.
+  - Upgrade-cycle grouping.
+
+**Check:** `npm test` passes.
+
+## Phase 4 — Chip, banner and Usage page (depends on 3)
+Files: `src/components/credit/UsageChip.tsx`, `src/components/credit/CreditBanner.tsx`, `src/app/account/usage/page.tsx`.
+
+- Chip: the plan branch drops the ring and the %. It shows the balance + "about X days of daily deals left" (the same `dailyDealsDaysLeft` used for pay-as-you-go). The tooltip and aria-label add "£Y of your balance rolled over" when Y > 0.
+- Banner: "Running low: £X of credit left" instead of a %.
+- Usage page: replace "% of £X plan credit used" with "£X plan credit this month · £Y of your balance rolled over".
+
+**Check:** `npm test` and `npm run build` pass. The text "plan credit used" no longer appears in the chip.
+
+## Phase 5 — Account and billing screens (depends on 3)
+Files: `src/app/account/billing/BillingClient.tsx`, `src/app/account/ManagePlan.tsx`, `src/app/upgrade/page.tsx`, `src/app/account/billing/choose/page.tsx`.
+
+- Billing card: "Plan credit · rolls over" instead of "resets {date}". Replace the "used this month" bar with "£Y rolled over from earlier months · next £X arrives {date}".
+- ManagePlan line 105: "Your credit stays on your account if you cancel."
+- Upgrade page: "of credit left" instead of "this month's … credit left".
+- Choose page: "Unused plan credit rolls over."
+
+**Check:** `npm run build` passes; grep finds no "resets" or "this month's … credit" in these files.
+
+## Phase 6 — Public wording (depends on 0; can run alongside 2–5)
+Files: `src/app/(marketing)/terms/page.tsx`, `src/components/marketing-v3/Pricing.tsx`, `src/lib/faqs-data.ts`, `src/lib/email/billing.ts`.
+
+- Terms 83 and 98: plan credit rolls over with no cap and stays if you pause, downgrade or cancel. After 12 months with no spending we email you; earlier months' plan credit still unspent 30 days later expires. Your latest month never expires this way. Top-up credit never expires. A refunded or charged-back plan payment's unspent credit is removed. Figures come from settings where the page already reads settings. The wording is flagged for Zac to approve.
+- Pricing 67 and 124, and FAQ: "unused plan credit rolls over".
+- Renewal email: drop "valid until" and "resets"; say it rolls over. Payment-failed email: "to keep getting your monthly credit".
+
+**Check:** `npm test` passes. The words "resets", "does not roll over" and "valid until" are gone from these files.
+
+## Phase 7 — Dry-run sweep and success measure (depends on 2, 3)
+Files: `src/app/api/internal/credit-sweep/route.ts`, new `src/lib/admin/rollover-measure.ts` and its test, new `src/lib/admin/rollover-measure-server.ts`, new `src/app/admin/weekly-active/RolloverMeasure.tsx`, `src/app/admin/weekly-active/page.tsx` (+2 lines).
+
+- Sweep: on both the dry run and the live run, report `idlePlanCandidates` (from `credit_idle_plan_report`) and log it. Nothing expires in 32a.
+- Measure (pure + test):
+  - Monthly plan cancellation rate before vs after `plan_credit_rollover_from`, with counts. Reuse `src/lib/billing/churn.ts` / `subscription_events`.
+  - "Too early" while there are fewer than 50 plan members (the same pattern as `src/lib/admin/pack-paying.ts:98`).
+  - Guardrail: weekly-active % of plan members before vs after, from the existing metrics, with its definition unchanged.
+  - Total banked credit across members, and total rolled over.
+- Admin: a section on `/admin/weekly-active`.
+
+**Check:** `npm test` and the build pass. `?dry=1` returns `idlePlanCandidates` and a live run expires nothing.
+
+## Phase 8 — Stayful Intelligence knowledge (depends on 1)
+Files: `src/lib/knowledge/seed.ts`, `src/lib/knowledge/placeholders.ts`, `src/lib/knowledge/service-facts.ts`. Read `src/lib/knowledge/README.md` first.
+
+- Placeholders resolved from settings: `plan_credit_idle_months`, `plan_credit_final_notice_days`, `plan_credit_idle_reminder_months`.
+- Draft entries (never approved in code; no typed figures): `plan_credit_rollover` ("Does plan credit expire / roll over?"), `plan_credit_cancel`, `credit_spend_order`, `credit_idle_expiry`.
+- `service-facts.ts:38`: "unused plan credit rolls over".
+
+**Check:** `npm test` passes; the seed tests show every placeholder resolves and no figure is typed.
+
+## Phase 9 — Final checks and review (depends on all)
+- Run `npm test`, `npm run lint`, `npm run build`, and the schema-twice and smoke checks.
+- An independent review of the diff for: credit charged wrongly; free/paid leaks and address leaks; missing dry runs; non-idempotent schema; ACCESS_COLUMNS changes. Fix what it finds.
+- Push, then open a draft PR with the click-through checklist. The PR must say: **run schema.sql the same day, before 03:00 UTC.**
+
+**Check:** everything is green and the PR is open.
+
+---
+
+# Batch 32b — Reminders and live expiry
+Start only after 32a is merged, schema.sql is run and Zac has checked it.
+
+## Phase 10 — Database (depends on 32a)
+Files: `schema.sql`, `rollover-smoke.sql`.
+- New table `credit_idle_notices(user_id, idle_since, stage, status sent|skipped, sent_at)`, primary key `(user_id, idle_since, stage)`. Service-role only. A spend changes `idle_since`, which starts a fresh run of reminders.
+- New `credit_expire_idle_plan(p_user, p_now)`. Under the profile lock it re-checks that the member is still idle and that the stage-12 notice was sent at least `final_notice_days` ago. It then expires only plan grants created before that notice and not the newest cycle grant. It writes expire rows with reason `no_spend`.
+
+**Check:** smoke passes. A recent notice expires nothing; the newest month is kept; a spend after the notice expires nothing.
+
+## Phase 11 — Rules, cap, emails, activity (depends on 10)
+Files: `rollover.ts` and its test, `src/lib/notify/cap.ts` and `cap.test.ts`, `src/lib/activity/kinds.ts`, new `src/lib/email/credit-idle.ts`.
+- Pure rules: `idleStageDue` returns the highest stage due; lower missed stages are recorded as skipped. `reminderDecision` returns send / wait (cap used: retry tomorrow) / skip (switch off for 3 and 6, or no credit to lose). `expiryDue`.
+- Cap kinds: `credit_idle` (behind the `credit_alerts` switch) and `credit_idle_final` (no switch; added to the cap test's exemption beside `academy_reminder`).
+- Record-only activity kinds: `credit_idle_reminder`, `credit_idle_expired`.
+- Emails state the balance and, in the final warning, the amount and date that would expire.
+
+**Check:** `npm test` passes, including "each stage sends once", "a cap-skipped reminder sends next day", "a spend resets" and "the final warning ignores opt-outs".
+
+## Phase 12 — Reminder cron (depends on 11)
+Files: new `src/lib/credit/idle-reminders-run.ts` and its test (fake deps), new `src/app/api/internal/credit-idle-reminders/route.ts`, `vercel.json`.
+- Copy the Academy reminder pattern: `claimSlot`, then send with idempotency key `credit-idle:<user>:<idle_since>:<stage>`, then stamp. A failure releases the claim.
+- `?dry=1` lists wouldSend / waiting / skipped.
+- Schedule: daily at 06:43 UTC.
+
+**Check:** tests pass; the dry run writes nothing.
+
+## Phase 13 — Live expiry, admin, knowledge (depends on 12)
+Files: `credit-sweep/route.ts`, `RolloverMeasure.tsx`, `rollover-measure-server.ts`, `seed.ts` (only if the wording needs it).
+- 03:00 sweep: expire for candidates whose final notice is at least 30 days old (`credit_expire_idle_plan`) and record `credit_idle_expired`. The dry run lists `wouldExpireIdle`.
+- Admin: "due to expire" and "warned" lists.
+
+**Check:** tests pass. The dry run and the live run agree on fixtures. Nothing expires without a notice 30 or more days old.
+
+## Phase 14 — Final checks
+Same as Phase 9. Open a new draft PR.
+
+---
+
+## Files that must not be touched
+- ACCESS_COLUMNS (`src/lib/access.ts`).
+- The draw order inside `credit_debit` / `credit_debit_face`.
+- Pack-bonus and welcome rules (`credit_grant_pack_bonus`, `pack_bonus_*`, `welcome.ts`).
+- `src/lib/tracking/**`.
+- `src/lib/funnels/charge-server.ts`, `src/lib/funnels/tiers*.ts`, `src/lib/management/report.ts`.
+- Academy files (`src/lib/academy/**`); only the academy branches inside `webhook.ts` change.
+- Website files (`src/lib/websites/**`, `src/app/s/**`).
+- The weekly-active definition (`src/lib/activity/metrics.ts`).
+- Plan prices and plan credit amounts.
+
+## Remaining risks (after the fixes above)
+| Risk | Rollback |
+|---|---|
+| Code deploys before `schema.sql` is run: one renewal could still wipe credit. | Run `schema.sql` straight after merging. If a wipe happens, re-grant it as a plan adjustment. |
+| The new terms wording needs Zac's legal OK. | Revert Phase 6 only. |
+| Rolled-over credit makes cancelling members slightly cheaper to keep using the site (they spend leftover credit at 1×). | Change the rate in one place, the grant `spend_rate`. |
+| The success measure is noise with 3 members. | It is labelled "too early" until there are 50. |
+| 32b emails reach the wrong people. | Turn the cron off in `vercel.json`. The expiry path also refuses without a notice. |
+
+## Click-through checklist (for Zac)
+32a:
+- Test plan member: grant £19, spend £6, advance a month: £13 + new £19.
+- Spend: bonus first, then the oldest plan credit, then top-ups.
+- Cancel: the balance stays.
+- `/api/internal/credit-sweep?dry=1` lists only members with 12 months of no spend, and nothing expires.
+- The chip shows the balance and days left, plus the rolled-over line.
+- After merging, run `supabase/schema.sql` and check the site loads.
+
+32b:
+- Fake 3 / 6 / 12 months of no spend: one email each, once.
+- Spend 1p: the clock resets.
+- Expiry happens only 30 or more days after the final warning.
