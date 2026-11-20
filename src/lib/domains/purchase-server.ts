@@ -550,6 +550,36 @@ export function createDomainEngine(deps: DomainDeps) {
     return result(next ?? row, 'email_sent', true);
   }
 
+  // ── Retrying (the admin's Retry on a failed domain) ──
+
+  /**
+   * A failed domain tried again by hand: if it was already bought, back to connecting and on; if the purchase itself
+   * failed, the purchase again (ownership first, as always).
+   */
+  async function retry(id: string, opts: RunOptions = {}): Promise<RunResult> {
+    const row = await store.domain(id);
+    if (!row) return result(null, 'not_found', false);
+    if (row.status !== 'failed') return result(row, 'bad_status', false);
+    const bought = Boolean(row.boughtAt || row.registrarRef);
+    if (opts.dryRun) {
+      const inner = bought ? await advance(id, { dryRun: true }).catch(() => null) : null;
+      return {
+        ok: true,
+        status: row.status,
+        outcome: 'dry_run',
+        dryRun: true,
+        costPence: bought ? null : row.costPence,
+        steps: bought
+          ? [{ step: 'Reset', detail: `${row.name} was already bought: put it back to connecting and clear the error.` }, ...((await inner)?.steps ?? [])]
+          : [{ step: 'Buy again', detail: `The purchase of ${row.name} failed. Ask the registrar whether Stayful already owns it, then buy it (the spend claim is reused, never doubled).` }],
+      };
+    }
+    if (!bought) return buy(id, { admin: true });
+    const back = await store.updateDomain(id, { status: 'connecting', attempts: 0, lastError: null }, { from: ['failed'], updatedAt: row.updatedAt });
+    if (!back) return result(await store.domain(id), 'busy', true);
+    return advance(id);
+  }
+
   // ── Releasing ──
 
   const RELEASABLE: readonly DomainStatus[] = ['awaiting_admin', 'held_cap', 'needs_choice', 'connecting', 'live', 'failed', 'releasing'];
@@ -703,7 +733,7 @@ export function createDomainEngine(deps: DomainDeps) {
     return { ok: Boolean(next), changed: Boolean(next), dryRun: false };
   }
 
-  return { offerNames, chooseName, buy, advance, resendLiveEmail, release, renew, decideRenewal, autoRenewVerdict, blockRenewal };
+  return { offerNames, chooseName, buy, advance, retry, resendLiveEmail, release, renew, decideRenewal, autoRenewVerdict, blockRenewal };
 }
 
 export type DomainEngine = ReturnType<typeof createDomainEngine>;
