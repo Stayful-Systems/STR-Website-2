@@ -7,7 +7,7 @@ import { areaMetaForCode } from '../market/areas';
 import { districtLocalities } from '../market/district-localities';
 import { districtLabel } from '../market/labels';
 import { MIN_DISTRICT_SAMPLES } from '../market/confidence';
-import { getAreaLongLetRent, modalBedrooms } from '../market/area-longlet';
+import { modalBedrooms } from '../market/area-longlet';
 import type { MarketArea, MarketBedroomAgg, MarketSnapshot } from '../market/types';
 import { DEFAULT_MIN_AREA_SAMPLES, chooseSource, parseAreaKey, parseMinAreaSamples, type AreaOption } from './area.ts';
 
@@ -198,12 +198,9 @@ export async function areaFigureSource(input: { areaKey: string; minSamples?: nu
   const lead = useDistrict && district ? (districtLocalities(district.district)[0] ?? null) : null;
   const rentArea: MarketArea = useDistrict && district ? { ...district, postcode_area: area.postcode_area } : area;
   const bedrooms = modalBedrooms(rentArea) ?? chosen.group.bedrooms;
-  let longLetRent: number | null = null;
-  try {
-    longLetRent = await getAreaLongLetRent(rentArea);
-  } catch (err) {
-    console.error('[ad-packs] long-let rent failed:', err instanceof Error ? err.name : 'error');
-  }
+  // No long-let rent lookup here: it is house-paid PropertyData, no ad uses it, and this read also runs on refused
+  // requests and dry runs, ahead of the cost caps. The field stays (null) so the shape does not change.
+  const longLetRent: number | null = null;
   return {
     areaKey: useDistrict && district ? district.district : area.postcode_area,
     areaLabel: useDistrict && district ? (lead ? `${lead}, ${name}` : `${name} ${district.district}`) : name,

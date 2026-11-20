@@ -452,6 +452,16 @@ test('after a fall-back, asking for the same district again is not a brand chang
   assert.equal(code(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: i })), 'no_brand_change');
 });
 
+test('approve is pinned to the version the operator looked at: a stale version is refused, the right one is approved', async () => {
+  const h = harness();
+  await first(h);
+  const stale = await h.engine.approvePack({ ownerId: OWNER_A, expectedVersion: 7 });
+  assert.ok(!stale.ok && stale.code === 'not_preview');
+  assert.equal((await h.store.getPack(OWNER_A))?.status, 'preview', 'nothing was approved');
+  const right = await h.engine.approvePack({ ownerId: OWNER_A, expectedVersion: 1 });
+  assert.equal(right.ok, true);
+});
+
 test('checks_failed: no logo and no type-only choice stores the ads but does not show them, and does not use the free regenerate', async () => {
   const h = harness();
   const r = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: withBrand({ logoUrl: null }) }));

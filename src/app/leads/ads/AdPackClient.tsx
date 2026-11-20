@@ -225,11 +225,12 @@ export function GenerateForm(p: GenerateFormProps) {
 
 // ── Approve ──
 
-export function ApproveForm({ packId }: { packId: string }) {
+export function ApproveForm({ packId, version }: { packId: string; version: number }) {
   const [state, action, pending] = useActionState(approvePackAction, INITIAL);
   return (
     <form action={action} className={`${card} space-y-3`}>
       <input type="hidden" name="packId" value={packId} />
+      <input type="hidden" name="version" value={version} />
       <p className="text-sm text-foreground">Happy with them? Approve your ads to get the image files and every text to copy.</p>
       <Button type="submit" size="lg" disabled={pending} className="h-11 w-full text-base sm:w-auto sm:px-6">{pending ? "Approving…" : "Approve my ads"}</Button>
       {state.error ? <Alert>{state.error}</Alert> : null}

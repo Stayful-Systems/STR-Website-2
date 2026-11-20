@@ -66,7 +66,7 @@ export interface AdsDeps {
   areaPreview(areaKey: string): Promise<AreaPreviewDep>;
   listPack(ownerId: string): Promise<PackView | null>;
   generate(req: GenerateRequest): Promise<GenerateResult>;
-  approve(req: { ownerId: string }): Promise<ApproveResult>;
+  approve(req: { ownerId: string; expectedVersion?: number }): Promise<ApproveResult>;
   /** One pack ad, only if it is the owner's. */
   getAd(ownerId: string, packAdId: string): Promise<PackAdRow | null>;
   /** A short signed download link, only for the owner's ad and a file it has; null otherwise. */
@@ -134,7 +134,7 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
 
 // ── Approve ──
 
-export async function approveOp(deps: AdsDeps, input: { packId?: unknown }): Promise<AdsState> {
+export async function approveOp(deps: AdsDeps, input: { packId?: unknown; version?: unknown }): Promise<AdsState> {
   const s = await deps.session();
   if (!s.ok) return { error: sessionError(s) };
   const elig = await deps.eligibility(s.ownerId, { admin: s.admin });
@@ -145,7 +145,9 @@ export async function approveOp(deps: AdsDeps, input: { packId?: unknown }): Pro
   const mine = await ownPack(deps, s.ownerId, input.packId);
   if (!mine.ok || !mine.view) return { error: MESSAGES.not_found };
 
-  const out = await deps.approve({ ownerId: s.ownerId });
+  // The version on screen when the button was pressed; a non-number means the form did not send one, so it is not pinned.
+  const expectedVersion = typeof input.version === 'string' && /^[0-9]{1,6}$/.test(input.version) ? Number(input.version) : undefined;
+  const out = await deps.approve({ ownerId: s.ownerId, expectedVersion });
   if (!out.ok) return { error: out.message };
   // Record only what the generator says happened; the version, never anything the owner wrote.
   await deps.record(s.ownerId, out.activityKind, { extras: { version: out.version }, dedupeKey: `ad_pack_approved:${out.packId}:v${out.version}` });
@@ -206,6 +208,8 @@ export async function uploadPhotoOp(deps: AdsDeps, input: { bytes: Uint8Array | 
 export async function areaPreviewOp(deps: AdsDeps, input: { areaKey?: unknown }): Promise<AreaPreviewView> {
   const s = await deps.session();
   if (!s.ok) return { ok: false, bedrooms: null, text: sessionError(s) };
+  const elig = await deps.eligibility(s.ownerId, { admin: s.admin });
+  if (!elig.eligible) return { ok: false, bedrooms: null, text: eligibilityError(elig) };
   if (typeof input.areaKey !== 'string' || parseAreaKey(input.areaKey) === null) return { ok: false, bedrooms: null, text: MESSAGES.area };
   return areaPreviewView(await deps.areaPreview(input.areaKey));
 }

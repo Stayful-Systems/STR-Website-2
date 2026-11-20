@@ -154,8 +154,18 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   in words). seed.ts: five DRAFT entries `adpack_what/who/regenerate/tagging/not_included` (no typed figures). service-facts.ts:
   "LANDLORD AD PACK" block (a test needs every placeholder it uses in a seed entry). CLAUDE.md: Batch 36 section only.
   Zac to approve the drafts in Stayful Intelligence.
-- [ ] **Phase 12 — Final checks, review, PR.**
-  Notes:
+- [x] **Phase 12 — Final checks, review, PR.**
+  Notes: independent read-only review found NO cross-operator access hole, NO Stayful leak, schema/RLS/bucket/ACCESS_COLUMNS/
+  leads-writes clean. FIXED: (1) the generator's area read triggered the house-paid long-let lookup, also on refused requests
+  and dry runs, ahead of the cost caps (now removed; nothing used it; test pins it); (2) the area step needed no eligibility
+  check (added); (3) approve is now pinned to the version on screen (a regenerate meanwhile cannot be approved unseen).
+  KNOWN, LEFT FOR A FOLLOW-UP (minor): an operator regenerate of an APPROVED pack that fails its checks hides the live
+  version's downloads (the admin path guards this, the operator path does not); two concurrent generates can race on regen
+  count (narrow); `adPackFetchImage` serves any well-formed upload ref and site `photoUrl` is unvalidated (UUIDs unguessable);
+  PostgREST 1000-row default may undercount `monthSpendPence` / `knownMetaAdIds` / admin counts once 36b makes cost non-zero;
+  the fire-and-forget linker has no automatic sweep (admin Link missing leads covers it); a visitor can bind a real Meta ad
+  id to the wrong pack ad for the same operator via the public form; downloads/copy do not re-check eligibility after a
+  refund. Zac's decision still open: take-home maths (see Phase 4), Phase 3 copy wording.
 
 ## Session 36b (after 36a merged and schema run)
 

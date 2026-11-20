@@ -156,3 +156,9 @@ test('parseAreaKey and parseMinAreaSamples', () => {
   assert.equal(parseMinAreaSamples(true), DEFAULT_MIN_AREA_SAMPLES);
   assert.equal(parseMinAreaSamples(''), DEFAULT_MIN_AREA_SAMPLES);
 });
+
+test('the generator never triggers the house-paid long-let lookup (it also runs on refused requests and dry runs)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('./area-server.ts', import.meta.url), 'utf8');
+  assert.ok(!/getAreaLongLetRent\s*\(/.test(src), 'area-server.ts must not call getAreaLongLetRent');
+});

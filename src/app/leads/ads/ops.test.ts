@@ -215,6 +215,21 @@ test('approve: a team member and an account that is not eligible cannot approve'
   assert.equal(a.records.length, 0);
 });
 
+test('approve: the version on screen is passed on, so a pack that moved on is not approved unseen', async () => {
+  const a = await madePack();
+  const stale = await approveOp(a.deps, { packId: a.view.pack.id, version: '99' });
+  assert.ok(stale.error);
+  assert.equal(a.records.length, 0);
+});
+
+test('area step: an account that is not eligible gets the plain reason, not the market data', async () => {
+  const a = await madePack();
+  a.eligible({ eligible: false, reasons: ['domain_not_live'] });
+  const r = await areaPreviewOp(a.deps, { areaKey: 'NG7' });
+  assert.equal(r.ok, false);
+  assert.match(r.text, /not live yet/);
+});
+
 // ── Download ──
 
 test('download: the owner gets a link for a file their ad has; another owner’s ad id is refused and nothing is signed', async () => {

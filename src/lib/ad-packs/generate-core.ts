@@ -6,7 +6,7 @@
  * real ones.
  *
  *   generatePack({ownerId, by, dry, input})   make (or remake) the owner's pack
- *   approvePack({ownerId})                    preview -> approved
+ *   approvePack({ownerId, expectedVersion?})                  preview -> approved
  *   listPackForOwner(ownerId)                 the screen's read model
  *
  * ORDER of generatePack (the first refusal stops a real run; a dry run
@@ -449,7 +449,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
     try {
       const pack = await store.getPack(ownerId);
       const settings = await store.readSettings();
-      // The market data is free to read, so it is resolved first: the brand hash uses the area the pack will STORE (after
+      // The market snapshot is cached and costs nothing to read (no paid lookup runs here), so it is resolved first: the brand hash uses the area the pack will STORE (after
       // a fall-back from a district to its postcode area), so asking for the same district again is not a "brand change".
       const source = await deps.areaFigureSource({ areaKey: input.areaKey, minSamples: settings.minAreaSamples });
       const hash = brandHash({ ...input.brand, photos: input.photos, areaKey: 'error' in source ? input.areaKey : source.areaKey });
@@ -684,13 +684,15 @@ export function createAdPackEngine(deps: GenerateDeps) {
     }
   }
 
-  async function approvePack(req: { ownerId: string }): Promise<ApproveResult> {
+  async function approvePack(req: { ownerId: string; expectedVersion?: number }): Promise<ApproveResult> {
     const no = (code: 'invalid_input' | 'no_pack' | 'not_preview' | 'store_failed', message: string): ApproveResult => ({ ok: false, code, message });
     if (!req || typeof req.ownerId !== 'string' || !UUID_RE.test(req.ownerId)) return no('invalid_input', GENERATE_MESSAGES.invalid_input);
     try {
       const pack = await store.getPack(req.ownerId);
       if (!pack) return no('no_pack', 'There is no pack to approve yet.');
       if (pack.status !== 'preview') return no('not_preview', 'Only a pack that is ready to look at can be approved.');
+      // The version the operator was looking at: a regenerate in the meantime (an admin's, say) must not be approved unseen.
+      if (req.expectedVersion !== undefined && req.expectedVersion !== pack.version) return no('not_preview', 'Your ads changed while you were looking. Please look at them again, then approve.');
       const updated = await store.updatePack(req.ownerId, pack.id, { status: 'approved', approvedAt: pack.approvedAt ?? deps.now().toISOString() }, { from: ['preview'] });
       if (!updated) return no('not_preview', 'Only a pack that is ready to look at can be approved.');
       log('approved', { packId: pack.id, code: 'approved' });

@@ -212,7 +212,7 @@ export default async function AdsPage() {
 
       {adVms.map((ad) => <AdSection key={ad.id} ad={ad} approved={approved} />)}
 
-      {approved || pack.status !== "preview" ? null : <ApproveForm packId={pack.id} />}
+      {approved || pack.status !== "preview" ? null : <ApproveForm packId={pack.id} version={pack.version} />}
 
       {approved ? (
         <section id="guide" className={card}>

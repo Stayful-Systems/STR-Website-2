@@ -65,7 +65,7 @@ export async function generatePackAction(_prev: AdsState, formData: FormData): P
 }
 
 export async function approvePackAction(_prev: AdsState, formData: FormData): Promise<AdsState> {
-  const out = await approveOp(liveDeps(), { packId: text(formData.get('packId')) });
+  const out = await approveOp(liveDeps(), { packId: text(formData.get('packId')), version: text(formData.get('version')) });
   revalidatePath(ADS_PATH);
   return out;
 }
