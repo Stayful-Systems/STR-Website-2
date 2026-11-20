@@ -34,6 +34,7 @@ const nextConfig: NextConfig = {
     // Batch 23: Stayful Intelligence's contact card embeds its photo.
     "/si/card": ["public/images/si-contact.png"],
     "/leads/ads": AD_PACK_FONTS,
+    "/admin/ad-packs": AD_PACK_FONTS,
   },
   images: {
     formats: ["image/avif", "image/webp"],

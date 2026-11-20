@@ -608,7 +608,9 @@ export function createAdPackEngine(deps: GenerateDeps) {
           errorCode: null,
           costPence: taken.costPence + cost,
           generatedAt: nowIso,
-          approvedAt: null,
+          // Keep the FIRST approval time: the ads already running on Meta keep their old codes, and those codes must
+          // keep linking leads while a new version waits to be approved.
+          approvedAt: taken.approvedAt,
           regenCount,
           websiteId: input.websiteId ?? taken.websiteId,
         },
@@ -687,7 +689,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
       const pack = await store.getPack(req.ownerId);
       if (!pack) return no('no_pack', 'There is no pack to approve yet.');
       if (pack.status !== 'preview') return no('not_preview', 'Only a pack that is ready to look at can be approved.');
-      const updated = await store.updatePack(req.ownerId, pack.id, { status: 'approved', approvedAt: deps.now().toISOString() }, { from: ['preview'] });
+      const updated = await store.updatePack(req.ownerId, pack.id, { status: 'approved', approvedAt: pack.approvedAt ?? deps.now().toISOString() }, { from: ['preview'] });
       if (!updated) return no('not_preview', 'Only a pack that is ready to look at can be approved.');
       log('approved', { packId: pack.id, code: 'approved' });
       return { ok: true, activityKind: 'ad_pack_approved', packId: pack.id, version: updated.version, operatorCode: updated.operatorCode };

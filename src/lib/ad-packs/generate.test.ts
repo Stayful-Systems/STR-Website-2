@@ -254,7 +254,7 @@ test('regenerating an approved pack follows the same rule and needs approving ag
   ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: withBrand({ company: 'Brightstone Lettings' }) }));
   const pack = await h.store.getPack(OWNER_A);
   assert.equal(pack?.status, 'preview');
-  assert.equal(pack?.approvedAt, null);
+  assert.ok(pack?.approvedAt, 'a regenerate keeps the first approval time, so the ads already running keep linking leads');
 });
 
 // ── Dry run ──

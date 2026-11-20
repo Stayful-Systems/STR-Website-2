@@ -129,8 +129,13 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   Notes:
 - [ ] **Phase 9 — Setup guide.** `guide.ts` + `Guide.tsx`.
   Notes:
-- [ ] **Phase 10 — Admin.** `/admin/ad-packs`.
-  Notes:
+- [x] **Phase 10 — Admin.** `/admin/ad-packs`.
+  Notes: 27 admin tests (202 ad-packs tests pass), tsc/eslint clean. Files: src/app/admin/ad-packs/{page,actions,
+  AdPacksPanel}, src/lib/ad-packs/{admin-view,admin-run,admin-server}.ts, next.config.ts one line. Regenerate Run needs the dry
+  run's token and re-plans from the live website (refuses if brand/version moved); a dry run whose checks would fail offers no
+  Run. Link-missing returns counts only (no lead ids); Run gated on a prior dry run in the panel (client state). BUG FOUND AND
+  FIXED by coordinator: a new version used to clear `approved_at`, so leads from still-running ads stopped linking until
+  re-approval. Now a regenerate keeps the first approval time, and approvePack keeps `approvedAt ?? now` (generate-core.ts).
 - [ ] **Phase 11 — Knowledge and docs.** placeholders, seed drafts, service-facts, CLAUDE.md section.
   Notes:
 - [ ] **Phase 12 — Final checks, review, PR.**
