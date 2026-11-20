@@ -53,8 +53,9 @@ test('one-click unsubscribe turns off every switch behind that email, and only t
   const { SWITCHES_BEHIND } = await import('./cap.ts');
   const { isNotificationKey } = await import('../notifications/registry.ts');
   for (const [kind, keys] of Object.entries(SWITCHES_BEHIND)) {
-    // The Academy reminder is a billing notice: capped, but no unsubscribe (Batch 31a).
-    if (kind === 'academy_reminder') {
+    // The Academy reminder (Batch 31a) and the plan credit final warning (Batch 34b)
+    // are billing notices: capped, but no unsubscribe.
+    if (kind === 'academy_reminder' || kind === 'credit_idle_final') {
       assert.deepEqual(keys, []);
       continue;
     }
@@ -63,4 +64,14 @@ test('one-click unsubscribe turns off every switch behind that email, and only t
   }
   assert.deepEqual([...SWITCHES_BEHIND.your_week].sort(), ['weekly_alerts', 'weekly_missed']);
   assert.deepEqual(SWITCHES_BEHIND.deal_changes, ['deal_changes']);
+});
+
+test('Batch 34b: the credit idle reminders take the daily slot; only the 3/6-month one has a switch', async () => {
+  const { SWITCHES_BEHIND } = await import('./cap.ts');
+  assert.equal(slotFor('credit_idle'), 'daily');
+  assert.equal(slotFor('credit_idle_final'), 'daily');
+  assert.deepEqual(SWITCHES_BEHIND.credit_idle, ['credit_alerts']);
+  // The final warning is a billing notice: opt-outs never block it.
+  assert.deepEqual(SWITCHES_BEHIND.credit_idle_final, []);
+  assert.deepEqual(SWITCHES_BEHIND.academy_reminder, []);
 });

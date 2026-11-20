@@ -27,7 +27,7 @@ export type Slot = 'daily' | 'weekly';
  * and go anyway when it is not, so the day's later capped emails move to the
  * next day (src/lib/voice/cap-server.ts).
  */
-export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call' | 'academy_reminder';
+export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call' | 'academy_reminder' | 'credit_idle' | 'credit_idle_final';
 
 export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   todays_5: 'daily',
@@ -37,6 +37,8 @@ export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   low_credit: 'daily',
   si_call: 'daily',
   academy_reminder: 'daily',
+  credit_idle: 'daily',
+  credit_idle_final: 'daily',
   your_week: 'weekly',
 };
 
@@ -62,6 +64,13 @@ export const SWITCHES_BEHIND: Readonly<Record<SendKind, readonly NotificationKey
   // reminders-run.ts): it counts toward the one-a-day cap but carries no
   // unsubscribe, so there is no switch behind it (Zac, Batch 31a).
   academy_reminder: [],
+  // Batch 34b: the 3- and 6-month "your credit is waiting" reminders sit behind
+  // the credit alerts switch like the other credit emails.
+  credit_idle: ['credit_alerts'],
+  // Batch 34b: the final warning before earlier months' plan credit expires is
+  // a billing notice (src/lib/email/credit-idle.ts): capped, but opt-outs never
+  // block it, so there is no switch behind it.
+  credit_idle_final: [],
 };
 
 /** The day a send counts against: the UTC date, as the picks' "sent today" guard counts it. */
