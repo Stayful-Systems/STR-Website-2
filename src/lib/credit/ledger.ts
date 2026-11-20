@@ -347,6 +347,46 @@ export async function idlePlanReport(now: Date = new Date(), minMonths: number |
   }));
 }
 
+/** The function or table is not there yet (schema.sql not run, or PostgREST not reloaded). */
+export function isSchemaMissing(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!err) return false;
+  if (['PGRST202', 'PGRST205', '42P01', '42883'].includes(err.code ?? '')) return true;
+  return /could not find the (function|table)|does not exist/i.test(err.message ?? '');
+}
+
+/** Thrown by expireIdlePlan when credit_expire_idle_plan (or the table it reads) is missing. */
+export class IdleExpiryUnavailableError extends Error {
+  readonly schemaMissing = true;
+}
+
+export interface IdleExpiryResult {
+  expiredPence: number;
+  grants: number;
+  /** When nothing expired, the SQL's reason: no_plan_credit | not_idle | no_final_notice | notice_too_recent | no_cycle_grant | none_expirable. */
+  reason?: string;
+}
+
+/**
+ * Batch 34b: the live no-spend expiry for one member (credit_expire_idle_plan).
+ * The SQL is the only authority: under the member's lock it re-checks they are
+ * still idle and that this idle run's final notice was sent at least
+ * plan_credit_final_notice_days ago, then expires plan grants created before
+ * that notice and before the newest cycle grant. This only passes its answer
+ * through. A missing function throws IdleExpiryUnavailableError.
+ */
+export async function expireIdlePlan(userId: string, now: Date = new Date()): Promise<IdleExpiryResult> {
+  if (!hasServiceRole()) return { expiredPence: 0, grants: 0, reason: 'not_configured' };
+  const { data, error } = await (await adminClient()).rpc('credit_expire_idle_plan', { p_user: userId, p_now: now.toISOString() });
+  if (error) {
+    if (isSchemaMissing(error)) throw new IdleExpiryUnavailableError(`[credit] credit_expire_idle_plan unavailable (schema.sql Batch 34b section not run?): ${error.message ?? 'unknown error'}`);
+    throwRpc(error, 'credit_expire_idle_plan');
+  }
+  const d = (data ?? {}) as { expired_pence?: number | string; grants?: number | string; reason?: string | null };
+  const out: IdleExpiryResult = { expiredPence: round4(Number(d.expired_pence ?? 0) || 0), grants: Number(d.grants ?? 0) || 0 };
+  if (typeof d.reason === 'string' && d.reason) out.reason = d.reason;
+  return out;
+}
+
 export async function expireDueGrants(): Promise<number> {
   if (!hasServiceRole()) return 0;
   const { data, error } = await (await adminClient()).rpc('credit_expire_due');

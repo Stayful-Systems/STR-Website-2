@@ -30,6 +30,9 @@ declare
   f_old uuid; f_mid uuid; f_new uuid; f_after uuid; f_top uuid; f_wel uuid;
   h_old uuid; h_new uuid; h_x uuid; s1 uuid; s2 uuid;
   v_since timestamptz;
+  v_dry numeric;
+  v_dry_n int;
+  v_report numeric;
   j jsonb;
   tx bigint;
   n integer;
@@ -332,7 +335,24 @@ begin
   if exists (select 1 from credit_transactions where user_id = f and kind = 'expire') then raise exception 'nothing may have expired yet'; end if;
 
   update credit_idle_notices set status = 'sent' where user_id = f and idle_since = v_since and stage = 12;   -- sent 31 days ago
+  -- Phase 13: the credit sweep's dry run (rollover-measure.ts idleExpiryViews /
+  -- idleExpiringPence) computes what will expire from reads only: this idle
+  -- run's final 'sent' notice, then unexpired plan grants with credit left
+  -- created before it AND before the newest plan_cycle grant. The same query
+  -- here must give exactly what credit_expire_idle_plan then expires; the
+  -- report's expirable_pence over-counts the grant made after the notice.
+  select coalesce(sum(cg.remaining_pence), 0), count(*) into v_dry, v_dry_n
+    from credit_grants cg
+    join credit_idle_notices ni on ni.user_id = cg.user_id and ni.idle_since = v_since and ni.stage = 12 and ni.status = 'sent'
+   where cg.user_id = f and cg.kind = 'plan' and cg.remaining_pence > 0 and (cg.expires_at is null or cg.expires_at > now())
+     and cg.created_at < ni.sent_at
+     and cg.created_at < (select max(x.created_at) from credit_grants x where x.user_id = f and x.kind = 'plan' and x.plan_cycle and x.created_at <= now());
+  select expirable_pence into v_report from credit_idle_plan_report() where user_id = f;
+  if v_report <> v_dry + 200 then raise exception 'the report counts the grant made after the notice, the dry run does not: % vs %', v_report, v_dry; end if;
   j := credit_expire_idle_plan(f);
+  if (j->>'expired_pence')::numeric <> v_dry or (j->>'grants')::int <> v_dry_n then
+    raise exception 'the dry-run computation (%p in % grants) must equal what the expiry expires: %', v_dry, v_dry_n, j;
+  end if;
   if (j->>'expired_pence')::numeric <> 2300 or (j->>'grants')::int <> 2 or j ? 'reason' then
     raise exception 'an old enough final notice expires the two plan grants made before it and before the newest month (1800 + 500): %', j;
   end if;

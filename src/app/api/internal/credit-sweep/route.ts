@@ -1,7 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 import { expireDueGrants, idlePlanReport, previewDueGrants } from "@/lib/credit/ledger";
-import { idlePlanLogLine, idlePlanSweepReport } from "@/lib/admin/rollover-measure";
+import { idleExpiryDry, idleExpiryLive, idlePlanLogLine, idlePlanSweepReport } from "@/lib/admin/rollover-measure";
+import { liveIdleExpiryDeps } from "@/lib/admin/rollover-measure-server";
 import { syncUnitCosts } from "@/lib/credit/unit-costs";
 import { academyTrialSlotDue, ensureAnnualMonthlyGrant, ensureAcademyTrialMonthlyGrant, type AcademyTrialPurchase } from "@/lib/stripe/grants";
 
@@ -29,6 +30,18 @@ import { academyTrialSlotDue, ensureAnnualMonthlyGrant, ensureAcademyTrialMonthl
 // nothing expires because of it until 34b. If the SQL function is not there
 // yet (schema.sql not run), it is null with idlePlanError and the rest of the
 // sweep runs as before.
+//
+// Batch 34b: the live run then asks credit_expire_idle_plan, member by member,
+// for every idle candidate. The SQL alone decides: it expires only when the
+// member is still idle and this idle run's final warning was actually sent at
+// least plan_credit_final_notice_days ago, and only plan grants created before
+// that warning and before the newest month. Members it expired credit for are
+// in idleExpired (id, pence, grants) and get the record-only activity
+// credit_idle_expired; the rest are counted by the SQL's reason in
+// idleExpireSkipped. The dry run lists wouldExpireIdle for the same members
+// and pence from reads only (credit_idle_notices, credit_grants) and writes
+// nothing. If the function or the notices table is missing, idleExpireError
+// says so and nothing expires; the rest of the sweep is unchanged.
 
 type AcademyTrialRow = AcademyTrialPurchase & { id: string };
 
@@ -80,9 +93,16 @@ export async function GET(request: Request) {
       } catch (err) {
         academy = { error: (err as Error).message };
       }
-      const idle = await idlePlanSweepReport(() => idlePlanReport());
+      const now = new Date();
+      const idle = await idlePlanSweepReport(() => idlePlanReport(now));
       console.log(idlePlanLogLine(idle, true));
-      return Response.json({ dry: true, wouldExpire: due.expire, wouldLift: due.lift, annual: "not run on a dry run", seed: "not run on a dry run", academyTrialDue: academy, ...idle });
+      const idleExpiry = await idleExpiryDry(idle.idlePlanCandidates, liveIdleExpiryDeps(), now);
+      console.log(
+        idleExpiry.wouldExpireIdle === null
+          ? `[credit-sweep dry] idle expiry: unavailable (${idleExpiry.idleExpireError ?? "unknown"})`
+          : `[credit-sweep dry] idle expiry: would expire ${idleExpiry.wouldExpireIdlePence}p for ${idleExpiry.wouldExpireIdle.length} member(s)`,
+      );
+      return Response.json({ dry: true, wouldExpire: due.expire, wouldLift: due.lift, annual: "not run on a dry run", seed: "not run on a dry run", academyTrialDue: academy, ...idle, ...idleExpiry });
     } catch (err) {
       return Response.json({ dry: true, error: (err as Error).message }, { status: 500 });
     }
@@ -127,9 +147,18 @@ export async function GET(request: Request) {
     summary.errors.push(`seed: ${(err as Error).message}`);
   }
 
-  // Batch 34a: report only. Nothing below expires anything.
-  const idle = await idlePlanSweepReport(() => idlePlanReport());
+  // Batch 34a: the idle report. Batch 34b: credit_expire_idle_plan decides,
+  // per candidate, whether anything expires (the TypeScript never does).
+  const now = new Date();
+  const idle = await idlePlanSweepReport(() => idlePlanReport(now));
   console.log(idlePlanLogLine(idle, false));
+  const { errors: idleErrors, ...idleExpiry } = await idleExpiryLive(idle.idlePlanCandidates, liveIdleExpiryDeps(), now);
+  summary.errors.push(...idleErrors);
+  console.log(
+    idleExpiry.idleExpired === null
+      ? `[credit-sweep] idle expiry: not run (${idleExpiry.idleExpireError ?? "unknown"})`
+      : `[credit-sweep] idle expiry: ${idleExpiry.idleExpiredPence}p expired for ${idleExpiry.idleExpired.length} member(s)${idleExpiry.idleExpireError ? ` (${idleExpiry.idleExpireError})` : ""}`,
+  );
 
-  return Response.json({ ...summary, ...idle });
+  return Response.json({ ...summary, ...idle, ...idleExpiry });
 }
