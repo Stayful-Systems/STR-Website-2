@@ -12,6 +12,7 @@ import { issueStepToken } from '@/lib/websites/step-token';
 import { liveSiteBySlug, type WebsiteRow } from '@/lib/websites/store-server';
 import { notifyOperatorOfWebsiteLead } from '@/lib/websites/notify-server';
 import { enqueueLeadDbPush } from '@/lib/leaddb/deliver';
+import { linkLeadToPackAd } from '@/lib/ad-packs/attribution-server';
 import { domainIsLiveFor } from '@/lib/domains/store-server';
 import { siteDomain } from '@/lib/websites/urls';
 
@@ -184,6 +185,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   if (reportError) console.error(`[website-lead] report row not saved for lead ${leadId}:`, reportError.code ?? 'error');
 
   void enqueueLeadDbPush(leadId).catch(() => {}); // Batch 32: the operator's lead database gets it too (never throws, never waits)
+  void linkLeadToPackAd(leadId).catch(() => {}); // Batch 36: record which pack ad brought it (never throws, never waits)
 
   // ── 7. The operator hears of the lead now, not only when a report finishes. Once per lead. ──
   await notifyOperatorOfWebsiteLead({ leadId, websiteId: site.id });

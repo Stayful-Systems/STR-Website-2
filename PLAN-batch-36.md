@@ -100,9 +100,15 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   cards never use a photo; WebP photos fall back to type-only.
 - [ ] **Phase 6 — Generator and store.** `store-server.ts`, `generate-server.ts`.
   Notes:
-- [ ] **Phase 7 — Attribution on arrival.** `attribution.ts`, `attribution-server.ts`, one line in the lead route,
+- [x] **Phase 7 — Attribution on arrival.** `attribution.ts`, `attribution-server.ts`, one line in the lead route,
   `PackAdLine` on lead detail.
-  Notes:
+  Notes: 24 new tests, tsc/eslint clean. API: attribution.ts `matchLeadToAd` (optional operatorCode so another operator's code
+  is foreign even if not in packAds), `linkLead(store, leadId)`, `linkMissing(store, opts)`, `packAdLineView`;
+  attribution-server.ts `linkLeadToPackAd(leadId)` (never throws), `linkMissingLeads({ownerId?, sinceApproved?, dry?}) ->
+  {ok,dry,leadIds,count,linked,untagged,skipped,failed}` (max 500 per run; Phase 10 uses it), `packAdLine`. "Approved pack" =
+  `ad_packs.approved_at is not null` (a regenerate doesn't stop linking). Writes nothing for a lead without a website_reports row.
+  Lead page shows `Ad: <code> · <angle label>` (the ad name already ends in the label). Ad code only arrives at step 1:
+  lead_sources is written once (ignoreDuplicates), so a repeat enquiry within the hour keeps the first row's code.
 - [ ] **Phase 8 — Operator screen.** `/leads/ads`, entry card, activity kinds.
   Notes:
 - [ ] **Phase 9 — Setup guide.** `guide.ts` + `Guide.tsx`.
