@@ -27,10 +27,10 @@ Baseline: `npm test` 3989 pass / 0 fail, `npm run lint` 0 errors (79 pre-existin
   Notes:
 - [x] Phase 5 — Change requests
   Notes: built by a forked helper, checked by me. Added edit-requests-store.ts (live Supabase wiring; outside the plan's file list so the engine stays injectable; Phase 8 reuses it via liveRequestsEngine(): adminList, adminSetStatus, adminScreenshotUrl, openCounts). Feedback status emails go OUTSIDE the daily cap (direct replies), so the done/declined email does too. Next caps a Server Action post at 1 MB including text and next.config.ts is off limits, so the form refuses screenshots of 900 KB or more (server rule stays under 1 MB). 30 tests.
-- [ ] Phase 6 — Grace server, cron and emails
-  Notes:
-- [ ] Phase 7 — Switched-off public page
-  Notes:
+- [x] Phase 6 — Grace server, cron and emails
+  Notes: built by a forked helper, reviewed by me (run order, dry run, cap wait, no same-day switch-off). purchase-server.ts: +11 lines, 1 changed (allowRenewal beside blockRenewal, which only wrote renewAllowed; returned from the factory). vercel.json +1 entry. grace-run.ts holds the injected-deps logic (switchOffWith, finishSwitchOffWith, switchOnWith, deleteWith, exportWith, siteGraceView, DELETION_REMOVES/KEEPS); grace-server.ts the live wiring: graceForSite, switchOffSite, switchOnSite, deleteSiteData, exportSiteData, readGraceSettings. Delete refuses a live site. Switch-on puts the site back to paused if it cannot end the episode. 33 tests.
+- [x] Phase 7 — Switched-off public page
+  Notes: grace-public.ts (isSwitchedOff pure; switchedOffBySlug with injectable lookup, admin client loaded lazily), templates/SwitchedOff.tsx (no imports, no settings, no form, no Stayful), layout.tsx +10 lines (import x2, neutral metadata, neutral page instead of notFound for a switched-off site), host-server.ts +5 changed lines (websites.status live|paused, switched-off only; temp-address redirect untouched). One existing pin updated: public-site.test.ts's `if (!live) notFound()` assertion now accepts the switched-off branch. Lead/report APIs unchanged (pinned).
 - [ ] Phase 8 — Admin website console
   Notes:
 - [x] Phase 9 — Knowledge drafts

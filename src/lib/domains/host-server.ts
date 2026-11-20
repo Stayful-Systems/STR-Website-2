@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { createHostRouter, type Decision, type HostLookups } from './host-lookup.ts';
 import { appHostOf, classifyHost } from './redirect.ts';
+import { isSwitchedOff } from '../websites/grace-public.ts';
 
 /**
  * Batch 33: the proxy's two host jobs, over the real database.
@@ -35,15 +36,17 @@ async function siteByDomain(name: string): Promise<{ slug: string } | null> {
   if (!hasServiceRole()) throw new Error('no_service_role');
   const { data, error } = await createAdminClient()
     .from('website_domains')
-    .select('status, websites!inner(slug, status)')
+    .select('status, websites!inner(slug, status, website_grace(switched_off_at, cancelled_at))')
     .eq('name', name)
     .in('status', ['connecting', 'live'])
-    .eq('websites.status', 'live')
+    // Batch 36: a switched-off (paused) site's domain still reaches /s/<slug>, which shows the neutral page; an admin-paused one is a 404.
+    .in('websites.status', ['live', 'paused'])
     .maybeSingle();
   if (error) throw new Error(`host:${error.code ?? 'error'}`);
   const w = (data as Row | null)?.websites;
   const site = (Array.isArray(w) ? w[0] : w) as Row | undefined;
-  return site && typeof site.slug === 'string' ? { slug: site.slug } : null;
+  const grace = (Array.isArray(site?.website_grace) ? site?.website_grace[0] : site?.website_grace) as { switched_off_at: string | null; cancelled_at: string | null } | null | undefined;
+  return site && typeof site.slug === 'string' && (site.status === 'live' || isSwitchedOff(String(site.status), grace)) ? { slug: site.slug } : null;
 }
 
 async function liveDomainBySlug(slug: string): Promise<string | null> {

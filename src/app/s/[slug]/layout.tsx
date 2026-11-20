@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import { AttributionProvider } from "@/lib/websites/LeadForm";
 import { siteThemeVars } from "@/lib/websites/templates/SiteShell";
 import { siteDomain } from "@/lib/websites/urls";
+import { switchedOffBySlug } from "@/lib/websites/grace-public";
+import { SWITCHED_OFF_TITLE, SwitchedOff } from "@/lib/websites/templates/SwitchedOff";
 import { loadLiveSite } from "./site-data";
 
 /**
@@ -35,6 +37,8 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const live = await loadLiveSite(slug);
+  // Batch 36: a switched-off site is a neutral page: no operator name, noindex.
+  if (!live && (await switchedOffBySlug(slug))) return { title: SWITCHED_OFF_TITLE, robots: { index: false, follow: false }, icons: { icon: "/icon-neutral.svg" } };
   const name = live?.row.settings.companyName.trim() || "";
   const logo = live?.row.settings.logoUrl ?? null;
   return {
@@ -50,7 +54,11 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 export default async function SiteLayout({ children, params }: { children: ReactNode; params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const live = await loadLiveSite(slug);
-  if (!live) notFound();
+  if (!live) {
+    // Batch 36: switched off (not just paused or unknown): the neutral page instead of a 404.
+    if (await switchedOffBySlug(slug)) return <SwitchedOff />;
+    notFound();
+  }
   const home = live.pages[0];
   // The operator's brand as CSS custom properties on a wrapper, so everything
   // under it (the shell, the form, the not-found states) is themed the same way.
