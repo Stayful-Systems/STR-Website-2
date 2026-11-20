@@ -72,7 +72,7 @@ test("the plan's columns, states and rules are there", () => {
   assert.match(section, /renew_decision is null or renew_decision in \('renew', 'dont_renew'\)/);
   assert.match(section, /char_length\(last_error\) <= 200/);
   assert.match(section, /renew_allowed boolean not null default true/);
-  for (const col of ['dns_set_at', 'vercel_added_at', 'https_ok_at', 'live_at', 'stuck_alerted_at', 'renewal_alerted_for', 'state_changed_at', 'expires_at', 'bought_at']) {
+  for (const col of ['dns_set_at', 'vercel_added_at', 'https_ok_at', 'live_at', 'stuck_alerted_at', 'renewal_alerted_for', 'autorenew_alerted_for', 'state_changed_at', 'expires_at', 'bought_at']) {
     assert.match(section, new RegExp(`\\b${col}\\b`), col);
   }
   // One active domain per site and per name; a released one frees both. One site per domain.

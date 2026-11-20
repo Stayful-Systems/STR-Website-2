@@ -35,7 +35,7 @@ import { getVercel } from './vercel.ts';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const COLUMNS =
-  'id, website_id, owner_id, name, status, registrar, registrar_ref, cost_pence, bought_at, expires_at, renew_allowed, renew_decision, renew_decided_by, renew_decided_at, dns_set_at, vercel_added_at, https_ok_at, live_at, attempts, last_error, stuck_alerted_at, renewal_alerted_for, state_changed_at, created_at, updated_at';
+  'id, website_id, owner_id, name, status, registrar, registrar_ref, cost_pence, bought_at, expires_at, renew_allowed, renew_decision, renew_decided_by, renew_decided_at, dns_set_at, vercel_added_at, https_ok_at, live_at, attempts, last_error, stuck_alerted_at, renewal_alerted_for, autorenew_alerted_for, state_changed_at, created_at, updated_at';
 
 type Admin = ReturnType<typeof createAdminClient>;
 const admin = (): Admin => createAdminClient();
@@ -70,6 +70,7 @@ export function toDomainRow(r: Record<string, unknown>): DomainRow {
     lastError: str(r.last_error),
     stuckAlertedAt: str(r.stuck_alerted_at),
     renewalAlertedFor: str(r.renewal_alerted_for),
+    autoRenewAlertedFor: str(r.autorenew_alerted_for),
     stateChangedAt: String(r.state_changed_at),
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
@@ -96,6 +97,7 @@ const COLUMN_OF: Record<keyof DomainPatch, string> = {
   lastError: 'last_error',
   stuckAlertedAt: 'stuck_alerted_at',
   renewalAlertedFor: 'renewal_alerted_for',
+  autoRenewAlertedFor: 'autorenew_alerted_for',
 };
 
 function isUnique(error: { code?: string } | null): boolean {

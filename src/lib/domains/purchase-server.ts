@@ -87,6 +87,7 @@ export interface DomainPatch {
   lastError?: string | null;
   stuckAlertedAt?: string | null;
   renewalAlertedFor?: string | null;
+  autoRenewAlertedFor?: string | null;
 }
 
 /** Thrown by the store when a unique index refuses a write (a name or a site already taken). */

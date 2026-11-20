@@ -65,7 +65,7 @@ export class MemoryStore implements DomainStore {
     const row: DomainRow = {
       id: `dom-${++this.seq}`, websiteId: r.websiteId, ownerId: r.ownerId, name: r.name, status: 'awaiting_admin', registrar: null, registrarRef: null,
       costPence: r.costPence, boughtAt: null, expiresAt: null, renewAllowed: true, renewDecision: null, renewDecidedBy: null, renewDecidedAt: null,
-      dnsSetAt: null, vercelAddedAt: null, httpsOkAt: null, liveAt: null, attempts: 0, lastError: null, stuckAlertedAt: null, renewalAlertedFor: null,
+      dnsSetAt: null, vercelAddedAt: null, httpsOkAt: null, liveAt: null, attempts: 0, lastError: null, stuckAlertedAt: null, renewalAlertedFor: null, autoRenewAlertedFor: null,
       stateChangedAt: now, createdAt: now, updatedAt: now,
     };
     this.domains.set(row.id, row);
@@ -139,7 +139,7 @@ export interface Harness {
   sent: LiveEmailInput[];
   activity: Array<{ userId: string; kind: string; dedupeKey: string }>;
   probes: string[];
-  /** What the probe answers: the page body, or 'down'. */
+  /** What the probe answers: 'auto' (the owning site's company name), a page body, or 'down'. */
   page: { html: string | 'down'; status: number };
   setNow(d: Date): void;
   /** Make a site with a domain row chosen and ready to buy. */
@@ -157,7 +157,7 @@ export function harness(start = new Date('2026-11-20T12:00:00Z')): Harness {
   const sent: LiveEmailInput[] = [];
   const activity: Harness['activity'] = [];
   const probes: string[] = [];
-  const page: Harness['page'] = { html: '<h1>Harbour Management Ltd</h1>', status: 200 };
+  const page: Harness['page'] = { html: 'auto', status: 200 };
   const deps: DomainDeps = {
     store,
     registrar: () => registrar,
@@ -166,6 +166,12 @@ export function harness(start = new Date('2026-11-20T12:00:00Z')): Harness {
     probe: async (url) => {
       probes.push(url);
       if (page.html === 'down') throw new Error('unreachable');
+      // By default the address shows the site that owns it: its company name in a heading.
+      if (page.html === 'auto') {
+        const host = new URL(url).host;
+        const row = [...store.domains.values()].find((d) => d.name === host);
+        return { status: page.status, html: `<h1>${(row && store.sites.get(row.websiteId)?.company) ?? ''}</h1>` };
+      }
       return { status: page.status, html: page.html };
     },
     sendLiveEmail: async (i) => { sent.push(i); return true; },

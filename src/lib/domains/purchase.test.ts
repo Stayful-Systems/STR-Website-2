@@ -299,7 +299,7 @@ test('advance: DNS from Vercel\'s recommended values, then Vercel root and www, 
   assert.equal((await h.engine.advance(domainId)).outcome, 'waiting');
   assert.equal((await h.store.domain(domainId))?.status, 'connecting');
 
-  h.page.html = '<h1>Harbour Management Ltd</h1>';
+  h.page.html = 'auto';
   const done = await h.engine.advance(domainId);
   assert.equal(done.outcome, 'live');
   assert.equal(done.status, 'live');

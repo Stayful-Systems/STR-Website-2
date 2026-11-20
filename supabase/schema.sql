@@ -9225,6 +9225,8 @@ alter table public.website_domains drop constraint if exists website_domains_att
 alter table public.website_domains add constraint website_domains_attempts_check check (attempts >= 0);
 alter table public.website_domains drop constraint if exists website_domains_cost_check;
 alter table public.website_domains add constraint website_domains_cost_check check (cost_pence is null or cost_pence >= 0);
+-- The expiry (date) the admin was last emailed the 7-day auto-renew outcome for: one such email per domain per period.
+alter table public.website_domains add column if not exists autorenew_alerted_for date;
 -- One active domain per site, and one active owner per name; a released name can be used again.
 create unique index if not exists website_domains_site_active_idx on public.website_domains (website_id) where status <> 'released';
 create unique index if not exists website_domains_name_active_idx on public.website_domains (name) where status <> 'released';
