@@ -11,6 +11,8 @@ import { parseSources } from '@/lib/websites/sources';
 import { issueStepToken } from '@/lib/websites/step-token';
 import { liveSiteBySlug, type WebsiteRow } from '@/lib/websites/store-server';
 import { notifyOperatorOfWebsiteLead } from '@/lib/websites/notify-server';
+import { domainIsLiveFor } from '@/lib/domains/store-server';
+import { siteDomain } from '@/lib/websites/urls';
 
 /**
  * Step 1 of a customer website's form: POST /api/s/<slug>/lead.
@@ -99,9 +101,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   }
   const b = asRecord(body) ?? {};
 
+  // ── 1b. The honeypot (Batch 33): a field a person never sees. Filled means a bot: a quiet success, nothing saved. ──
+  if (typeof b.hp === 'string' && b.hp.trim() !== '') return reply({ ok: true, token: null });
+
   // ── 2. Turnstile, before the caps are counted (see the funnel's analyse route for why). ──
-  const human = await verifyTurnstile(typeof b.turnstileToken === 'string' ? b.turnstileToken : null, ip);
-  if (!human.allow) return reply({ ok: false, error: human.message }, 403);
+  // Batch 33: skipped ONLY when the site's own domain is live, decided here from the database (Turnstile's free plan
+  // cannot cover customer domains). The per-IP limit, the free-report caps and the honeypot still apply.
+  const ownDomainLive = await domainIsLiveFor(site.id, siteDomain(site));
+  if (!ownDomainLive) {
+    const human = await verifyTurnstile(typeof b.turnstileToken === 'string' ? b.turnstileToken : null, ip);
+    if (!human.allow) return reply({ ok: false, error: human.message }, 403);
+  }
 
   // ── 3. Caps, against the website's own funnel row. Step 1 only. ──
   const admin = hasServiceRole() ? createAdminClient() : null;

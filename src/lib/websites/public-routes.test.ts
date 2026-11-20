@@ -162,3 +162,48 @@ test('policy facts the routes rely on: step-1 validation, self-submit, attributi
   assert.equal(s.landing_page, '/s/acme/fees');
   assert.equal(s.ad_code?.length, 40);
 });
+
+// ── Batch 33, Phase 7: the lead form on a customer's own domain ──
+
+test('Turnstile is skipped only when the site\'s own domain is live, decided from the database; otherwise it runs as before', () => {
+  assert.match(lead, /const ownDomainLive = await domainIsLiveFor\(site\.id, siteDomain\(site\)\);/);
+  assert.match(lead, /if \(!ownDomainLive\) \{\s*const human = await verifyTurnstile\(typeof b\.turnstileToken === 'string' \? b\.turnstileToken : null, ip\);\s*if \(!human\.allow\) return reply\(\{ ok: false, error: human\.message \}, 403\);\s*\}/);
+  // The only input to the decision is the site row and the database: never a field of the request.
+  assert.doesNotMatch(lead.match(/const ownDomainLive = [^;]*;/)?.[0] ?? 'b.', /\bb\./);
+  assert.doesNotMatch(lead, /request\.headers\.get\('(host|origin|referer)'\)/);
+  // The live check is a database read of website_domains, in the domains store.
+  const store = readFileSync(new URL('../domains/store-server.ts', import.meta.url), 'utf8');
+  const fn = store.slice(store.indexOf('export async function domainIsLiveFor'));
+  assert.match(fn, /from\('website_domains'\)[^;]*\.eq\('website_id', websiteId\)[^;]*\.eq\('name', name\)[^;]*\.eq\('status', 'live'\)/);
+  assert.match(fn, /if \(error\) \{[^}]*return false;/, 'a failed read is not a skip');
+});
+
+test('the per-IP limit and the free-report caps still run on an own-domain site, and the honeypot comes before Turnstile and the caps', () => {
+  assert.match(lead, /countAttempt\(site\.funnelId, ip, dailyCap\)/);
+  const at = (needle: string) => {
+    const i = lead.indexOf(needle);
+    assert.ok(i >= 0, needle);
+    return i;
+  };
+  assert.ok(at("typeof b.hp === 'string'") < at('domainIsLiveFor(') && at('domainIsLiveFor(') < at('verifyTurnstile(') && at('verifyTurnstile(') < at('countAttempt('));
+  // The report route (step 2) never had Turnstile and still does not count: the free caps live in runWebsiteReport.
+  assert.doesNotMatch(report, /turnstile/i);
+});
+
+test('a filled honeypot is a quiet success that saves nothing', () => {
+  const guard = lead.slice(lead.indexOf("typeof b.hp === 'string'"), lead.indexOf('domainIsLiveFor('));
+  assert.match(guard, /return reply\(\{ ok: true, token: null \}\);/);
+  // Before any write: no lead, no source, no report row, no operator email can precede it.
+  const before = lead.slice(0, lead.indexOf("typeof b.hp === 'string'"));
+  assert.doesNotMatch(before, /captureLead\(\{|\.upsert\(|\.insert\(|notifyOperatorOfWebsiteLead\(/);
+});
+
+test('the lead form hides the bot-check widget on an own-domain site, and draws the hidden honeypot input and sends it', () => {
+  const form = readFileSync(new URL('./LeadForm.tsx', import.meta.url), 'utf8');
+  assert.match(form, /\{form\.skipBotCheck \? null : <TurnstileWidget /);
+  assert.match(form, /name="hp_company_site"[^>]*tabIndex=\{-1\}[^>]*autoComplete="off"/);
+  assert.match(form, /aria-hidden="true"/);
+  assert.match(form, /hp: honeypot,/);
+  const model = readFileSync(new URL('./page-model.ts', import.meta.url), 'utf8');
+  assert.match(model, /\.\.\.\(siteDomain\(site\) \? \{ skipBotCheck: true \} : \{\}\),/);
+});

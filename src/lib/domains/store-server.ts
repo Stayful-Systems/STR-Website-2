@@ -291,3 +291,18 @@ export async function domainOfSite(websiteId: string): Promise<DomainRow | null>
   if (!hasServiceRole()) return null;
   return createLiveStore().domainForSite(websiteId);
 }
+
+/**
+ * Is this exact domain LIVE for this website, according to the database? The
+ * lead route skips the Turnstile check only on a yes: decided here on the
+ * server from website_domains, never from anything the browser sends.
+ */
+export async function domainIsLiveFor(websiteId: string, name: string | null | undefined): Promise<boolean> {
+  if (!hasServiceRole() || !name || !UUID.test(websiteId)) return false;
+  const { data, error } = await admin().from('website_domains').select('id').eq('website_id', websiteId).eq('name', name).eq('status', 'live').maybeSingle();
+  if (error) {
+    console.error('[domains] live check failed:', error.code ?? 'error');
+    return false;
+  }
+  return Boolean(data);
+}
