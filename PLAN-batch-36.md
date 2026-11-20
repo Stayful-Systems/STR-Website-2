@@ -58,8 +58,12 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   Notes: block at schema.sql ~9141 (before Batch 31). `ad_packs.website_id` is a plain uuid, no FK (websites is created
   later in the file). `ad_pack_runs.by` is a column name. billing_settings values are jsonb: `ad_packs_enabled` false,
   others numbers (1, 1, 500, 5000, 5). `ad_pack_lead_links` PK = lead_id. Schema check: 9 smoke files, twice, no diff.
-- [ ] **Phase 2 — Codes, links, limits.** `src/lib/ad-packs/{codes,links,limits}.ts` + tests.
-  Notes:
+- [x] **Phase 2 — Codes, links, limits.** `src/lib/ad-packs/{codes,links,limits}.ts` + tests.
+  Notes: 21 tests pass, tsc clean. API: codes `ANGLES, Angle, isAngle, operatorCode(ownerId, taken?), packCode, normaliseCode,
+  parseCode, PACK_CODE_MAX`; links `adLink({domain,code,operatorCode}), adName(code,angle), isAdIdPlaceholder, cleanMetaAdId,
+  ANGLE_LABELS`; limits `AD_LIMITS, checkLength(kind,text) -> {length, level green|amber|red, notes}, firstSentence, wordCount`.
+  operatorCode/packCode/adLink THROW on invalid input. Primary text: first sentence ≤125 (amber if over), total ≤300 (red if over);
+  description green ≤90, red over, note past 30 chars; empty = red.
 - [ ] **Phase 3 — Angles, copy, figures.** `angles.ts` (45 templates, 5b script, card text, lead-form questions),
   `figures.ts`.
   Notes:
