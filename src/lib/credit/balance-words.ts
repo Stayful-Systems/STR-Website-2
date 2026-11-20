@@ -48,3 +48,22 @@ export function planCreditLine(allowancePence: number, rolledOverPence: number |
   if (rolled) parts.push(rolled);
   return parts.length > 0 ? parts.join(" · ") : null;
 }
+
+/**
+ * The billing card's plan-credit line (Batch 32a, Phase 5): "£Y rolled over
+ * from earlier months · next £X arrives {date}". Either part is left out when
+ * it does not apply: Y is 0, or the plan is not renewing (cancelling, ended,
+ * no date), so nothing is promised that will not arrive. Null when both are.
+ */
+export function rolledOverBillingLine(
+  opts: { rolledOverPence: number | undefined | null; allowancePence: number; nextAt: string | null; renewing: boolean },
+  fmt: Money,
+  fmtDate: (iso: string) => string | null,
+): string | null {
+  const parts: string[] = [];
+  const y = Math.round(opts.rolledOverPence ?? 0);
+  if (y > 0) parts.push(`${fmt(y)} rolled over from earlier months`);
+  const date = opts.renewing && opts.nextAt ? fmtDate(opts.nextAt) : null;
+  if (date && opts.allowancePence > 0) parts.push(`next ${fmt(opts.allowancePence)} arrives ${date}`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}

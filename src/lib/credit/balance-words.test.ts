@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chipAria, chipTitle, daysWords, lowBalanceText, planCreditLine, rolledOverWords } from './balance-words.ts';
+import { chipAria, chipTitle, daysWords, lowBalanceText, planCreditLine, rolledOverBillingLine, rolledOverWords } from './balance-words.ts';
 
 const gbp = (p: number) => `£${(p / 100).toFixed(2)}`;
 
@@ -40,4 +40,14 @@ test('planCreditLine leaves out a zero part', () => {
   assert.equal(planCreditLine(1900, 0, gbp), '£19.00 plan credit this month');
   assert.equal(planCreditLine(0, 1300, gbp), '£13.00 of your balance rolled over');
   assert.equal(planCreditLine(0, 0, gbp), null);
+});
+
+test('rolledOverBillingLine names the rolled-over amount and the next credit, and never promises one that will not arrive', () => {
+  const date = (iso: string) => (iso === '2026-12-01T00:00:00Z' ? '1 Dec 2026' : null);
+  const base = { rolledOverPence: 1300, allowancePence: 1900, nextAt: '2026-12-01T00:00:00Z', renewing: true };
+  assert.equal(rolledOverBillingLine(base, gbp, date), '£13.00 rolled over from earlier months · next £19.00 arrives 1 Dec 2026');
+  assert.equal(rolledOverBillingLine({ ...base, rolledOverPence: 0 }, gbp, date), 'next £19.00 arrives 1 Dec 2026');
+  assert.equal(rolledOverBillingLine({ ...base, renewing: false }, gbp, date), '£13.00 rolled over from earlier months');
+  assert.equal(rolledOverBillingLine({ ...base, renewing: false, rolledOverPence: 0 }, gbp, date), null);
+  assert.equal(rolledOverBillingLine({ ...base, nextAt: null }, gbp, date), '£13.00 rolled over from earlier months');
 });

@@ -10,6 +10,7 @@ import { useCreditOptional, type CreditSnapshot } from "@/components/credit/Cred
 import { TopupCard } from "@/components/credit/TopupCard";
 import type { UsageItem } from "@/lib/credit/history";
 import type { PackCopy } from "@/lib/starter-pack/rules";
+import { rolledOverBillingLine } from "@/lib/credit/balance-words";
 import { StarterPackLine } from "@/components/starter-pack/StarterPackLine";
 
 interface Props {
@@ -69,8 +70,12 @@ export function BillingClient(props: Props) {
   }
 
   const cycle = summary.cycle;
-  const pct = cycle && cycle.allowancePence > 0 ? Math.min(100, Math.round((cycle.usedPence / cycle.allowancePence) * 100)) : 0;
   // The credit the plan card states is the live grant for this cycle (the usage bar's figure), not the plan seed.
+  // A plan that is cancelling, ended or on hold gets no "next credit arrives"; the credit it holds stays.
+  const renewing = Boolean(props.plan) && !props.subscription.cancelAtPeriodEnd && (props.subscription.status === null || props.subscription.status === "active" || props.subscription.status === "trialing");
+  const creditLine = cycle?.planCode
+    ? rolledOverBillingLine({ rolledOverPence: summary.rolledOverPence, allowancePence: cycle.allowancePence, nextAt: cycle.endsAt, renewing }, formatGbp, fmtDate)
+    : null;
   const planCreditPence = props.plan && cycle?.planCode === props.plan.code && cycle.allowancePence > 0 ? cycle.allowancePence : props.plan?.monthlyCreditPence ?? 0;
 
   return (
@@ -125,7 +130,7 @@ export function BillingClient(props: Props) {
           <p className="text-3xl font-semibold text-foreground">{formatGbp(summary.totalPence)}</p>
           <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
             <dt className="text-muted-foreground">Plan credit</dt>
-            <dd className="text-right text-foreground">{formatGbp(summary.buckets.planPence)}{cycle?.endsAt && summary.buckets.planPence > 0 ? <span className="text-muted-foreground"> · resets {fmtDate(cycle.endsAt)}</span> : null}</dd>
+            <dd className="text-right text-foreground">{formatGbp(summary.buckets.planPence)}{summary.buckets.planPence > 0 ? <span className="text-muted-foreground"> · rolls over</span> : null}</dd>
             <dt className="text-muted-foreground">{props.packBought ? "Starter pack bonus" : "Welcome credit"}</dt>
             <dd className="text-right text-foreground">{formatGbp(summary.buckets.welcomePence)}</dd>
             <dt className="text-muted-foreground">Top-up credit <span className="text-xs">({summary.rates.topup}× rate)</span></dt>
@@ -144,12 +149,7 @@ export function BillingClient(props: Props) {
             )}
           </dl>
           {props.bonusLine && <p className="mt-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">{props.bonusLine}</p>}
-          {cycle && (
-            <div className="mt-3">
-              <div className="flex justify-between text-xs text-muted-foreground"><span>{cycle.planName ? `${cycle.planName} credit used this month` : "Welcome credit used"}</span><span>{pct}%</span></div>
-              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted"><div className={`h-full ${pct >= 100 ? "bg-red-600" : pct >= 80 ? "bg-amber-500" : "bg-primary"}`} style={{ width: `${pct}%` }} /></div>
-            </div>
-          )}
+          {creditLine && <p className="mt-3 text-sm text-muted-foreground">{creditLine}</p>}
         </Card>
       </div>
 

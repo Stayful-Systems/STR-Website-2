@@ -84,7 +84,7 @@ export default async function UpgradePage({
               : admin
                 ? "Admin accounts run everything free; this page is what members see."
                 : summary
-                  ? `You have ${formatGbp(summary.totalPence)} of credit${summary.cycle?.planName ? ` (${formatGbp(summary.buckets.planPence)} of this month's ${summary.cycle.planName} credit left)` : ""}. Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${summary.rates.topup}× the plan rate.`
+                  ? `You have ${formatGbp(summary.totalPence)} of credit${summary.cycle?.planName ? ` (${formatGbp(summary.buckets.planPence)} of ${summary.cycle.planName} credit left)` : ""}. Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${summary.rates.topup}× the plan rate.`
                   : `Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${DEFAULT_SPEND_RATES.topup}× the plan rate.`}
           </p>
           {paused && (
