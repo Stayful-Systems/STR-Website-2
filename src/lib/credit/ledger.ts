@@ -204,9 +204,13 @@ export async function refund(transactionId: number, basePence?: number, reason?:
   return (data as number | null) ?? null;
 }
 
+/**
+ * Batch 34 (plan credit rollover): plan credit never expires by date, so a
+ * plan grant is always made without an expiry, whatever the caller passes.
+ */
 export async function grant(userId: string, kind: GrantKind, amountPence: number, opts: { expiresAt?: string | Date | null; sourceRef?: string | null; description?: string | null } = {}): Promise<string | null> {
   if (!hasServiceRole()) return null;
-  const expires = opts.expiresAt instanceof Date ? opts.expiresAt.toISOString() : (opts.expiresAt ?? null);
+  const expires = kind === 'plan' ? null : opts.expiresAt instanceof Date ? opts.expiresAt.toISOString() : (opts.expiresAt ?? null);
   const { data, error } = await (await adminClient()).rpc('credit_grant', {
     p_user: userId,
     p_kind: kind,
@@ -228,28 +232,113 @@ export async function expirePlanGrants(userId: string, reason: string): Promise<
 
 /**
  * A new plan cycle in one transaction (Batch 21, B1): under the member's row
- * lock the source_ref is checked, the open plan grants are expired and the
- * new one is made, so a second, concurrent delivery of the same invoice can
- * never zero the credit the first one granted. A replay returns the existing
- * grant with `created: false` and expires nothing.
+ * lock the source_ref is checked and the new grant is made, so a second,
+ * concurrent delivery of the same invoice can never grant twice. A replay
+ * returns the existing grant with `created: false`. Batch 34: the old plan
+ * credit rolls over (nothing is expired, `expired` is always 0) and the new
+ * grant has no expiry and is marked plan_cycle (the newest month's credit).
  */
 export async function planCycle(
   userId: string,
   amountPence: number,
-  opts: { expiresAt?: string | Date | null; sourceRef: string; description?: string | null },
+  opts: { sourceRef: string; description?: string | null },
 ): Promise<{ grantId: string | null; created: boolean; expired: number }> {
   if (!hasServiceRole()) return { grantId: null, created: false, expired: 0 };
-  const expires = opts.expiresAt instanceof Date ? opts.expiresAt.toISOString() : (opts.expiresAt ?? null);
   const { data, error } = await (await adminClient()).rpc('credit_plan_cycle', {
     p_user: userId,
     p_amount: round4(amountPence),
-    p_expires_at: expires,
+    p_expires_at: null,
     p_source_ref: opts.sourceRef,
     p_description: opts.description ?? null,
   });
   if (error) throwRpc(error, 'credit_plan_cycle');
   const d = (data ?? {}) as { grant_id?: string | null; created?: boolean; expired?: number };
   return { grantId: d.grant_id ?? null, created: Boolean(d.created), expired: Number(d.expired ?? 0) || 0 };
+}
+
+/**
+ * Batch 34: a LIKE pattern matching `literal` exactly: the LIKE wildcards
+ * ('%', '_') and the escape character ('\\') are escaped, so an id with an
+ * underscore (every Stripe id) matches only itself.
+ */
+export function escapeLike(literal: string): string {
+  return literal.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/** Which plan grants to match by source_ref: one exact ref, or every ref starting with a literal prefix. */
+export type PlanSourceMatch = { exact: string } | { prefix: string };
+
+/** The LIKE pattern for a match: the literal escaped, and only a prefix match gets the trailing '%'. */
+export function planSourcePattern(match: PlanSourceMatch): string {
+  if ('exact' in match) {
+    if (!match.exact) throw new Error('[credit] planSourcePattern: empty source_ref');
+    return escapeLike(match.exact);
+  }
+  if (!match.prefix) throw new Error('[credit] planSourcePattern: empty prefix');
+  return `${escapeLike(match.prefix)}%`;
+}
+
+/** Options for expirePlanSource (credit_expire_plan_source's p_total and created-at window). */
+export interface PlanSourceOptions {
+  /**
+   * `maxPence` is the TOTAL to have removed for `reason` from the matched
+   * grants: what was already removed for it is subtracted inside the
+   * database, under the member's lock (cumulative refunds, redeliveries).
+   */
+  total?: boolean;
+  /** Only grants created at or after this instant (an annual invoice's year). */
+  createdFrom?: string | null;
+  /** Only grants created before this instant. */
+  createdTo?: string | null;
+}
+
+/**
+ * Batch 34: removes up to `maxPence` (null = all) of the member's unexpired
+ * PLAN credit in grants whose source_ref matches, oldest first, never below
+ * zero and no other credit touched (credit_expire_plan_source). For a
+ * refunded or charged-back plan payment ({ exact: 'inv:<invoice>' }, or an
+ * annual plan's { prefix: 'annual:<sub>:' } slots in the invoice's year) and
+ * a forfeited Academy trial ({ prefix: 'trial:<sub>:' }).
+ */
+export async function expirePlanSource(userId: string, match: PlanSourceMatch, maxPence: number | null, reason: string, opts: PlanSourceOptions = {}): Promise<{ expiredPence: number; grants: number }> {
+  const pattern = planSourcePattern(match);
+  if (!hasServiceRole()) return { expiredPence: 0, grants: 0 };
+  if (maxPence !== null && !(maxPence > 0)) return { expiredPence: 0, grants: 0 };
+  const { data, error } = await (await adminClient()).rpc('credit_expire_plan_source', {
+    p_user: userId,
+    p_source_like: pattern,
+    p_max_pence: maxPence === null ? null : round4(maxPence),
+    p_reason: reason,
+    p_total: Boolean(opts.total),
+    p_created_from: opts.createdFrom ?? null,
+    p_created_to: opts.createdTo ?? null,
+  });
+  if (error) throwRpc(error, 'credit_expire_plan_source');
+  const d = (data ?? {}) as { expired_pence?: number | string; grants?: number | string };
+  return { expiredPence: round4(Number(d.expired_pence ?? 0) || 0), grants: Number(d.grants ?? 0) || 0 };
+}
+
+export interface IdlePlanRow {
+  userId: string;
+  lastSpentAt: string | null;
+  idleSince: string;
+  planRemainingPence: number;
+  /** Plan credit in grants older than the newest cycle grant: the newest month never lapses. */
+  expirablePence: number;
+}
+
+/** Batch 34: members holding plan credit with no spend for plan_credit_idle_months (credit_idle_plan_report; read only). */
+export async function idlePlanReport(now: Date = new Date()): Promise<IdlePlanRow[]> {
+  if (!hasServiceRole()) return [];
+  const { data, error } = await (await adminClient()).rpc('credit_idle_plan_report', { p_now: now.toISOString() });
+  if (error) throwRpc(error, 'credit_idle_plan_report');
+  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+    userId: String(r.user_id),
+    lastSpentAt: (r.last_spent_at as string | null) ?? null,
+    idleSince: String(r.idle_since),
+    planRemainingPence: round4(Number(r.plan_remaining_pence ?? 0) || 0),
+    expirablePence: round4(Number(r.expirable_pence ?? 0) || 0),
+  }));
 }
 
 export async function expireDueGrants(): Promise<number> {

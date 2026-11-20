@@ -102,7 +102,7 @@ function PlanSummary({ view, topupRate }: { view: PlanView; topupRate: number })
       if (view.cancelScheduled) {
         return line(
           view.endsOn ? `Your plan ends on ${view.endsOn}.` : 'Your plan is ending.',
-          "Your plan credit is yours until then, and nothing more will be charged. Top-up credit never expires.",
+          "Your credit stays on your account if you cancel, and nothing more will be charged.",
         );
       }
       if (view.pauseScheduled) {
@@ -462,7 +462,7 @@ function CancelDialog({
               : "You'll keep full access until the end of the period you've already paid for, then your plan ends."}
           </p>
           <p className="mt-2 text-sm text-[#7a8274]">
-            Nothing more will be charged, and you can undo this any time before that date.
+            Your credit stays on your account if you cancel. Nothing more will be charged, and you can undo this any time before that date.
           </p>
           <form action={cancelAction} className="mt-5 flex items-center justify-between gap-3">
             <input type="hidden" name="reason" value={reason} />

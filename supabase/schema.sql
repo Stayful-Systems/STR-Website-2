@@ -577,6 +577,12 @@ begin
   alter table public.credit_grants add constraint credit_grants_scope_check check (scope is null or scope in ('pack_bonus'));
 end $$;
 create index if not exists credit_grants_scope_idx on public.credit_grants (user_id) where scope is not null;
+-- Batch 34 (plan credit rollover): true on a plan grant made by a plan
+-- renewal (credit_plan_cycle; and, by the one-off below, every plan grant made
+-- before Batch 34). The newest such grant marks the start of the current
+-- cycle: the Usage page measures from it, and the 12-month no-spend rule never
+-- expires it or anything added after it.
+alter table public.credit_grants add column if not exists plan_cycle boolean not null default false;
 
 -- ── Append-only ledger (the usage page) ──
 create table if not exists public.credit_transactions (
@@ -5806,17 +5812,20 @@ create index if not exists provider_calls_action_idx on public.provider_calls (a
 alter table public.leads add column if not exists input jsonb;
 
 -- (B1) credit_plan_cycle: a new plan cycle in ONE transaction under the
--- member's row lock: the source_ref check, the expiry of the open plan grants
--- and the new grant. As three separate calls (src/lib/stripe/grants.ts before
--- Batch 21c) a second, concurrent delivery of the same invoice could pass the
--- check and zero the grant the first delivery had just made. Returns
--- {grant_id, created, expired}: a replay returns the existing grant, creates
--- nothing and expires nothing.
+-- member's row lock: the source_ref check and the new grant. As separate calls
+-- (src/lib/stripe/grants.ts before Batch 21c) a second, concurrent delivery of
+-- the same invoice could pass the check and grant twice. Returns
+-- {grant_id, created, expired}: a replay returns the existing grant and
+-- creates nothing.
+-- Batch 34 (plan credit rollover): a renewal no longer expires the open plan
+-- grants (credit_expire_plan_grants is no longer called): unused plan credit
+-- rolls over. The new grant never expires (p_expires_at is IGNORED, so app
+-- code that still passes a period end is safe) and is marked plan_cycle.
+-- 'expired' is always 0, kept for the callers.
 create or replace function public.credit_plan_cycle(p_user uuid, p_amount numeric, p_expires_at timestamptz, p_source_ref text, p_description text default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_id uuid;
-  v_expired int := 0;
 begin
   if p_source_ref is null or p_source_ref = '' then raise exception 'credit_plan_cycle needs a source_ref'; end if;
   perform 1 from profiles where id = p_user for update;
@@ -5824,9 +5833,9 @@ begin
   if v_id is not null then
     return jsonb_build_object('grant_id', v_id, 'created', false, 'expired', 0);
   end if;
-  v_expired := credit_expire_plan_grants(p_user, 'renewal');
-  v_id := credit_grant(p_user, 'plan', p_amount, p_expires_at, p_source_ref, p_description);
-  return jsonb_build_object('grant_id', v_id, 'created', true, 'expired', v_expired);
+  v_id := credit_grant(p_user, 'plan', p_amount, null, p_source_ref, p_description);
+  update credit_grants set plan_cycle = true where id = v_id;
+  return jsonb_build_object('grant_id', v_id, 'created', true, 'expired', 0);
 end $$;
 revoke all on function public.credit_plan_cycle(uuid, numeric, timestamptz, text, text) from public, anon, authenticated;
 grant execute on function public.credit_plan_cycle(uuid, numeric, timestamptz, text, text) to service_role;
@@ -8802,6 +8811,194 @@ do $$ begin
 end $$;
 alter table public.academy_purchases enable row level security;  -- no policies: service role only
 revoke all on public.academy_purchases from anon, authenticated;
+-- =========================
+-- Batch 34: plan credit rollover
+-- =========================
+-- Unused plan credit rolls over with no cap (PLAN.md, Batch 34a). A renewal no
+-- longer wipes it (credit_plan_cycle, edited in place above, and the
+-- credit_grants.plan_cycle flag next to the table). Plan credit can lapse
+-- only after 12 months with no spend at all, and never the newest month's;
+-- the reminders and the live expiry come in Batch 34b. Here: the settings, the
+-- one-off that stops existing plan credit lapsing, a read-only report of idle
+-- members, and the targeted removal used for refunded plan payments and
+-- cancelled Academy trials. Checked by supabase/tests/rollover-smoke.sql.
+
+-- Settings (edited on /admin/billing):
+--   plan_credit_idle_months            months with no spend before plan credit can lapse
+--   plan_credit_idle_reminder_months   no-spend reminders, in months (the last is the final warning)
+--   plan_credit_final_notice_days      days from the final warning actually sent to the expiry
+--   plan_credit_rollover_from          the launch date; the no-spend clock never starts
+--                                      earlier (written once by the one-off below)
+insert into public.billing_settings (key, value) values
+  ('plan_credit_idle_months', '12'),
+  ('plan_credit_idle_reminder_months', '[3,6,12]'),
+  ('plan_credit_final_notice_days', '30')
+on conflict (key) do nothing;
+
+-- credit_batch34_cycle_candidate(kind, plan_cycle, description): whether the
+-- one-off below marks an existing grant as a cycle grant: a plan grant not yet
+-- marked, except an upgrade's top-up (grantUpgradeDifference in
+-- src/lib/stripe/grants.ts, described 'Upgrade to <plan>: extra plan
+-- credit'). A top-up marked as a cycle start would make the newest renewal's
+-- credit look like an older month's (expirable) and over-grant a later
+-- upgrade's top-up. Its own function so rollover-smoke.sql can check it.
+create or replace function public.credit_batch34_cycle_candidate(p_kind text, p_plan_cycle boolean, p_description text)
+returns boolean language sql immutable set search_path = public as $$
+  select p_kind = 'plan' and not coalesce(p_plan_cycle, false)
+     and coalesce(p_description, '') not like 'Upgrade to %: extra plan credit';
+$$;
+revoke all on function public.credit_batch34_cycle_candidate(text, boolean, text) from public, anon, authenticated;
+grant execute on function public.credit_batch34_cycle_candidate(text, boolean, text) to service_role;
+
+-- One-off, marked by billing_settings 'batch34_rollover_from' (it also holds
+-- the counts): stamps the launch date, stops every open plan grant lapsing at
+-- its period end, and marks the existing plan grants (not upgrade top-ups:
+-- credit_batch34_cycle_candidate) as cycle grants. Credit
+-- that lapsed before launch is not restored. Rollback: re-set expires_at to
+-- the period end on the grants the 'unexpired' count names.
+do $$
+declare
+  v_now timestamptz := now();
+  v_unexpired int;
+  v_flagged int;
+begin
+  if not exists (select 1 from public.billing_settings where key = 'batch34_rollover_from') then
+    insert into public.billing_settings (key, value) values ('plan_credit_rollover_from', to_jsonb(v_now))
+    on conflict (key) do nothing;
+    update public.credit_grants set expires_at = null
+     where kind = 'plan' and remaining_pence > 0 and expires_at > v_now;
+    get diagnostics v_unexpired = row_count;
+    update public.credit_grants set plan_cycle = true
+     where public.credit_batch34_cycle_candidate(kind, plan_cycle, description);
+    get diagnostics v_flagged = row_count;
+    insert into public.billing_settings (key, value)
+    values ('batch34_rollover_from', jsonb_build_object('at', v_now, 'unexpired', v_unexpired, 'flagged', v_flagged));
+  end if;
+end $$;
+
+-- credit_idle_plan_report(p_now): read only. One row per member holding plan
+-- credit who has spent nothing for at least plan_credit_idle_months:
+--   last_spent_at         their latest debit (any debit that moved credit:
+--                         automatic deal charges and team seats' spending
+--                         included, as seats spend the owner's balance)
+--   idle_since            the later of last_spent_at and plan_credit_rollover_from
+--                         (with neither, their first plan grant)
+--   plan_remaining_pence  all their unexpired plan credit
+--   expirable_pence       the part of it in grants created BEFORE their newest
+--                         plan_cycle grant: the newest month never lapses
+-- Batch 34b's reminders and expiry read it; nothing here changes credit.
+create or replace function public.credit_idle_plan_report(p_now timestamptz default now())
+returns table (user_id uuid, last_spent_at timestamptz, idle_since timestamptz, plan_remaining_pence numeric, expirable_pence numeric)
+language sql stable security definer set search_path = public as $$
+  with s as (
+    select
+      (select (b.value #>> '{}')::timestamptz from billing_settings b
+        where b.key = 'plan_credit_rollover_from' and jsonb_typeof(b.value) = 'string') as rollover_from,
+      make_interval(months => greatest(1, round(credit_setting_num('plan_credit_idle_months', 12)))::int) as idle_after
+  ), newest as (
+    select g.user_id as uid, max(g.created_at) as newest_cycle_at
+      from credit_grants g
+     where g.kind = 'plan' and g.plan_cycle and g.created_at <= p_now
+     group by g.user_id
+  ), held as (
+    select g.user_id as uid,
+           sum(g.remaining_pence) as plan_remaining,
+           coalesce(sum(g.remaining_pence) filter (where g.created_at < coalesce(n.newest_cycle_at, '-infinity'::timestamptz)), 0) as expirable,  -- no cycle grant known: nothing is expirable (the newest month is unknown, so protect it)
+           min(g.created_at) as first_plan_at
+      from credit_grants g
+      left join newest n on n.uid = g.user_id
+     where g.kind = 'plan' and g.remaining_pence > 0 and (g.expires_at is null or g.expires_at > p_now)
+     group by g.user_id
+  ), spent as (
+    select h.*,
+           (select max(t.at) from credit_transactions t
+             where t.user_id = h.uid and t.kind = 'debit' and t.amount_pence < 0 and t.at <= p_now) as last_at
+      from held h
+  ), idle as (
+    select sp.*, coalesce(greatest(sp.last_at, s.rollover_from), sp.first_plan_at) as since, s.idle_after
+      from spent sp cross join s
+  )
+  select i.uid, i.last_at, i.since, i.plan_remaining, i.expirable
+    from idle i
+   where i.since <= p_now - i.idle_after
+   order by i.since, i.uid;
+$$;
+revoke all on function public.credit_idle_plan_report(timestamptz) from public, anon, authenticated;
+grant execute on function public.credit_idle_plan_report(timestamptz) to service_role;
+
+-- credit_expire_plan_source(p_user, p_source_like, p_max_pence, p_reason,
+--   p_total, p_created_from, p_created_to):
+-- removes up to p_max_pence (null = all) of the member's unexpired plan credit
+-- in grants whose source_ref is LIKE p_source_like (and, when given, created
+-- in [p_created_from, p_created_to)), oldest first, under the member's row
+-- lock. With p_total, p_max_pence is the TOTAL to have removed for p_reason
+-- from those grants: what 'expire' rows with that reason already removed from
+-- them (read after the lock is taken) comes off first, so two cumulative
+-- refunds racing each other, or a redelivery, never remove more than the
+-- latest total. Each grant touched gets an 'expire' ledger row (as
+-- credit_expire_plan_grants writes them) with the reason in its metadata. A
+-- grant never goes below zero and no other credit is touched. Used for a
+-- refunded or charged-back plan payment ('inv:<invoice>', or an annual
+-- plan's 'annual:<sub>:%' slots created in that invoice's year) and a
+-- cancelled Academy trial ('trial:<sub>:%'). Note '_' is a LIKE wildcard:
+-- escape it (as '\_') to match it literally. Returns {expired_pence, grants}.
+drop function if exists public.credit_expire_plan_source(uuid, text, numeric, text);
+create or replace function public.credit_expire_plan_source(
+  p_user uuid, p_source_like text, p_max_pence numeric, p_reason text,
+  p_total boolean default false, p_created_from timestamptz default null, p_created_to timestamptz default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  g record;
+  v_reason text := coalesce(nullif(p_reason, ''), 'removed');
+  v_left numeric := case when p_max_pence is null then null else round(p_max_pence, 4) end;
+  v_done numeric;
+  v_take numeric;
+  v_total numeric := 0;
+  n int := 0;
+begin
+  if p_user is null or coalesce(p_source_like, '') = '' then raise exception 'credit_expire_plan_source_bad_input'; end if;
+  if v_left is not null and v_left <= 0 then
+    return jsonb_build_object('expired_pence', 0, 'grants', 0);
+  end if;
+  perform 1 from profiles where id = p_user for update;
+  if coalesce(p_total, false) and v_left is not null then
+    select coalesce(sum(-t.amount_pence), 0) into v_done
+      from credit_transactions t
+      join credit_grants cg on cg.id = t.grant_id
+     where t.user_id = p_user and t.kind = 'expire' and t.amount_pence < 0
+       and t.metadata->>'reason' = v_reason
+       and cg.user_id = p_user and cg.kind = 'plan' and cg.source_ref like p_source_like
+       and (p_created_from is null or cg.created_at >= p_created_from)
+       and (p_created_to is null or cg.created_at < p_created_to);
+    v_left := greatest(0, v_left - v_done);
+    if v_left <= 0 then return jsonb_build_object('expired_pence', 0, 'grants', 0); end if;
+  end if;
+  for g in
+    select id, remaining_pence from credit_grants
+     where user_id = p_user and kind = 'plan' and source_ref like p_source_like
+       and remaining_pence > 0 and (expires_at is null or expires_at > now())
+       and (p_created_from is null or created_at >= p_created_from)
+       and (p_created_to is null or created_at < p_created_to)
+     order by created_at, id
+     for update
+  loop
+    exit when v_left is not null and v_left <= 0;
+    v_take := case when v_left is null then g.remaining_pence else least(v_left, g.remaining_pence) end;
+    if v_take <= 0 then continue; end if;
+    insert into credit_transactions (user_id, kind, amount_pence, grant_id, description, metadata)
+    values (p_user, 'expire', -v_take, g.id, 'Plan credit expired',
+      jsonb_build_object('reason', v_reason, 'source_like', p_source_like));
+    update credit_grants set remaining_pence = remaining_pence - v_take where id = g.id;
+    v_total := v_total + v_take;
+    if v_left is not null then v_left := v_left - v_take; end if;
+    n := n + 1;
+  end loop;
+  return jsonb_build_object('expired_pence', v_total, 'grants', n);
+end;
+$$;
+revoke all on function public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz) from public, anon, authenticated;
+grant execute on function public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz) to service_role;
+
 -- Batch 31: customer websites (Phase 1: schema and settings)
 -- =========================
 -- A member who is invited gets a small white-label website at /s/<slug> whose

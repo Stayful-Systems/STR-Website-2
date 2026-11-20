@@ -324,6 +324,23 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const d = whole(g, 'pack_picks_pause_days', 1);
     return d === null ? null : String(d);
   }),
+  // Batch 34a: plan credit rolls over; the no-spend lapse is read strictly from its billing_settings rows (seeded in schema.sql).
+  plan_credit_idle_months: g_('Months with no spending before earlier months’ plan credit can lapse', 'billing_settings.plan_credit_idle_months', (g) => {
+    const n = whole(g, 'plan_credit_idle_months', 1);
+    return n === null ? null : String(n);
+  }),
+  plan_credit_final_notice_days: g_('Days from the final no-spend warning to the expiry', 'billing_settings.plan_credit_final_notice_days', (g) => {
+    const n = whole(g, 'plan_credit_final_notice_days', 1);
+    return n === null ? null : String(n);
+  }),
+  plan_credit_idle_reminder_months: g_('The months of no spending we send a reminder at, in prose, e.g. “3, 6 and 12”', 'billing_settings.plan_credit_idle_reminder_months', (g) => {
+    const v = raw(g, 'plan_credit_idle_reminder_months');
+    if (!Array.isArray(v) || v.length === 0) return null;
+    const ns = v.map(num);
+    if (ns.some((n) => n === null || !Number.isInteger(n) || n < 1)) return null;
+    const xs = [...new Set(ns as number[])].sort((a, b) => a - b).map(String);
+    return xs.length === 1 ? xs[0] : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+  }),
   // Deals and reports
   open_cost_min: g_('The cheapest price to open a deal', 'billing_settings.deal_open_ladder', (g) => money(ladderBounds(g)?.min ?? null)),
   open_cost_max: g_('The dearest price to open a deal', 'billing_settings.deal_open_ladder', (g) => money(ladderBounds(g)?.max ?? null)),

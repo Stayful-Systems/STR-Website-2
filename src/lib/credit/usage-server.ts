@@ -31,20 +31,43 @@ export function ukMonthStart(now: Date = new Date()): Date {
 }
 
 /**
- * The period the page covers: a plan member's current plan period (from the
- * grant that began it), else the UK calendar month.
+ * When the current plan cycle began: the newest plan_cycle grant. Until
+ * schema.sql adds plan_cycle (the read errors) or when no grant is marked,
+ * the oldest open plan grant stands in, as before Batch 34 (renewals then
+ * still expired the previous grant, so that was the cycle's start).
+ */
+async function newestCycleGrantAt(payerId: string, now: Date): Promise<string | undefined> {
+  const admin = createAdminClient();
+  const cycle = await admin
+    .from('credit_grants')
+    .select('created_at')
+    .eq('user_id', payerId)
+    .eq('kind', 'plan')
+    .eq('plan_cycle', true)
+    .lte('created_at', now.toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1);
+  const marked = ((cycle.data ?? []) as { created_at: string }[])[0]?.created_at;
+  if (!cycle.error && marked) return marked;
+  const { data } = await admin
+    .from('credit_grants')
+    .select('created_at')
+    .eq('user_id', payerId)
+    .eq('kind', 'plan')
+    .or(`expires_at.is.null,expires_at.gt.${now.toISOString()}`)
+    .order('created_at', { ascending: true })
+    .limit(1);
+  return ((data ?? []) as { created_at: string }[])[0]?.created_at;
+}
+
+/**
+ * The period the page covers: a plan member's current plan cycle (Batch 34:
+ * from the newest renewal grant, credit_grants.plan_cycle, so banked credit
+ * from earlier months does not stretch it), else the UK calendar month.
  */
 export async function usagePeriodFor(payerId: string, onPlan: boolean, now: Date = new Date()): Promise<UsagePeriod> {
   if (onPlan && hasServiceRole()) {
-    const { data } = await createAdminClient()
-      .from('credit_grants')
-      .select('created_at')
-      .eq('user_id', payerId)
-      .eq('kind', 'plan')
-      .or(`expires_at.is.null,expires_at.gt.${now.toISOString()}`)
-      .order('created_at', { ascending: true })
-      .limit(1);
-    const started = ((data ?? []) as { created_at: string }[])[0]?.created_at;
+    const started = await newestCycleGrantAt(payerId, now);
     if (started && Number.isFinite(Date.parse(started))) {
       const start = new Date(started);
       return { kind: 'plan', start, label: `since ${start.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'Europe/London' })}` };

@@ -64,7 +64,7 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
           {perkLines(p.perks).map((l) => (
             <li key={l}><Icon name="check" size={13} color="var(--sage-500)" /> {l}</li>
           ))}
-          <li><Icon name="check" size={13} color="var(--sage-500)" /> Cancel any time · unused plan credit resets monthly</li>
+          <li><Icon name="check" size={13} color="var(--sage-500)" /> Cancel any time · unused plan credit rolls over</li>
         </ul>
         <SubscribeButton planCode={p.code} label={signedIn ? `Choose ${p.name}` : "Start free"} className={"btn " + (hl ? "btn-primary" : "btn-ghost")} signedIn={signedIn} signupHref={signupHref} current={currentPlanCode === p.code} />
       </div>
@@ -121,7 +121,7 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
           {annual && card(annual, highlightPlanCode === annual.code, "Save 25%")}
         </div>
         <div className="pricing-foot muted">
-          Prices are in plan credit, ex VAT · Cancel any time, no contract · Plan credit resets each month; top-up credit never expires but is spent at {topupRate}× the plan rate (a Full analysis is {formatPence(full * topupRate)} of top-up credit, {formatPence(full)} on a plan).
+          Prices are in plan credit, ex VAT · Cancel any time, no contract · Unused plan credit rolls over; top-up credit never expires but is spent at {topupRate}× the plan rate (a Full analysis is {formatPence(full * topupRate)} of top-up credit, {formatPence(full)} on a plan).
         </div>
       </div>
     </section>

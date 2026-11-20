@@ -55,7 +55,7 @@ export default async function ChoosePage({ searchParams }: { searchParams: Promi
         {!summary.noPlan ? (
           <section className="rounded-xl border border-border bg-card p-5 text-sm">
             <p className="font-medium text-foreground">You&rsquo;re on a plan, so there&rsquo;s nothing to choose here.</p>
-            <p className="mt-1 text-muted-foreground">Your plan credit renews each month. You can still top up from Billing.</p>
+            <p className="mt-1 text-muted-foreground">Your plan credit renews each month. Unused plan credit rolls over. You can still top up from Billing.</p>
             <Link href="/account/billing" className="mt-3 inline-flex h-9 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90">
               Go to Billing
             </Link>

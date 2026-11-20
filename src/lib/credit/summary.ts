@@ -9,6 +9,7 @@ import { lowBalanceState, type BalanceState, type SpendRates } from './pricing';
 import { isEnforcing } from './http';
 import { accountStatus, type AccessProfile } from '../access';
 import { isPackAccount } from '../lifecycle/settings';
+import { planCycleView, type RolloverGrantRow } from './rollover';
 
 /**
  * Everything the app chrome needs to know about a member's credit in one
@@ -33,6 +34,12 @@ export interface CreditSummary {
   /** One day of daily deals in base pence (billing_settings.todays_5_daily_pence), for the Usage chip. */
   dailyDealsPence: number;
   /**
+   * Batch 34: plan credit left from earlier cycles (grants older than the
+   * newest renewal grant; rollover.ts). Part of buckets.planPence, not of
+   * cycle.allowancePence. 0 with no plan.
+   */
+  rolledOverPence: number;
+  /**
    * Batch 20: no live, trialling, past-due or paused plan (free, or lapsed):
    * low means £5 of credit or less (billing_settings.low_credit_pence), and
    * the choice offered is Starter or a £10 top-up.
@@ -52,27 +59,28 @@ async function welcomeGrantedPence(userId: string): Promise<number> {
 }
 
 /**
- * Plan credit granted for the period the member is in: the renewal grant
- * plus any mid-cycle upgrade difference, i.e. every plan grant that has not
- * expired. 0 when it cannot be read or none is live.
+ * Batch 34: every plan grant this account has had (rollover.ts reads this
+ * cycle's, the banked credit and when the next credit arrives from them).
+ * Null when it cannot be read (e.g. before schema.sql adds plan_cycle): the
+ * plan's monthly credit then stands in for the allowance.
  *
- * This, not `billing_plans.monthly_credit_pence`, is the allowance: plan
- * credit changes at each member's NEXT renewal, so while a change rolls out
- * the plan row says one thing and the member's current grant another.
+ * This cycle's grants, not `billing_plans.monthly_credit_pence`, are the
+ * allowance: plan credit changes at each member's NEXT renewal, so while a
+ * change rolls out the plan row says one thing and the member's current grant
+ * another.
  */
-async function currentPlanGrantedPence(userId: string): Promise<number> {
-  if (!hasServiceRole()) return 0;
+async function planGrantRows(userId: string): Promise<RolloverGrantRow[] | null> {
+  if (!hasServiceRole()) return null;
   const { data, error } = await createAdminClient()
     .from('credit_grants')
-    .select('amount_pence')
+    .select('amount_pence, remaining_pence, created_at, plan_cycle, source_ref, expires_at')
     .eq('user_id', userId)
-    .eq('kind', 'plan')
-    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    .eq('kind', 'plan');
   if (error) {
     console.warn('[credit] plan grants read failed:', error.message);
-    return 0;
+    return null;
   }
-  return ((data ?? []) as { amount_pence: unknown }[]).reduce((n, r) => n + (Number(r.amount_pence) || 0), 0);
+  return (data ?? []) as unknown as RolloverGrantRow[];
 }
 
 export async function getCreditSummary(userId: string): Promise<CreditSummary> {
@@ -108,10 +116,20 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
   const plan = await getPlan(profile?.plan_code);
 
   let cycle: CreditSummary['cycle'] = null;
+  let rolledOver = 0;
   if (plan) {
-    const granted = await currentPlanGrantedPence(userId);
-    const allowance = granted > 0 ? granted : plan.monthlyCreditPence;
-    cycle = { planCode: plan.code, planName: plan.name, allowancePence: allowance, usedPence: Math.max(0, allowance - balance.buckets.planPence), endsAt: balance.planExpiresAt ?? profile?.current_period_end ?? null };
+    // Batch 34: the allowance is this cycle's grants; banked plan credit shows
+    // as rolledOverPence; endsAt is when the next plan credit arrives (about a
+    // month away for an annual member, not the year end).
+    const view = planCycleView(await planGrantRows(userId), {
+      planMonthlyCreditPence: plan.monthlyCreditPence,
+      currentPeriodEnd: profile?.current_period_end ?? null,
+      fallbackEndsAt: balance.planExpiresAt ?? profile?.current_period_end ?? null,
+    });
+    const allowance = view.allowancePence;
+    rolledOver = view.rolledOverPence;
+    // Used = allowance − ALL plan credit, so "low" (used ≥ 80%) means plan credit below 20% of one month's.
+    cycle = { planCode: plan.code, planName: plan.name, allowancePence: allowance, usedPence: Math.max(0, allowance - balance.buckets.planPence), endsAt: view.endsAt };
   } else {
     // Welcome credit is the welcome grant plus any first-week checklist
     // rewards (src/lib/today/checklist.ts), which are welcome-kind so they
@@ -149,6 +167,7 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     topupPresetsPence: settings.topupPresetsPence,
     welcomeWithheldReason: profile?.welcome_withheld_reason ?? null,
     dailyDealsPence: settings.dealPricing.todays5DailyPence,
+    rolledOverPence: rolledOver,
     noPlan,
   };
 }
