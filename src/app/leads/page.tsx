@@ -15,6 +15,7 @@ import { archivingSoon, archiveDueAt, retentionDate } from "@/lib/leads/retentio
 import { saturationBand } from "@/lib/market/competition";
 import { WallBanner, type WallNotice } from "./WallBanner";
 import { LeadList, type LeadListRow } from "./LeadList";
+import { leadDbBadges } from "@/lib/leaddb/store";
 import { WebsiteEntryCard } from "./website/LeadPanel";
 
 export const metadata: Metadata = {
@@ -30,7 +31,7 @@ export const metadata: Metadata = {
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 
-function toRow(r: LeadRecord, now: Date): LeadListRow {
+function toRow(r: LeadRecord, now: Date, leadDb: string | null): LeadListRow {
   const l = r.lead;
   const saturation = saturationBand(l.metrics.averageReviewCount);
   const facts = [
@@ -64,6 +65,7 @@ function toRow(r: LeadRecord, now: Date): LeadListRow {
     archived: Boolean(r.archivedAt),
     canPush: r.status !== "queued" && Boolean(l.report.url) && !r.archivedAt,
     pushed: r.status === "pushed",
+    leadDb,
   };
 }
 
@@ -119,7 +121,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const website = isOwner ? await ownWebsite(scope.ownerId) : null;
   const countFor = (tab: LeadTab) => counts[LEAD_TABS.findIndex((t) => t.key === tab)] ?? 0;
   const now = new Date();
-  const rows = page.leads.map((r) => toRow(r, now));
+  const leadDbByLead = await leadDbBadges(page.leads.map((r) => r.id));
+  const rows = page.leads.map((r) => toRow(r, now, leadDbByLead.get(r.id) ?? null));
   const pages = Math.max(1, Math.ceil(page.total / PAGE_SIZE));
 
   // Only live funnels: a paused one is not turning anybody away or running out

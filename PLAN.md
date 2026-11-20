@@ -1,6 +1,6 @@
 # PLAN — Batch 32: Plan credit rollover
 
-Planned against origin/main cf6935e (Batch 31 merged; re-checked 20 Nov 2026: main has not moved).
+Planned against origin/main cf6935e (Batch 31 merged). RE-CHECK 20 Nov 09:15: main HAD MOVED to 60c2bfd (PR #175, a different "Batch 32": the lead database push, PLAN-batch-32.md) -> merged into this branch (not rebased: a rebase needs a force-push). Only .github/workflows/ci.yml conflicted (both batches add a smoke step; kept both). After the merge: schema twice + all smoke files incl. leaddb-smoke and rollover-smoke pass, npm test 3757 pass, tsc 0, lint 0 errors, build OK. NOTE: the batch number 32 is now used twice (this plan credit rollover vs the lead database push).
 Branch: claude/dazzling-babbage-5j0m9x (the plan named claude/epic-ramanujan-rcv4gz; this session is bound to the former).
 
 - **32a** = Zac's Phase 1: rollover, display, dry-run sweep, measure. One PR.

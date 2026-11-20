@@ -22,6 +22,8 @@ export interface LeadListRow {
   archived: boolean;
   canPush: boolean;
   pushed: boolean;
+  /** Batch 32: "In your lead database" (with "· report coming" until the report lands), or null. */
+  leadDb: string | null;
 }
 
 const INITIAL: LeadActionState = {};
@@ -106,6 +108,7 @@ export function LeadList({ rows, archivedTab }: { rows: LeadListRow[]; archivedT
                   {r.title}
                 </Link>
                 <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{r.stage}</span>
+                {r.leadDb ? <span className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">{r.leadDb}</span> : null}
               </p>
               {r.subtitle ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{r.subtitle}</p> : null}
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{r.address ?? "No address recorded"}</p>
