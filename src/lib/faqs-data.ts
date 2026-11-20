@@ -31,7 +31,7 @@ const pounds = (pence: number) => `£${pence % 100 === 0 ? pence / 100 : (pence 
 
 /** The rest of the cost answer: plans, top-ups, the rate. */
 export function costRest(f: CostFigures): string {
-  return `subscribe for monthly credit from ${pounds(f.minPlanPence)}/month — current plans and annual saving are on the pricing page — or top up as you go from ${pounds(f.minTopupPence)}. Plan credit resets each month; top-up credit never expires but is spent at ${f.topupRate}× the plan rate. Cancel any time, no contract.`;
+  return `subscribe for monthly credit from ${pounds(f.minPlanPence)}/month — current plans and annual saving are on the pricing page — or top up as you go from ${pounds(f.minTopupPence)}. Unused plan credit rolls over; top-up credit never expires but is spent at ${f.topupRate}× the plan rate. Cancel any time, no contract.`;
 }
 
 /**

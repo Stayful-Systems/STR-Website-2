@@ -21,6 +21,38 @@ const LAST_UPDATED = "28 September 2026";
 
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 
+// Batch 32: wording for Zac to approve (legal OK needed) — revert Phase 6 only if not approved
+/** The no-spend rule's figures, from billing_settings; null when unreadable (the clause then names no figure). */
+type IdleSettings = { idleMonths: number; finalNoticeDays: number; reminderMonths: number[] } | null;
+
+async function planCreditIdleSettings(): Promise<IdleSettings> {
+  if (!hasServiceRole()) return null;
+  try {
+    const { data, error } = await createAdminClient().from("billing_settings").select("key, value").in("key", ["plan_credit_idle_months", "plan_credit_final_notice_days", "plan_credit_idle_reminder_months"]);
+    if (error) return null;
+    const kv = new Map<string, unknown>((data ?? []).map((r: { key: unknown; value: unknown }) => [String(r.key), r.value]));
+    const idleMonths = Number(kv.get("plan_credit_idle_months"));
+    const finalNoticeDays = Number(kv.get("plan_credit_final_notice_days"));
+    const raw = kv.get("plan_credit_idle_reminder_months");
+    const reminderMonths = (Array.isArray(raw) ? raw : []).map(Number).filter((n) => Number.isFinite(n) && n > 0 && n < idleMonths);
+    if (!(idleMonths > 0) || !(finalNoticeDays > 0)) return null;
+    return { idleMonths: Math.floor(idleMonths), finalNoticeDays: Math.floor(finalNoticeDays), reminderMonths: [...new Set(reminderMonths)].sort((a, b) => a - b) };
+  } catch {
+    return null;
+  }
+}
+
+/** "3 and 6", "3, 6 and 9". */
+const andList = (xs: number[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
+/** The no-spend expiry sentence, with the figures from settings where they can be read. */
+function idleClause(idle: IdleSettings): string {
+  const any = "any spending counts, however small";
+  if (!idle) return `If your account goes a long time with no spending at all (${any}), we email you a final warning; plan credit from earlier months that is still unspent a set time after that warning expires, and the warning says when. Your latest month's plan credit never expires this way.`;
+  const reminders = idle.reminderMonths.length ? ` We also send reminders after ${andList(idle.reminderMonths)} months with no spending.` : "";
+  return `If your account goes ${idle.idleMonths} months with no spending at all (${any}), we email you a final warning; plan credit from earlier months that is still unspent ${idle.finalNoticeDays} days after that warning expires. Your latest month's plan credit never expires this way.${reminders}`;
+}
+
 /**
  * Sections 1, 2 and 4 follow the legal drafts of 27 September 2026 (Batch
  * 10). The prices in section 2 are read from billing_settings, so the terms
@@ -29,7 +61,7 @@ const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "sev
  * profiles is read from billing_settings.saved_profiles_max.
  */
 export default async function TermsPage() {
-  const [settings, maxProfiles] = await Promise.all([getBillingSettings(), hasServiceRole() ? maxProfilesSetting(createAdminClient()).catch(() => DEFAULT_MAX_PROFILES) : Promise.resolve(DEFAULT_MAX_PROFILES)]);
+  const [settings, maxProfiles, idle] = await Promise.all([getBillingSettings(), hasServiceRole() ? maxProfilesSetting(createAdminClient()).catch(() => DEFAULT_MAX_PROFILES) : Promise.resolve(DEFAULT_MAX_PROFILES), planCreditIdleSettings()]);
   const p = settings.dealPricing;
   const topup = settings.spendRates.topup;
   const date = p.newPricingFrom ? new Date(p.newPricingFrom) : null;
@@ -80,7 +112,8 @@ export default async function TermsPage() {
             </li>
           )}
           <li>
-            <strong>Plan credit</strong> is added at the start of each billing period of a subscription and expires, unused, at the end of that period. It does not roll over.
+            {/* Batch 32: wording for Zac to approve (legal OK needed) — revert Phase 6 only if not approved */}
+            <strong>Plan credit</strong> is added at the start of each billing period of a subscription. Unused plan credit rolls over every month with no cap, and stays on your account if you pause, downgrade or cancel. {idleClause(idle)} If a plan payment is refunded or charged back, that payment&apos;s unspent credit is removed (credit already spent is not).
             {fromDate ? `${fromDate} each plan's monthly credit equals what you pay for it, £1 of credit for every £1, from your first renewal on or after that date (an annual plan: its first annual renewal on or after it).` : " Each plan's monthly credit equals what you pay for it: £1 of credit for every £1."}
           </li>
           <li><strong>Top-up credit</strong> is bought as a one-off payment, never expires while your account is open, and is spent at a higher rate than plan credit (currently {topup}× — shown on every top-up screen).</li>
@@ -95,7 +128,8 @@ export default async function TermsPage() {
         </p>
 
         <h2 id="subscriptions">3. Subscriptions</h2>
-        <p>Subscriptions renew automatically each month or year until cancelled. You can cancel any time from your billing page; access and plan credit continue until the end of the period already paid for. Upgrades take effect immediately and are prorated; downgrades take effect at the next renewal.</p>
+        {/* Batch 32: wording for Zac to approve (legal OK needed) — revert Phase 6 only if not approved */}
+        <p>Subscriptions renew automatically each month or year until cancelled. You can cancel any time from your billing page; access continues until the end of the period already paid for, and unused plan credit stays on your account (see section 2). Upgrades take effect immediately and are prorated; downgrades take effect at the next renewal.</p>
 
         <h2 id="acceptable-use">4. Acceptable use</h2>
         <p>

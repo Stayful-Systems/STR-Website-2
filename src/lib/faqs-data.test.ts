@@ -4,7 +4,7 @@ import { costAnswer, costRest, DEFAULT_COST_FIGURES, FAQS, faqsWith } from './fa
 
 test('the cost answer is written from the figures, not typed', () => {
   const a = costAnswer({ costLead: null }, DEFAULT_COST_FIGURES);
-  assert.equal(a, 'Every account starts with £20 of free credit, no card required — about five Full analyses of deals, or three with the PMI second opinion added. After that, subscribe for monthly credit from £19/month — current plans and annual saving are on the pricing page — or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.3× the plan rate. Cancel any time, no contract.');
+  assert.equal(a, 'Every account starts with £20 of free credit, no card required — about five Full analyses of deals, or three with the PMI second opinion added. After that, subscribe for monthly credit from £19/month — current plans and annual saving are on the pricing page — or top up as you go from £10. Unused plan credit rolls over; top-up credit never expires but is spent at 1.3× the plan rate. Cancel any time, no contract.');
   assert.equal(FAQS.find((f) => f.q === 'What does it cost?')?.a, a, 'the static list carries the defaults');
 });
 

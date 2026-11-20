@@ -86,15 +86,15 @@ export function topupReceiptEmail(to: string, opts: { amountPence: number; balan
 
 export function planRenewedEmail(to: string, opts: { planName: string; creditPence: number; periodEnd: string | null }) {
   return send(to, `Your ${opts.planName} credit is ready`, layout(`${formatGbp(opts.creditPence)} of ${opts.planName} credit added`, [
-    `Your ${opts.planName} plan has renewed and ${formatGbp(opts.creditPence)} of credit is on your account${opts.periodEnd ? `, valid until ${new Date(opts.periodEnd).toLocaleDateString('en-GB')}` : ''}.`,
-    'Unused plan credit resets at the end of each billing month; top-up credit is kept.',
+    `Your ${opts.planName} plan has renewed and ${formatGbp(opts.creditPence)} of credit is on your account.`,
+    'Unused plan credit rolls over to next month, and top-up credit never expires.',
   ], { label: 'Run a report', path: '/estimate' }));
 }
 
 export function paymentFailedEmail(to: string, opts: { planName: string | null }) {
   return send(to, 'Action needed: your Stayful payment failed', layout('Your payment failed', [
     `We couldn't take payment for your ${opts.planName ?? 'Stayful'} subscription. Stripe will retry automatically over the next few days.`,
-    'To avoid losing your monthly credit, update your card now.',
+    'Update your card now to keep getting your monthly credit.',
   ], { label: 'Update card', path: '/account/billing' }));
 }
 
