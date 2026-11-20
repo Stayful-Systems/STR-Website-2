@@ -135,8 +135,13 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   read-only (modal size), as the generator ignores a requested value. Phase 9: replace `section#guide` in
   src/app/leads/ads/page.tsx. COORDINATOR FIX: brandHash now uses the area key the pack STORES (area resolved first, it is a
   free read), so after a district->area fall-back the regenerate button no longer shows spuriously (regression test added).
-- [ ] **Phase 9 — Setup guide.** `guide.ts` + `Guide.tsx`.
-  Notes:
+- [x] **Phase 9 — Setup guide.** `guide.ts` + `Guide.tsx`.
+  Notes: npm test 4256/4256, tsc/eslint/build OK. Files: src/lib/ad-packs/{guide,guide-server}.ts + guide.test.ts (20 tests),
+  src/app/leads/ads/Guide.tsx, public/ad-packs/guide/README.md; page.tsx `section#guide` holds `<Guide>`; AdPackClient `TextRow`
+  exported (guide reuses copy button + `ad_text_copied` logging); next.config.ts `/leads/ads` trace also includes
+  `public/ad-packs/guide/*.png`. 13 steps (page picked in its own step from the upload step: one action per screen); README
+  lists the 13 PNG names Zac must supply. Missing screenshots show a plain-text placeholder (no broken images). Switch stays OFF
+  until the screenshots are in.
 - [x] **Phase 10 — Admin.** `/admin/ad-packs`.
   Notes: 27 admin tests (202 ad-packs tests pass), tsc/eslint clean. Files: src/app/admin/ad-packs/{page,actions,
   AdPacksPanel}, src/lib/ad-packs/{admin-view,admin-run,admin-server}.ts, next.config.ts one line. Regenerate Run needs the dry

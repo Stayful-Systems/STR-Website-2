@@ -84,7 +84,7 @@ test('the entry card is for an account owner only, inside Suspense, with no new 
 
 test('the generator reads an operator’s stored photos from the bucket, and the fonts are still traced for this page', () => {
   assert.match(code(read('../../../lib/ad-packs/generate-server.ts')), /fetchImage: adPackFetchImage/);
-  assert.match(read('../../../../next.config.ts'), /"\/leads\/ads": AD_PACK_FONTS/);
+  assert.match(read('../../../../next.config.ts'), /"\/leads\/ads": \[\.\.\.AD_PACK_FONTS/);
 });
 
 test('the kinds the screen logs are registered', async () => {

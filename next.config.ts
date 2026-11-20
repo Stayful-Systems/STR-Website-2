@@ -24,6 +24,12 @@ const PDF_ASSETS = [
  */
 const AD_PACK_FONTS = ["src/lib/ad-packs/fonts/**/*"];
 
+/**
+ * Batch 36: the setup guide checks at render time which of its screenshots
+ * exist (src/lib/ad-packs/guide-server.ts), so the folder travels with /leads/ads.
+ */
+const AD_PACK_GUIDE_SHOTS = ["public/ad-packs/guide/*.png"];
+
 const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/generate-pdf": PDF_ASSETS,
@@ -33,7 +39,7 @@ const nextConfig: NextConfig = {
     "/api/internal/crm-deliveries": PDF_ASSETS,
     // Batch 23: Stayful Intelligence's contact card embeds its photo.
     "/si/card": ["public/images/si-contact.png"],
-    "/leads/ads": AD_PACK_FONTS,
+    "/leads/ads": [...AD_PACK_FONTS, ...AD_PACK_GUIDE_SHOTS],
     "/admin/ad-packs": AD_PACK_FONTS,
   },
   images: {

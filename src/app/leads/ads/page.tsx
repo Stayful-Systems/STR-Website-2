@@ -9,7 +9,9 @@ import { areaPreview, listDistricts, matchArea } from "@/lib/ad-packs/area-serve
 import { listPackForOwner } from "@/lib/ad-packs/generate-server";
 import { signedPreviewUrls } from "@/lib/ad-packs/files-server";
 import { ownUploadRef } from "@/lib/ad-packs/photos";
+import { availableGuideShots } from "@/lib/ad-packs/guide-server";
 import { AdSection } from "./AdSection";
+import { Guide } from "./Guide";
 import { ApproveForm, GenerateForm, type PhotoItem } from "./AdPackClient";
 import { packScreen, regenView } from "./state";
 import { adViewModel, areaPreviewView, brandOfSettings, brandProblemText, checksFailedView, eligibilityView, figureCallout, type AreaPreviewView } from "./view";
@@ -215,7 +217,14 @@ export default async function AdsPage() {
       {approved ? (
         <section id="guide" className={card}>
           <h2 className="text-base font-semibold text-foreground">How to put these on Facebook</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Setup guide coming next</p>
+          <p className="mt-1 text-sm text-muted-foreground">One step at a time, on your own Meta account. We never touch it, and you can stop and come back whenever you like.</p>
+          <div className="mt-4">
+            <Guide
+              ads={adVms.map((a) => ({ id: a.id, title: a.title, videoText: a.videoText, copy: a.copy }))}
+              shots={availableGuideShots()}
+              storageKey={pack.id}
+            />
+          </div>
         </section>
       ) : null}
 

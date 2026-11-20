@@ -300,7 +300,7 @@ function Indicator({ v }: { v: LengthView }) {
   );
 }
 
-function TextRow({ adId, item, canCopy }: { adId: string; item: CopyItem; canCopy: boolean }) {
+export function TextRow({ adId, item, canCopy }: { adId: string; item: CopyItem; canCopy: boolean }) {
   return (
     <li className="rounded-lg border border-border p-3">
       <div className="flex items-start justify-between gap-3">
