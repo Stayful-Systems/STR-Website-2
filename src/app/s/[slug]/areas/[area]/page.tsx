@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { renderSitePage } from "@/lib/websites/render";
-import { loadLiveSite } from "../../site-data";
+import { canonicalFor, loadLiveSite } from "../../site-data";
 
 /**
  * Batch 31: one page per area the operator covers, at areas/<area slug>. An
@@ -15,7 +15,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, area } = await params;
   const live = await loadLiveSite(slug);
   const found = live?.pages.find((p) => p.key === "area" && p.area?.slug === area);
-  return found ? { title: found.title } : {};
+  return found && live ? { title: found.title, alternates: canonicalFor(live.row, `areas/${area}`) } : {};
 }
 
 export default async function SiteAreaPage({ params }: Props) {

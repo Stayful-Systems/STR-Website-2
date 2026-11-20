@@ -985,6 +985,47 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['Why is there no report on my lead in the lead database?', 'When does the report arrive in the lead database?', 'Why does the lead say report coming?'],
     answer: 'The lead goes into your lead database as soon as the landlord’s first step is saved, and the income report is added to that same lead when it finishes, usually within minutes. If the report can’t be made, the lead stays there without one.',
   },
+  // ── Batch 33: customer website domains (drafts for Zac to approve; the yearly charge is the domain_charge_on setting) ──
+  {
+    slug: 'website_domain_own',
+    from: 'Batch 33, customer website domains',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Do I get my own web address for my website?',
+    variants: ['Will my website have its own domain?', 'Does Stayful buy a domain for me?', 'Can my website be on a .co.uk address?', 'Who owns my website’s domain?'],
+    answer: 'Yes. Once your website is live you choose its web address from a few suggestions, such as your company name followed by management.co.uk. Stayful then buys it and holds it for you, connects it securely with HTTPS, moves your site onto it and emails you, and the first year is free. Until then your site sits on a temporary Stayful address that search engines can’t see; on its own address it can be found in search.',
+  },
+  {
+    slug: 'website_domain_choose',
+    from: 'Batch 33, customer website domains (suggestions; fixed once bought)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Can I choose my website’s web address?',
+    variants: ['Can I pick a different domain name?', 'Can I change my website’s address after it is bought?', 'What if I don’t like the suggested domain?', 'Can I choose from other names?'],
+    answer: 'Yes. Once your website is live, Stayful suggests a name and a few alternatives, and you pick the one you want. Once it is bought it can’t be changed, so check it before you choose. If a purchase is held for a day it still goes through, and you’ll be emailed when it is done.',
+  },
+  {
+    slug: 'website_domain_cost',
+    from: 'Batch 33, customer website domains (the yearly charge is the domain_charge_on setting)',
+    category: 'credit_billing',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What does my website’s web address cost after the first year?',
+    variants: ['Do I pay for my domain?', 'Is there a yearly charge for the domain?', 'How much is the domain renewal?', 'What do I pay for my website’s domain name?'],
+    answer: 'The first year is free, and after that it is {#domain_charge_on}a yearly charge equal to what the domain costs{/domain_charge_on}{^domain_charge_on}free for now{/domain_charge_on}.',
+  },
+  {
+    slug: 'website_domain_old_address',
+    from: 'Batch 33, customer website domains (permanent redirect from the temporary address)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What happens to my website’s old temporary address?',
+    variants: ['Will links to my old website address still work?', 'I shared the temporary link, does it break?', 'Does the old address redirect?', 'What happens to the address I had before?'],
+    answer: 'It redirects to your new web address, so any link you’ve already shared keeps working and takes people to your site on its own domain.',
+  },
 ];
 
 /**

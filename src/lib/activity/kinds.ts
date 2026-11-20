@@ -215,6 +215,8 @@ export const ACTIVITY_KINDS = {
   funnel_lead_charged: recordOnly('Was charged for a funnel lead'),
   // Batch 31: a member approved their customer website to go live (src/lib/websites). Record only: weekly active is unchanged.
   website_approved: recordOnly('Approved their website to go live'),
+  // Batch 33: a member picked a web address (a .co.uk) for their website (src/lib/domains). Record only: weekly active is unchanged.
+  website_domain_chosen: recordOnly('Chose a web address for their website'),
   // Batch 23b: the morning briefing (src/lib/briefing). Record only: Today's
   // own views already count, and weekly active is unchanged.
   briefing_seen: recordOnly('Saw their morning briefing'),

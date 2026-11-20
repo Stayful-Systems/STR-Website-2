@@ -18,7 +18,7 @@
  */
 import { EMPTY_BRAND, consentText, parseHexColour, parseLogoUrl, readableOn } from '../funnels/brand.ts';
 import { normaliseMobile } from '../credit/abuse.ts';
-import { siteHref } from './urls.ts';
+import { siteDomain, siteHref } from './urls.ts';
 import type { SiteRef } from './types.ts';
 
 // ── What the member gives us ──
@@ -102,6 +102,8 @@ export interface LeadFormDescriptor {
   consentText: string;
   submitLabel: string;
   privacyHref: string;
+  /** Batch 33: the site is on its own domain, where the bot-check widget is not used (the server decides again). */
+  skipBotCheck?: boolean;
 }
 
 export interface SiteIdentity {
@@ -207,6 +209,7 @@ export function leadFormFor(site: SiteRef, companyName: string): LeadFormDescrip
     consentText: consentText({ ...EMPTY_BRAND, companyName: clean(companyName) || null }),
     submitLabel: 'Get my free estimate',
     privacyHref: siteHref(site, 'privacy'),
+    ...(siteDomain(site) ? { skipBotCheck: true } : {}),
   };
 }
 
