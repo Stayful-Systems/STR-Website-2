@@ -19,8 +19,8 @@ Baseline: `npm test` 3989 pass / 0 fail, `npm run lint` 0 errors (79 pre-existin
   Notes: main still `0dd39a7`. Baseline test 3989/3989; lint 0 errors; build passes.
 - [x] Phase 1 — Schema and settings
   Notes: block appended after Batch 33 (5 tables, 2 functions, 3 seeds, 2 websites columns). Local Postgres 16: shim + schema run 3 times, schema/data/index dumps identical; websites-p4-smoke.sql passes (stale base, 11th publish leaves 10, snapshot twice = one v1, notice pk no-op, delete-restrict still holds); older smokes still pass. Deviation: domains/schema.test.ts already bounds at the next header so is unchanged, but src/lib/websites/settings.test.ts read to end of file and would have matched the new website_* seeds: bounded it at the next header (2 lines). Warning-days seed is the JSON string "30,14,3" (not valid bare JSON). Stage in website_grace_notices = the warning's day count.
-- [ ] Phase 2 — Pure rules (edit-rules, grace-rules, kinds, cap)
-  Notes:
+- [x] Phase 2 — Pure rules (edit-rules, grace-rules, kinds, cap)
+  Notes: edit-rules (changedFields, pagesToRewrite(before, after) incremental: the edit run passes the draft before and after each patch so an approved page is not asked for again; filesInUse/filesToDelete; ukMonth/rewritesLeft/takeRewrite). grace-rules adds one state beyond the plan's list: `start` (begin an episode; the cron writes the row then asks again). Stage = the warning's day count; the most imminent due stage is sent, earlier ones skipped; a plan ending in <30 days still gets a 30-day first warning (switch-off = first warning + 30). Deletion reads the delete-days setting now, not the stored delete_on. kinds.ts +4 lines, cap.ts +5 lines (SendKind, SLOT_FOR, SWITCHES_BEHIND).
 - [ ] Phase 3 — Edit server (edit-run, edit-server, copy-server `only`)
   Notes:
 - [ ] Phase 4 — Operator edit screen
