@@ -9116,7 +9116,7 @@ grant execute on function public.website_report_charge(jsonb) to service_role;
 
 notify pgrst, 'reload schema';
 
--- ═══════════════════════════════════════════════════════════════════════════
+-- =========================
 -- Batch 32: website leads go into the operator's lead database account.
 --
 -- A landlord who fills in an operator's website form is also pushed, signed,
@@ -9129,7 +9129,7 @@ notify pgrst, 'reload schema';
 -- nothing here is added to ACCESS_COLUMNS. The member id sent to the lead
 -- database is the owner's profile id; the link code itself is never stored here
 -- (the lead database emails and checks it).
--- ═══════════════════════════════════════════════════════════════════════════
+-- =========================
 
 -- leaddb_links: one row per owner: the confirmed (or pending) link to their lead database account.
 create table if not exists public.leaddb_links (
