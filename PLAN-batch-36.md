@@ -25,8 +25,8 @@ Baseline: `npm test` 3989 pass / 0 fail, `npm run lint` 0 errors (79 pre-existin
   Notes: copy-server.ts: +28/-3 lines (kind 'edit'; `only` gains an optional `base` so the other pages stay as they were; only-mode skips the whole-site check, Publish runs it; the allowance is the caller's). website_version_publish now also returns version_id (for the website_version:<id> dedupe key; create or replace, smoke pins it). Pending pages in website_drafts.pending_pages carry a prefix: w:<page> = still to write, a:<page> = written, awaiting approval. A failed fetch reverts: live settings/copy back, the new version row removed, the draft re-inserted (a version pruned by that publish is not brought back). 23 run tests + 4 source pins.
 - [ ] Phase 4 — Operator edit screen
   Notes:
-- [ ] Phase 5 — Change requests
-  Notes:
+- [x] Phase 5 — Change requests
+  Notes: built by a forked helper, checked by me. Added edit-requests-store.ts (live Supabase wiring; outside the plan's file list so the engine stays injectable; Phase 8 reuses it via liveRequestsEngine(): adminList, adminSetStatus, adminScreenshotUrl, openCounts). Feedback status emails go OUTSIDE the daily cap (direct replies), so the done/declined email does too. Next caps a Server Action post at 1 MB including text and next.config.ts is off limits, so the form refuses screenshots of 900 KB or more (server rule stays under 1 MB). 30 tests.
 - [ ] Phase 6 — Grace server, cron and emails
   Notes:
 - [ ] Phase 7 — Switched-off public page
