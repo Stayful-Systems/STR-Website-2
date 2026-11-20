@@ -4,7 +4,7 @@ import { ANGLES, operatorCode, packCode, type Angle } from './codes.ts';
 import { adLink, adName } from './links.ts';
 import { buildFigure } from './figures.ts';
 import { renderCards, renderScript, renderTexts } from './angles.ts';
-import { AD_IMAGE_SIZES, CHECK_IDS, contrastRatio, pickTextColour, runChecks, type CheckAd, type CheckInput } from './checks.ts';
+import { AD_IMAGE_SIZES, CHECK_IDS, contrastRatio, MAX_VIDEO_SECONDS, mergeVideoChecks, pickTextColour, runChecks, VIDEO_SIZES, videoChecks, type CheckAd, type CheckInput, type CheckVideo } from './checks.ts';
 
 const OWNER = '3f9a2c11-7b4e-4d2a-9c10-aa55bb66cc77';
 const OP = operatorCode(OWNER);
@@ -251,4 +251,74 @@ test('every failure says where and what, in words', () => {
   }
   assert.equal(r.results.find((x) => x.check === 'source_brand')?.ok, false);
   assert.equal(r.results.find((x) => x.check === 'files')?.ok, true);
+});
+
+// ── 38b: the video check ──
+
+const GOOD_VIDEOS: CheckVideo[] = [
+  { name: 'notice-9x16.mp4', width: 1080, height: 1920, durationSeconds: 38.03, hasAudio: true, captionCount: 17 },
+  { name: 'notice-4x5.mp4', width: 1080, height: 1350, durationSeconds: 38.03, hasAudio: true, captionCount: 17 },
+  { name: 'notice-1x1.mp4', width: 1080, height: 1080, durationSeconds: 38.03, hasAudio: true, captionCount: 17 },
+];
+const withVideos = (videos: CheckVideo[] | undefined): CheckInput => ({ ...pack(), videos });
+const videoRules = (videos: CheckVideo[] | undefined) => runChecks(withVideos(videos)).failures.filter((f) => f.check === 'video').map((f) => f.rule);
+const changed = (i: number, patch: Partial<CheckVideo>): CheckVideo[] => GOOD_VIDEOS.map((v, k) => (k === i ? { ...v, ...patch } : v));
+
+test('video: no `videos` input means no video check (generation time); the three good videos pass', () => {
+  assert.deepEqual(videoRules(undefined), []);
+  assert.deepEqual(videoRules(GOOD_VIDEOS), []);
+  assert.equal(runChecks(withVideos(GOOD_VIDEOS)).ok, true);
+  assert.deepEqual(Object.keys(VIDEO_SIZES), ['notice-9x16.mp4', 'notice-4x5.mp4', 'notice-1x1.mp4']);
+});
+
+test('video: sizes must be exactly 1080x1920, 1080x1350 and 1080x1080 by name', () => {
+  assert.deepEqual(videoRules(changed(0, { height: 1919 })), ['video_size']);
+  assert.deepEqual(videoRules(changed(1, { width: 1079 })), ['video_size']);
+  assert.deepEqual(videoRules(changed(2, { height: 1350 })), ['video_size'], 'a 4:5 file named 1x1 is wrong');
+  assert.deepEqual(videoRules(changed(0, { name: 'notice-9x16.mov' })).sort(), ['video_missing', 'video_name']);
+});
+
+test('video: a length over 0 and up to 60 seconds; an audio track; captions on screen', () => {
+  assert.deepEqual(videoRules(changed(0, { durationSeconds: 0 })), ['video_length']);
+  assert.deepEqual(videoRules(changed(0, { durationSeconds: Number.NaN })), ['video_length']);
+  assert.deepEqual(videoRules(changed(0, { durationSeconds: MAX_VIDEO_SECONDS })), []);
+  assert.deepEqual(videoRules(changed(0, { durationSeconds: MAX_VIDEO_SECONDS + 0.5 })), ['video_length']);
+  assert.deepEqual(videoRules(changed(1, { hasAudio: false })), ['video_audio']);
+  assert.deepEqual(videoRules(changed(2, { captionCount: 0 })), ['video_captions']);
+  assert.deepEqual(videoRules(changed(2, { captionCount: 1 })), []);
+});
+
+test('video: all three files must be there when `videos` is given, even as an empty list', () => {
+  assert.deepEqual(videoRules(GOOD_VIDEOS.slice(0, 2)), ['video_missing']);
+  assert.deepEqual(videoRules([]), ['video_missing', 'video_missing', 'video_missing']);
+});
+
+test('video: every failure is plain words with the file it is about, and the result carries a video row', () => {
+  const r = runChecks(withVideos(changed(0, { hasAudio: false, captionCount: 0 })));
+  assert.equal(r.ok, false);
+  const fs = r.failures.filter((f) => f.check === 'video');
+  assert.equal(fs.length, 2);
+  for (const f of fs) {
+    assert.equal(f.where, 'ad 5b notice-9x16.mp4');
+    assert.ok(f.detail.length > 10 && !/video_/.test(f.detail));
+  }
+  assert.deepEqual(r.results.find((x) => x.check === 'video'), { check: 'video', label: 'The video is made properly', ok: false, failures: 2, warnings: 0 });
+});
+
+test('mergeVideoChecks: replaces earlier video failures, keeps every other failure, recomputes ok and results', () => {
+  const textFail = runChecks(withText(pack(), (a) => { a.texts.headlines = ['This is guaranteed income for you every month']; }));
+  assert.equal(textFail.ok, false);
+  const merged = mergeVideoChecks(textFail, changed(0, { hasAudio: false }));
+  assert.deepEqual(merged.failures.filter((f) => f.check !== 'video'), textFail.failures);
+  assert.deepEqual(merged.failures.filter((f) => f.check === 'video').map((f) => f.rule), ['video_audio']);
+  assert.equal(merged.ok, false);
+  // Doing it again with good videos drops the video failure but not the text one.
+  const fixed = mergeVideoChecks(merged, GOOD_VIDEOS);
+  assert.deepEqual(fixed.failures, textFail.failures);
+  assert.equal(fixed.results.find((x) => x.check === 'video')?.ok, true);
+  // From a good pack, good videos stay ok; from nothing it starts clean.
+  assert.equal(mergeVideoChecks(runChecks(pack()), GOOD_VIDEOS).ok, true);
+  assert.equal(mergeVideoChecks(null, GOOD_VIDEOS).ok, true);
+  assert.equal(mergeVideoChecks(null, GOOD_VIDEOS).results.length, CHECK_IDS.length);
+  assert.deepEqual(videoChecks(GOOD_VIDEOS), { failures: [], warnings: [] });
 });

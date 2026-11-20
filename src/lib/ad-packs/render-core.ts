@@ -25,11 +25,22 @@
  *   f  sandbox   create (vcpus, timeout, NO secrets in the env, network allow-all because
  *                apt and pip need the internet), upload ad-render/**, the brief, the assets
  *                and the voice, run the commands, read the outputs back, ALWAYS stop
+ *   f2 measure   still in the sandbox: `ffprobe` (args array, JSON on stdout) on each MP4 for its size,
+ *                length and whether it has an audio track, and the renderer's `render-info.json`
+ *                (caption count, scene ids, duration) read back
  *   g  files     the three MP4s and the poster go to the private bucket; the 5b ad's
  *                `files.video` becomes the ready shape; the render row is done
+ *   g2 checks    the video check (checks.ts videoChecks: exact sizes, 0 < length <= 60 s, audio, captions)
+ *                is merged into the pack's stored `checks`; a failure puts the pack in 'checks_failed'
+ *                (the render row stays 'done'; approve is refused). Only for the pack's CURRENT version
+ *                while it is in 'preview'.
  *   h  failure   a code only (never stderr, a brief text, a url or an address): back to
  *                queued while attempts < max, else failed; voice_unavailable, bad_brief and
  *                monthly_cap are never retried
+ *
+ * THE VIDEO SLOT. The 5b ad's `files.video` follows the row: 'making' when the worker takes it, 'ready'
+ * (the files) when done, 'queued' when it goes back for a retry, {status:'failed', code} when it is left failed.
+ * (The generator writes 'queued' when it enqueues; a voice change and a retry write 'queued' again.)
  *
  * COST. cost = ceil(vcpus x wall seconds x unit_costs 'vercel'/'sandbox_cpu_second' pence + the
  * voice's raw cost). Wall seconds run from creating the sandbox to its stop (an upper bound of
@@ -46,17 +57,19 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { feeSentence } from './angles.ts';
 import { cleanLines, validateBriefScript, type BriefScript } from './captions.ts';
+import { mergeVideoChecks, type CheckVideo } from './checks.ts';
 import { monthStartIso } from './month.ts';
 import { PHOTO_MAX_BYTES, sniffPhoto } from './photos.ts';
 import { fitsCap } from './settings.ts';
 import { isVoiceKey, type VoiceKey } from './voices.ts';
 import { estimateVoicePence, type SynthesiseResult, type VoiceCode } from './voice-core.ts';
 import { StoreError, type AdFileRef, type AdPackStore, type PackAdRow, type PackRow, type RunResult } from './store-types.ts';
-import type { AdVideoReady, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
+import type { AdVideo, AdVideoReady, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
 
 // ── Interfaces ──
 
-export type SandboxRun = { exitCode: number; stderr: string; timedOut: boolean };
+/** `stdout` is only read for ffprobe's JSON (the real sandbox truncates it); every other command may leave it out. */
+export type SandboxRun = { exitCode: number; stderr: string; timedOut: boolean; stdout?: string };
 
 export interface SandboxLike {
   id: string;
@@ -120,6 +133,8 @@ export const VENV = '/tmp/venv';
 export const BRIEF_PATH = 'brief.json';
 export const AUDIO_PATH = 'voice.mp3';
 export const OUT_DIR = 'out';
+/** Written by notice.py into OUT_DIR: {"captions": N, "scenes": [ids], "duration": seconds}. */
+export const RENDER_INFO_PATH = 'out/render-info.json';
 export const DEFAULT_BRAND_COLOUR = '#1F3A5F'; // mirrors images.tsx (a test cannot import JSX)
 export const MAX_VIDEO_BYTES = 30 * 1024 * 1024;
 export const MAX_POSTER_BYTES = 10 * 1024 * 1024;
@@ -288,6 +303,49 @@ export function wholePence(raw: number): number {
   return raw > 0 ? Math.ceil(raw - 1e-9) : 0;
 }
 
+export type Probe = { width: number; height: number; durationSeconds: number; hasAudio: boolean };
+
+/**
+ * What ffprobe (-print_format json -show_format -show_streams) said about one MP4: the first video stream's
+ * size, the length (the container's, else the video stream's) and whether any audio stream exists. Null when
+ * the text is not that JSON or has no video stream.
+ */
+export function parseProbe(stdout: string | undefined): Probe | null {
+  let j: unknown;
+  try {
+    j = JSON.parse(String(stdout ?? ''));
+  } catch {
+    return null;
+  }
+  if (!j || typeof j !== 'object') return null;
+  const o = j as { streams?: unknown; format?: unknown };
+  const streams = Array.isArray(o.streams) ? (o.streams as Record<string, unknown>[]) : [];
+  const video = streams.find((s) => s && s.codec_type === 'video');
+  if (!video) return null;
+  const num = (v: unknown) => {
+    const n = typeof v === 'string' ? Number(v) : v;
+    return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+  };
+  const fmt = o.format && typeof o.format === 'object' ? (o.format as Record<string, unknown>) : {};
+  const duration = num(fmt.duration) || num(video.duration);
+  return { width: Math.trunc(num(video.width)), height: Math.trunc(num(video.height)), durationSeconds: Math.round(duration * 100) / 100, hasAudio: streams.some((s) => s && s.codec_type === 'audio') };
+}
+
+export type RenderInfo = { captions: number; scenes: string[]; duration: number };
+
+/** render-info.json as written by ad-render/notice.py. Null when absent or not that shape. */
+export function parseRenderInfo(bytes: Uint8Array | null): RenderInfo | null {
+  if (!bytes) return null;
+  try {
+    const j = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+    const captions = Number(j.captions);
+    if (!Number.isFinite(captions) || captions < 0) return null;
+    return { captions: Math.trunc(captions), scenes: Array.isArray(j.scenes) ? j.scenes.filter((x): x is string => typeof x === 'string') : [], duration: Number(j.duration) || 0 };
+  } catch {
+    return null;
+  }
+}
+
 export function voicePaths(ownerId: string, packId: string, version: number): { audio: string; script: string; folder: string } {
   const folder = `${ownerId}/${packId}/v${version}`;
   return { folder, audio: `${folder}/voice.mp3`, script: `${folder}/script.json` };
@@ -353,7 +411,7 @@ export type RenderReport = {
 
 // ── The worker ──
 
-type Spend = { voicePence: number; sandboxSeconds: number; sandboxId: string | null };
+type Spend = { voicePence: number; sandboxSeconds: number; sandboxId: string | null; videos: CheckVideo[] };
 
 export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; limit?: number } = {}): Promise<RenderReport> {
   const now = deps.now();
@@ -396,13 +454,14 @@ export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; li
 /** One claimed row, start to finish. Never throws. */
 async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings): Promise<RenderLine> {
   const log = deps.log ?? (() => {});
-  const spend: Spend = { voicePence: 0, sandboxSeconds: 0, sandboxId: null };
+  const spend: Spend = { voicePence: 0, sandboxSeconds: 0, sandboxId: null, videos: [] };
   let pack: PackRow | null = null;
   let files: AdVideoReady | null = null;
   let code = 'render_failed';
   try {
     pack = await deps.renders.getPack(row.packId);
     if (!pack) throw new RenderFail('bad_brief');
+    await setVideoSlot(deps, pack, row.version, { status: 'making' });
     files = await renderPack(deps, row, pack, settings, spend);
   } catch (e) {
     code = e instanceof RenderFail ? e.code : e instanceof StoreError ? 'store_failed' : 'render_failed';
@@ -434,6 +493,7 @@ async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings
       const ok = await deps.renders.complete(row.id, row.attempts, { costPence: total, sandboxId: spend.sandboxId, files, finishedAt });
       result = ok ? line('done') : line('lost');
       log(ok ? 'render_done' : 'render_lost', { packId: row.packId, code: ok ? 'done' : 'lost', seconds: Math.round(spend.sandboxSeconds) });
+      if (ok) await applyVideoChecks(deps, pack, row.version, spend.videos);
     } else {
       const retry = !NO_RETRY.has(code) && row.attempts < settings.maxAttempts;
       const ok = await deps.renders.release(row.id, row.attempts, {
@@ -445,6 +505,7 @@ async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings
       });
       result = ok ? line(retry ? 'queued' : 'failed', code) : line('lost', code);
       log(retry ? 'render_retry' : 'render_failed', { packId: row.packId, code, seconds: Math.round(spend.sandboxSeconds) });
+      if (ok && pack) await setVideoSlot(deps, pack, row.version, retry ? { status: 'queued' } : { status: 'failed', code: code.slice(0, 60) });
     }
   } catch {
     // The lease runs out and the sweep puts the row back; the cost below is still recorded.
@@ -454,6 +515,34 @@ async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings
 
   if (attemptCost > 0 && pack) await settle(deps, pack, attemptCost, files !== null, files ? undefined : code, row.version, spend.sandboxSeconds);
   return result;
+}
+
+/** The 5b ad's video slot of one version (keeps its images). Best effort: a failure is logged and nothing more. */
+async function setVideoSlot(deps: RenderDeps, pack: PackRow, version: number, video: AdVideo): Promise<void> {
+  try {
+    const ads = await deps.packs.listAds(pack.ownerId, pack.id);
+    const ad = ads.find((a) => a.angle === '5b' && a.version === version);
+    if (ad) await deps.packs.setAdVideo(pack.ownerId, ad.id, video);
+  } catch {
+    (deps.log ?? (() => {}))('render_slot_failed', { packId: pack.id, code: 'store_failed' });
+  }
+}
+
+/**
+ * g2: the video check on a finished render, merged into the pack's stored checks. Only the pack's current version
+ * while it is in 'preview' is touched (a newer version, an approved or regenerating pack is left alone). Never throws.
+ */
+async function applyVideoChecks(deps: RenderDeps, pack: PackRow, version: number, videos: CheckVideo[]): Promise<void> {
+  const log = deps.log ?? (() => {});
+  try {
+    const fresh = await deps.packs.getPack(pack.ownerId);
+    if (!fresh || fresh.id !== pack.id || fresh.version !== version || fresh.status !== 'preview') return;
+    const checks = mergeVideoChecks(fresh.checks, videos);
+    await deps.packs.updatePack(pack.ownerId, pack.id, checks.ok ? { checks } : { checks, status: 'checks_failed' }, { from: ['preview'] });
+    if (!checks.ok) log('render_checks_failed', { packId: pack.id, code: 'video_checks' });
+  } catch {
+    log('render_checks_store_failed', { packId: pack.id, code: 'store_failed' });
+  }
 }
 
 /** The cost on the pack and in the month's runs (the generator's cap reads ad_pack_runs). Never throws. */
@@ -639,6 +728,24 @@ async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, setti
       }
       if (res.timedOut) throw new RenderFail('timeout');
       if (res.exitCode !== 0) throw new RenderFail(isRender ? (renderErrCode(res.stderr) ?? step.fail) : step.fail);
+    }
+
+    // f2: measure what was made, still in the sandbox (the checks need the size, length, audio track and captions).
+    spend.videos = [];
+    const info = parseRenderInfo(await sandbox.readFile(RENDER_INFO_PATH).catch(() => null));
+    for (const o of OUTPUTS) {
+      const remaining = left();
+      if (remaining < 2_000) throw new RenderFail('timeout');
+      let res: SandboxRun;
+      try {
+        res = await sandbox.run({ cmd: 'ffprobe', args: ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', `${OUT_DIR}/${o.src}`], timeoutMs: Math.floor(Math.min(30_000, remaining)) });
+      } catch {
+        throw new RenderFail('sandbox_failed');
+      }
+      if (res.timedOut) throw new RenderFail('timeout');
+      // A file ffprobe cannot read is measured as nothing: the video check then fails it in plain words.
+      const probe = res.exitCode === 0 ? parseProbe(res.stdout) : null;
+      spend.videos.push({ name: o.name, width: probe?.width ?? 0, height: probe?.height ?? 0, durationSeconds: probe?.durationSeconds ?? 0, hasAudio: probe?.hasAudio ?? false, captionCount: info?.captions ?? 0 });
     }
 
     outputs = [];

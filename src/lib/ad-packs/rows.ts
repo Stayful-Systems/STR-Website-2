@@ -10,6 +10,7 @@ import type { AdFileRef, AdFiles, AdTexts, NewAd, PackAdRow, PackPatch, PackRow,
 import { PACK_STATUSES } from './store-types.ts';
 import type { LeadFormQuestion } from './angles.ts';
 import type { ChecksOutput } from './checks.ts';
+import { parseAdVideo } from './render-store.ts';
 
 export const PACK_COLUMNS =
   'id, owner_id, website_id, status, operator_code, version, voice_key, voice_changes, regen_count, brand_hash, area_key, area_label, bedrooms, figures, photos, checks, error_code, cost_pence, generated_at, approved_at, created_at, updated_at';
@@ -91,9 +92,7 @@ export function parseFiles(raw: unknown): AdFiles {
       images.push({ name: x.name, path: x.path, width: int(x.width), height: int(x.height), contentType: str(x.contentType) ?? 'image/png', bytes: int(x.bytes) });
     }
   }
-  const v = o.video;
-  const video = v && typeof v === 'object' && (v as { status?: unknown }).status === 'coming' ? { status: 'coming' as const } : null;
-  return { images, video };
+  return { images, video: parseAdVideo(o.video) };
 }
 
 export function toAdRow(r: Record<string, unknown>): PackAdRow {

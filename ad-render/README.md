@@ -98,7 +98,7 @@ Details the renderer relies on:
 ## Output and errors
 
 Into `out_dir`: `notice_9x16.mp4` (1080x1920, 30 fps), `notice_4x5.mp4` (1080x1350), `notice_1x1.mp4`
-(1080x1080), `poster.png` (1080x1920). Exit code 0 only on success. On any failure: exactly one line
+(1080x1080), `poster.png` (1080x1920) and `render-info.json` (`{"captions": N, "scenes": [ids], "duration": seconds}`: counts and ids only, for the caller's checks). Exit code 0 only on success. On any failure: exactly one line
 `ERR <code>` on stderr, a non-zero exit, no stack trace, and nothing from the brief printed:
 
 | Code | Meaning |

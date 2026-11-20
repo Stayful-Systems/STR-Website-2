@@ -1,13 +1,10 @@
 import 'server-only';
 
 import { Sandbox } from '@vercel/sandbox';
-import { getUnitCostTable } from '../credit/unit-costs';
-import { priceFor } from '../credit/pricing';
-import { UNIT_COST_SEED } from '../credit/costs';
 import { ownSite } from '../websites/store-server';
 import { adPackFetchImage } from './files-server';
 import { enqueueRender as enqueueCore, loadRendererFiles, runRenderQueue as runCore, type EnqueueResult, type RenderDeps, type RenderReport, type SandboxFactory, type SandboxLike } from './render-core.ts';
-import { createLiveRenderStore, createLiveStorage, readRenderSettings } from './render-store-server.ts';
+import { createLiveRenderStore, createLiveStorage, readRenderSettings, readSandboxCpuSecondPence } from './render-store-server.ts';
 import { createLiveStore } from './store-server.ts';
 import { synthesise } from './voice-server';
 
@@ -62,7 +59,9 @@ function wrapSandbox(sandbox: Sandbox): SandboxLike {
           timeoutMs: cmd.timeoutMs,
         });
         const stderr = (await res.stderr()).slice(-2000);
-        return { exitCode: res.exitCode, stderr, timedOut: res.exitCode !== 0 && Date.now() - started >= cmd.timeoutMs - 1000 };
+        // Only ffprobe's JSON is read back from stdout (the other commands' output is never kept).
+        const stdout = cmd.cmd === 'ffprobe' ? (await res.stdout()).slice(0, 200_000) : undefined;
+        return { exitCode: res.exitCode, stderr, ...(stdout !== undefined ? { stdout } : {}), timedOut: res.exitCode !== 0 && Date.now() - started >= cmd.timeoutMs - 1000 };
       } catch {
         return { exitCode: -1, stderr: '', timedOut: Date.now() - started >= cmd.timeoutMs - 1000 };
       }
@@ -96,17 +95,6 @@ const createSandbox: SandboxFactory = async ({ vcpus, timeoutMs }) => {
   return wrapSandbox(sandbox);
 };
 
-/** Raw pence per sandbox CPU-second: the unit_costs row, or its seed when the table cannot be read. */
-async function sandboxCpuSecondPence(): Promise<number> {
-  try {
-    const priced = priceFor(await getUnitCostTable(), 'vercel', 'sandbox_cpu_second', 1);
-    if (priced.found && Number.isFinite(priced.unitCostPence) && priced.unitCostPence > 0) return priced.unitCostPence;
-  } catch {
-    // the seed stands
-  }
-  return UNIT_COST_SEED.find((r) => r.provider === 'vercel' && r.unit === 'sandbox_cpu_second')?.unitCostPence ?? 0.00280889;
-}
-
 function realDeps(): RenderDeps {
   const packs = createLiveStore();
   return {
@@ -129,7 +117,7 @@ function realDeps(): RenderDeps {
       };
     },
     rendererFiles: () => loadRendererFiles(),
-    sandboxCpuSecondPence,
+    sandboxCpuSecondPence: readSandboxCpuSecondPence,
     renderSettings: readRenderSettings,
     now: () => new Date(),
     // A pack id, a code and seconds: never an address, a text or a body.

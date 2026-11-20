@@ -1,6 +1,9 @@
 import 'server-only';
 
 import { createAdminClient } from '../supabase/admin';
+import { getUnitCostTable } from '../credit/unit-costs';
+import { priceFor } from '../credit/pricing';
+import { UNIT_COST_SEED } from '../credit/costs';
 import { PACK_COLUMNS, toPackRow } from './rows.ts';
 import { parseRenderSettings, RENDER_COLUMNS, RENDER_SETTING_KEYS, RENDER_STATES, toRenderRow, type RenderCounts, type RenderSettings, type RenderStore } from './render-store.ts';
 import type { StorageLike } from './render-core.ts';
@@ -39,6 +42,17 @@ export async function readRenderSettings(): Promise<RenderSettings> {
   } catch {
     return parseRenderSettings([]);
   }
+}
+
+/** Raw pence per sandbox CPU-second: the unit_costs row, or its seed when the table cannot be read. */
+export async function readSandboxCpuSecondPence(): Promise<number> {
+  try {
+    const priced = priceFor(await getUnitCostTable(), 'vercel', 'sandbox_cpu_second', 1);
+    if (priced.found && Number.isFinite(priced.unitCostPence) && priced.unitCostPence > 0) return priced.unitCostPence;
+  } catch {
+    // the seed stands
+  }
+  return UNIT_COST_SEED.find((r) => r.provider === 'vercel' && r.unit === 'sandbox_cpu_second')?.unitCostPence ?? 0.00280889;
 }
 
 export function createLiveRenderStore(): RenderStore {
@@ -165,6 +179,35 @@ export function createLiveRenderStore(): RenderStore {
       const { data, error } = await admin().from('ad_packs').select(PACK_COLUMNS).eq('id', packId).maybeSingle();
       if (error) fail('ad_packs read', error);
       return data ? toPackRow(data as Record<string, unknown>) : null;
+    },
+
+    async getRender(packId, version) {
+      if (!UUID.test(packId)) return null;
+      const { data, error } = await admin().from('ad_pack_renders').select(RENDER_COLUMNS).eq('pack_id', packId).eq('version', version).maybeSingle();
+      if (error) fail('ad_pack_renders read', error);
+      return data ? toRenderRow(data as Record<string, unknown>) : null;
+    },
+
+    async requeueRender({ packId, version, voiceKey }) {
+      if (!UUID.test(packId)) throw new StoreError('invalid_pack');
+      const nowIso = new Date().toISOString();
+      // An existing row is reset in place, but only while no worker has it (conditional on state <> running).
+      const { data, error } = await admin()
+        .from('ad_pack_renders')
+        .update({ state: 'queued', attempts: 0, error_code: null, files: null, voice_key: voiceKey, lease_until: null, started_at: null, finished_at: null, updated_at: nowIso })
+        .eq('pack_id', packId)
+        .eq('version', version)
+        .neq('state', 'running')
+        .select(RENDER_COLUMNS);
+      if (error) fail('ad_pack_renders requeue', error);
+      const updated = (data ?? [])[0];
+      if (updated) return toRenderRow(updated as Record<string, unknown>);
+      const { data: existing, error: readError } = await admin().from('ad_pack_renders').select('id').eq('pack_id', packId).eq('version', version).maybeSingle();
+      if (readError) fail('ad_pack_renders read', readError);
+      if (existing) return null; // running: left alone
+      const { data: inserted, error: insertError } = await admin().from('ad_pack_renders').insert({ pack_id: packId, version, voice_key: voiceKey }).select(RENDER_COLUMNS).maybeSingle();
+      if (insertError) fail('ad_pack_renders insert', insertError);
+      return inserted ? toRenderRow(inserted as Record<string, unknown>) : null;
     },
 
     async setAdFiles(ownerId, packAdId, files) {

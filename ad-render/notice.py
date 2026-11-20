@@ -537,6 +537,7 @@ def render(brief_path):
         render_all(frame, n, audio, outs, n / 30.0, crops)
         poster_t = min(scenes[0].t0 + 1.6, dur / 2)
         frame(poster_t).save(os.path.join(out_dir, "poster.png"))
+        write_render_info(out_dir, len(pages), [sc.id for sc in scenes], n / 30.0)
     except RenderError:
         for p in outs.values():
             try:
@@ -545,6 +546,16 @@ def render(brief_path):
                 pass
         raise
     return crops, (y0, y1)
+
+
+def write_render_info(out_dir, captions, scene_ids, duration):
+    """render-info.json: what the caller's checks need that ffprobe cannot see (counts and ids only, no text)."""
+    info = {"captions": int(captions), "scenes": [str(i) for i in scene_ids], "duration": round(float(duration), 2)}
+    try:
+        with open(os.path.join(out_dir, "render-info.json"), "w", encoding="utf-8") as fh:
+            json.dump(info, fh)
+    except OSError:
+        raise RenderError("render_failed")
 
 
 class _QuietParser(argparse.ArgumentParser):

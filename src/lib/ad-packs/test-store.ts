@@ -15,6 +15,9 @@ import {
   type Pricing,
   type RenderedImage,
 } from './generate-core.ts';
+import type { AdVideo, AdVideoReady } from './render-store.ts';
+import { enqueueRender } from './render-core.ts';
+import { MemoryRenderStore } from './render-test-store.ts';
 import { PackConflict, StoreError, type AdPackStore, type NewAd, type NewPack, type NewRun, type PackAdRow, type PackPatch, type PackRow, type PackStatus, type RunRow } from './store-types.ts';
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -137,6 +140,14 @@ export class MemoryAdPackStore implements AdPackStore {
     return out;
   }
 
+  async setAdVideo(ownerId: string, packAdId: string, video: AdVideo) {
+    const ad = this.ads.get(packAdId);
+    if (!ad || ad.ownerId !== ownerId) return false;
+    this.writes.push('setAdVideo');
+    ad.files = { images: ad.files.images, video: clone(video) };
+    return true;
+  }
+
   async clearAdsOfVersion(ownerId: string, packId: string, version: number) {
     const doomed = [...this.ads.values()].filter((a) => a.ownerId === ownerId && a.packId === packId && a.version === version);
     if (doomed.length > 0) this.writes.push('clearAdsOfVersion');
@@ -225,8 +236,34 @@ export function goodArea(areaKey = 'NG7'): AreaSourceResult {
   return { areaKey, areaLabel: 'Lenton, Nottingham', level: 'district', fellBack: false, bedrooms: 3, agg: { ...GOOD_AGG }, samples: 14 };
 }
 
+/** The 5b video as the worker leaves it when a render is done (names and sizes like the real ones). */
+export function readyVideo(ownerId: string, packId: string, version: number, voice = 'jane'): AdVideoReady {
+  const folder = `${ownerId}/${packId}/v${version}`;
+  const f = (name: string, width: number, height: number, contentType: string) => ({ name, path: `${folder}/${name}`, width, height, contentType, bytes: 1234 });
+  return {
+    status: 'ready',
+    videos: [f('notice-9x16.mp4', 1080, 1920, 'video/mp4'), f('notice-4x5.mp4', 1080, 1350, 'video/mp4'), f('notice-1x1.mp4', 1080, 1080, 'video/mp4')],
+    poster: f('notice-poster.png', 1080, 1920, 'image/png'),
+    durationSeconds: 38,
+    voice,
+  };
+}
+
 export interface Harness {
   store: MemoryAdPackStore;
+  /** The render queue the generator enqueues into (a render worker test builds its own MemoryRenderStore). */
+  renders: MemoryRenderStore;
+  /** Every enqueue the generator asked for. */
+  enqueues: { packId: string; version: number; voiceKey: string }[];
+  /** 'code': the enqueue answers {ok:false, code:'store_failed'}; 'throw': it throws. */
+  enqueueFails: 'code' | 'throw' | null;
+  /** Every path the generator asked to delete, and whether the delete should fail. */
+  deleted: string[];
+  deleteFails: boolean;
+  /** Make the current version's render done and the 5b slot ready (what the worker does), for the owner's pack. */
+  finishVideo(ownerId: string, opts?: { version?: number }): Promise<void>;
+  /** Put the current version's render in a state the worker would (queued rows exist after a generate). */
+  setRender(ownerId: string, patch: { state?: 'queued' | 'running' | 'done' | 'failed'; errorCode?: string | null }, opts?: { version?: number }): Promise<void>;
   renderer: FakeRenderer;
   uploader: FakeUploader;
   area: FakeArea;
@@ -242,6 +279,12 @@ export function harness(opts: { pricing?: Pricing; now?: Date } = {}): Harness {
   h.now = opts.now ?? new Date('2026-11-20T10:00:00Z');
   h.store = new MemoryAdPackStore();
   h.store.clock = () => h.now;
+  h.renders = new MemoryRenderStore(h.store);
+  h.renders.clock = () => h.now;
+  h.enqueues = [];
+  h.enqueueFails = null;
+  h.deleted = [];
+  h.deleteFails = false;
   h.renderer = new FakeRenderer();
   h.uploader = new FakeUploader();
   h.area = { result: goodArea(), calls: 0 };
@@ -256,7 +299,44 @@ export function harness(opts: { pricing?: Pricing; now?: Date } = {}): Harness {
       return h.area.result;
     },
     pricing: opts.pricing,
+    renders: {
+      enqueue: async (i) => {
+        h.enqueues.push({ ...i });
+        if (h.enqueueFails === 'throw') throw new Error('boom: a url that must never be stored');
+        if (h.enqueueFails === 'code') return { ok: false, code: 'store_failed' };
+        return enqueueRender(h.renders, i);
+      },
+      get: (packId, version) => h.renders.getRender(packId, version),
+      requeue: (i) => h.renders.requeueRender(i),
+    },
+    deleteFiles: async (paths) => {
+      h.deleted.push(...paths);
+      return { ok: !h.deleteFails };
+    },
     log: (event, fields) => h.logs.push({ event, fields }),
+  };
+  h.finishVideo = async (ownerId, o = {}) => {
+    const pack = await h.store.getPack(ownerId);
+    if (!pack) throw new Error('no pack');
+    const version = o.version ?? pack.version;
+    const row = await h.renders.getRender(pack.id, version);
+    if (!row) throw new Error('no render row');
+    const ready = readyVideo(ownerId, pack.id, version, row.voiceKey);
+    const live = [...h.renders.rows.values()].find((r) => r.id === row.id)!;
+    live.state = 'done';
+    live.errorCode = null;
+    live.files = ready;
+    const ad = (await h.store.listAds(ownerId, pack.id)).find((a) => a.angle === '5b' && a.version === version);
+    if (ad) await h.store.setAdVideo(ownerId, ad.id, ready);
+  };
+  h.setRender = async (ownerId, patch, o = {}) => {
+    const pack = await h.store.getPack(ownerId);
+    if (!pack) throw new Error('no pack');
+    const row = await h.renders.getRender(pack.id, o.version ?? pack.version);
+    if (!row) throw new Error('no render row');
+    const live = [...h.renders.rows.values()].find((r) => r.id === row.id)!;
+    if (patch.state) live.state = patch.state;
+    if (patch.errorCode !== undefined) live.errorCode = patch.errorCode;
   };
   h.engine = createAdPackEngine(h.deps);
   return h;

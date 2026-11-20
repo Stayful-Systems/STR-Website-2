@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { downloadPath, DOWNLOAD_SECONDS, signedDownloadUrlWith } from './download.ts';
 import { parseFiles, parseTexts, sortAds, toAdRow, toPackRow, toRunRow, PACK_COLUMN_OF, PACK_COLUMNS } from './rows.ts';
-import { harness } from './test-store.ts';
+import { harness, readyVideo } from './test-store.ts';
 import type { GenerateOk } from './generate-core.ts';
 
 const OWNER_A = '3f9a2c11-1111-4111-8111-111111111111';
@@ -119,6 +119,17 @@ test('parseTexts and parseFiles survive junk', () => {
     video: { status: 'coming' },
   });
   assert.equal(parseFiles({ video: { status: 'ready' } }).video, null);
+});
+
+test('parseFiles carries the full video slot (38b): queued, making, failed with a code, and ready with its files', () => {
+  assert.deepEqual(parseFiles({ video: { status: 'queued' } }).video, { status: 'queued' });
+  assert.deepEqual(parseFiles({ video: { status: 'making' } }).video, { status: 'making' });
+  assert.deepEqual(parseFiles({ video: { status: 'failed', code: 'voice_unavailable' } }).video, { status: 'failed', code: 'voice_unavailable' });
+  assert.equal(parseFiles({ video: { status: 'nonsense' } }).video, null);
+  const ready = readyVideo(OWNER_A, 'p1', 1, 'olivia');
+  assert.deepEqual(parseFiles({ images: [], video: ready }).video, ready);
+  // A slot read back from a row is exactly what was written (the store writes {images, video}).
+  assert.deepEqual(parseFiles(JSON.parse(JSON.stringify({ images: [], video: ready }))), { images: [], video: ready });
 });
 
 test('toAdRow, toRunRow and sortAds', () => {

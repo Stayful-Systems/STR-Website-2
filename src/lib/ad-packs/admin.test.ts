@@ -55,7 +55,10 @@ async function rig(opts: { made?: boolean; approved?: boolean } = {}): Promise<R
   if (opts.made !== false) {
     const made = await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: inputOf(site) });
     assert.ok(made.ok && !made.dry);
-    if (opts.approved) assert.ok((await h.engine.approvePack({ ownerId: OWNER_A })).ok);
+    if (opts.approved) {
+      await h.finishVideo(OWNER_A); // 38b: a pack is approved only with its video ready
+      assert.ok((await h.engine.approvePack({ ownerId: OWNER_A })).ok);
+    }
   }
   const deps: AdPackAdminDeps = {
     currentUser: async () => r.user,

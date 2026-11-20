@@ -21,6 +21,9 @@
  *   links        ?ad=<its code>, utm_content={{ad.id}} literally, the
  *                operator's domain, a code that belongs to the operator
  *   files        image sizes are exactly 1080x1080, 1080x1350 or 1080x1920
+ *   video        (38b, only when `videos` is given: the 5b ad's three MP4s as the sandbox
+ *                measured them) exact sizes by name, a length over 0 and up to 60 s, an
+ *                audio track, and burned-in captions
  *
  * Pure: no network, no database, no server-only.
  */
@@ -114,6 +117,18 @@ export type CheckAd = {
   files?: { name: string; width: number; height: number }[];
 };
 
+/** One rendered MP4 of the 5b ad as the sandbox measured it (ffprobe, and the renderer's render-info.json). */
+export type CheckVideo = { name: string; width: number; height: number; durationSeconds: number; hasAudio: boolean; captionCount: number };
+
+/** The notice video's files by name, with the exact size each must have. */
+export const VIDEO_SIZES: Record<string, { width: number; height: number }> = {
+  'notice-9x16.mp4': { width: 1080, height: 1920 },
+  'notice-4x5.mp4': { width: 1080, height: 1350 },
+  'notice-1x1.mp4': { width: 1080, height: 1080 },
+};
+/** Meta Reels and Stories ads run to 60 seconds; the notice voiceover is far shorter. */
+export const MAX_VIDEO_SECONDS = 60;
+
 export type CheckFigure = { areaKey: string; label?: string; sentence?: string };
 
 export type CheckInput = {
@@ -124,9 +139,14 @@ export type CheckInput = {
   operatorCode: string;
   /** The operator's bare domain, e.g. acme.co.uk. */
   domain: string;
+  /**
+   * The 5b ad's rendered MP4s (38b). Omitted at generation time (the video does not exist yet): the video check
+   * then has nothing to say. Given (also as an empty list) it is checked: all three sizes must be there.
+   */
+  videos?: CheckVideo[];
 };
 
-export const CHECK_IDS = ['brand', 'source_brand', 'figures', 'length', 'claims', 'links', 'files'] as const;
+export const CHECK_IDS = ['brand', 'source_brand', 'figures', 'length', 'claims', 'links', 'files', 'video'] as const;
 export type CheckId = (typeof CHECK_IDS)[number];
 
 export const CHECK_LABELS: Record<CheckId, string> = {
@@ -137,6 +157,7 @@ export const CHECK_LABELS: Record<CheckId, string> = {
   claims: 'No income promises or ranges',
   links: 'Every link tracks its ad',
   files: 'Image sizes are right',
+  video: 'The video is made properly',
 };
 
 export type CheckFailure = { check: CheckId; rule: string; where: string; detail: string };
@@ -202,6 +223,53 @@ function poundAmounts(text: string): string[] {
 }
 
 const HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+
+// ── The video checks ──
+
+/**
+ * The video check on its own (runChecks calls it; the render worker calls it after a render and merges the
+ * result into the pack's stored checks with mergeVideoChecks). Plain words in `detail`, no codes.
+ */
+export function videoChecks(videos: readonly CheckVideo[]): { failures: CheckFailure[]; warnings: CheckWarning[] } {
+  const failures: CheckFailure[] = [];
+  const fail = (rule: string, where: string, detail: string) => failures.push({ check: 'video', rule, where, detail });
+  const list = Array.isArray(videos) ? videos : [];
+  const seen = new Set<string>();
+  for (const v of list) {
+    const where = `ad 5b ${v.name}`;
+    const size = VIDEO_SIZES[v.name];
+    if (!size) {
+      fail('video_name', where, 'This is not one of the three video files the pack should have.');
+    } else {
+      seen.add(v.name);
+      if (v.width !== size.width || v.height !== size.height) fail('video_size', where, `The video is ${v.width}x${v.height}; it must be exactly ${size.width}x${size.height}.`);
+    }
+    if (!Number.isFinite(v.durationSeconds) || v.durationSeconds <= 0) fail('video_length', where, 'The video has no length.');
+    else if (v.durationSeconds > MAX_VIDEO_SECONDS) fail('video_length', where, `The video is ${Math.round(v.durationSeconds)} seconds long; it must be ${MAX_VIDEO_SECONDS} seconds or less.`);
+    if (v.hasAudio !== true) fail('video_audio', where, 'The video has no sound.');
+    if (!Number.isFinite(v.captionCount) || v.captionCount < 1) fail('video_captions', where, 'The video has no captions on screen.');
+  }
+  for (const name of Object.keys(VIDEO_SIZES)) if (!seen.has(name)) fail('video_missing', `ad 5b ${name}`, 'This video file is missing.');
+  return { failures, warnings: [] };
+}
+
+function resultsOf(failures: readonly CheckFailure[], warnings: readonly CheckWarning[]): CheckResult[] {
+  return CHECK_IDS.map((check) => {
+    const fs = failures.filter((f) => f.check === check).length;
+    return { check, label: CHECK_LABELS[check], ok: fs === 0, failures: fs, warnings: warnings.filter((w) => w.check === check).length };
+  });
+}
+
+/**
+ * The pack's stored checks with the video check (re)done: earlier `video` failures are dropped, the new ones are
+ * added, and `ok` and `results` are recomputed. Everything else in `prev` is kept as it was. A null `prev` starts empty.
+ */
+export function mergeVideoChecks(prev: ChecksOutput | null | undefined, videos: readonly CheckVideo[]): ChecksOutput {
+  const v = videoChecks(videos);
+  const failures = [...(prev?.failures ?? []).filter((f) => f.check !== 'video'), ...v.failures];
+  const warnings = [...(prev?.warnings ?? []).filter((w) => w.check !== 'video'), ...v.warnings];
+  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings) };
+}
 
 // ── The checks ──
 
@@ -392,9 +460,12 @@ export function runChecks(input: CheckInput): ChecksOutput {
     }
   }
 
-  const results: CheckResult[] = CHECK_IDS.map((check) => {
-    const fs = failures.filter((f) => f.check === check).length;
-    return { check, label: CHECK_LABELS[check], ok: fs === 0, failures: fs, warnings: warnings.filter((w) => w.check === check).length };
-  });
-  return { ok: failures.length === 0, failures, warnings, results };
+  // (h) The notice video, when it has been rendered.
+  if (Array.isArray(input.videos)) {
+    const v = videoChecks(input.videos);
+    failures.push(...v.failures);
+    warnings.push(...v.warnings);
+  }
+
+  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings) };
 }

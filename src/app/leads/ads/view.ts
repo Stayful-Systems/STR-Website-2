@@ -229,10 +229,11 @@ export function groupCardFiles(files: readonly { name: string; width: number; he
     .map(([card, list]) => ({ card, files: list, previewName: (list.find((f) => /-4x5\.png$/i.test(f.name)) ?? list[0]).name }));
 }
 
-/** The 5b ad's video slot: "Video coming soon" in 38a, nothing for an image ad. */
+/** The 5b ad's video slot text: nothing for an image ad. (38b, B5b: the screen shows the live video state from PackView.video.) */
 export function videoSlotText(video: AdFiles['video']): string | null {
   if (!video) return null;
-  return video.status === 'coming' ? 'Video coming soon' : null;
+  if (video.status === 'coming') return 'Video coming soon';
+  return video.status === 'queued' || video.status === 'making' ? 'Your video is being made' : null;
 }
 
 export const angleTitle = (angle: Angle): string => ANGLE_LABELS[angle] ?? 'Ad';
@@ -247,6 +248,7 @@ const CHECK_PLAIN: Record<CheckId, string> = {
   claims: 'A line sounded like a promise about what you will earn.',
   links: 'A link could not be tagged to its ad.',
   files: 'An image was not the right size.',
+  video: 'The video was not made properly.',
 };
 export const CHECK_PLAIN_IDS = Object.keys(CHECK_PLAIN) as CheckId[];
 

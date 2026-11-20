@@ -5,7 +5,7 @@
  */
 import type { MemoryAdPackStore } from './test-store.ts';
 import type { PackRow } from './store-types.ts';
-import { RENDER_STATES, type RenderCounts, type RenderDone, type RenderFinish, type RenderRow, type RenderStore } from './render-store.ts';
+import { RENDER_STATES, type RenderCounts, type RenderDone, type RenderFinish, type RenderRequeue, type RenderRow, type RenderStore } from './render-store.ts';
 import type { SandboxLike, SandboxRun, StorageLike } from './render-core.ts';
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -130,6 +130,34 @@ export class MemoryRenderStore implements RenderStore {
     r.state = 'queued';
     r.errorCode = 'timeout';
     return 'requeued';
+  }
+
+  async getRender(packId: string, version: number) {
+    const r = [...this.rows.values()].find((x) => x.packId === packId && x.version === version);
+    return r ? clone(r) : null;
+  }
+
+  async requeueRender(i: RenderRequeue) {
+    const r = [...this.rows.values()].find((x) => x.packId === i.packId && x.version === i.version);
+    if (!r) {
+      this.writes.push('requeue:insert');
+      const now = this.stamp();
+      const row: RenderRow = { id: `render-${++this.seq}`, packId: i.packId, version: i.version, voiceKey: i.voiceKey, state: 'queued', sandboxId: null, attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null, costPence: 0, errorCode: null, files: null, createdAt: now, updatedAt: now };
+      this.rows.set(row.id, row);
+      return clone(row);
+    }
+    if (r.state === 'running') return null;
+    this.writes.push('requeue');
+    r.state = 'queued';
+    r.attempts = 0;
+    r.errorCode = null;
+    r.files = null;
+    r.voiceKey = i.voiceKey;
+    r.leaseUntil = null;
+    r.startedAt = null;
+    r.finishedAt = null;
+    r.updatedAt = this.stamp();
+    return clone(r);
   }
 
   async getPack(packId: string): Promise<PackRow | null> {

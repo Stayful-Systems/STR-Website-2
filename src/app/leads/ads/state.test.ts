@@ -28,6 +28,7 @@ test('a pack to look at, an approved pack and a pack that failed its checks each
   const h = harness();
   const { view } = await made(h);
   assert.deepEqual(packScreen(view, h.now.getTime()), { kind: 'preview', notice: null });
+  await h.finishVideo(OWNER); // 38b: a pack is approved only with its video ready
   assert.equal((await h.engine.approvePack({ ownerId: OWNER })).ok, true);
   assert.deepEqual(packScreen((await h.engine.listPackForOwner(OWNER))!, h.now.getTime()), { kind: 'approved', notice: null });
 
@@ -46,6 +47,7 @@ test('a failed first attempt starts again; a failed regenerate keeps showing the
 
   const h2 = harness();
   await made(h2);
+  await h2.finishVideo(OWNER);
   assert.equal((await h2.engine.approvePack({ ownerId: OWNER })).ok, true);
   h2.renderer.fail = true;
   const again = await h2.engine.generatePack({ ownerId: OWNER, by: 'operator', input: { ...INPUT, brand: { ...INPUT.brand, brandColour: '#223344' } } });

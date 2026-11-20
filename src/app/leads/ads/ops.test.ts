@@ -175,6 +175,7 @@ test('generate: a refusal from the generator is its plain message, never a code'
 
 test('approve: logs ad_pack_approved once the pack is approved, with the version and a dedupe key, nothing else', async () => {
   const a = await madePack();
+  await a.h.finishVideo(OWNER_A); // 38b: a pack is approved only with its video ready
   const out = await approveOp(a.deps, { packId: a.view.pack.id });
   assert.equal(out.ok, true);
   assert.equal((await a.h.store.getPack(OWNER_A))!.status, 'approved');

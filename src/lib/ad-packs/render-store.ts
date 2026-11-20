@@ -44,6 +44,17 @@ export type AdVideoReady = {
   voice: string;
 };
 
+/**
+ * Everything the 5b ad's `files.video` slot can hold (ad_pack_ads.files):
+ *   coming   a pack from before the video existed (never written by 38b)
+ *   queued   the render is waiting for the worker
+ *   making   the worker has it
+ *   ready    AdVideoReady (the three MP4s and the poster)
+ *   failed   the render could not be made; `code` is a short RENDER_CODES / enqueue code, never a message
+ */
+export type AdVideo = AdVideoReady | { status: 'coming' } | { status: 'queued' } | { status: 'making' } | { status: 'failed'; code: string };
+export const AD_VIDEO_STATUSES = ['coming', 'queued', 'making', 'ready', 'failed'] as const;
+
 export type RenderRow = {
   id: string;
   packId: string;
@@ -96,6 +107,16 @@ export type RenderDone = { costPence: number; sandboxId: string | null; files: A
 
 export type RenderCounts = Record<RenderState, number>;
 
+/** A voice change and a retry write this (a row is reset in place: same pack, same version, no new version). */
+export type RenderRequeue = { packId: string; version: number; voiceKey: string };
+
+/**
+ * Codes a retry cannot fix: the voice is not in the account (change the voice instead) and a brief the
+ * renderer refuses. Every other failure (a sandbox hiccup, a cap, a voice quota) may be tried again.
+ */
+export const NO_RETRY_RENDER_CODES: ReadonlySet<string> = new Set(['voice_unavailable', 'bad_brief']);
+export const isRetryableRenderCode = (code: string | null | undefined): boolean => typeof code === 'string' && code !== '' && !NO_RETRY_RENDER_CODES.has(code);
+
 export interface RenderStore {
   /**
    * Queue the version's render, if it has none yet. Returns the row and whether
@@ -129,6 +150,14 @@ export interface RenderStore {
   getPack(packId: string): Promise<PackRow | null>;
   /** Set the files of one pack ad (only if the ad belongs to the owner). */
   setAdFiles(ownerId: string, packAdId: string, files: Record<string, unknown>): Promise<boolean>;
+  /** The version's render row, or null. */
+  getRender(packId: string, version: number): Promise<RenderRow | null>;
+  /**
+   * Reset the version's render to start again (a voice change, or a retry of a failed render): state queued,
+   * attempts 0, error, files, lease and finish time cleared, voice_key = the given one, cost kept. Creates the row
+   * when there is none. Conditional: null when the row is `running` (a worker has it), and nothing is changed.
+   */
+  requeueRender(i: RenderRequeue): Promise<RenderRow | null>;
 }
 
 // ── Settings (billing_settings, seeded by the Batch 38b block) ──
@@ -190,14 +219,16 @@ function fileRef(v: unknown): AdFileRef | null {
 }
 
 /**
- * The 5b ad's `files.video` value read back: the ready shape, the coming
- * placeholder, or null. Phase B5 uses this in rows.ts parseFiles (which only
- * knows the placeholder today).
+ * The 5b ad's `files.video` value read back (rows.ts parseFiles uses it): the
+ * ready shape, one of the other four slots, or null for anything else.
  */
-export function parseAdVideo(raw: unknown): AdVideoReady | { status: 'coming' } | null {
+export function parseAdVideo(raw: unknown): AdVideo | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   if (o.status === 'coming') return { status: 'coming' };
+  if (o.status === 'queued') return { status: 'queued' };
+  if (o.status === 'making') return { status: 'making' };
+  if (o.status === 'failed') return { status: 'failed', code: typeof o.code === 'string' && o.code !== '' ? o.code.slice(0, 60) : 'render_failed' };
   if (o.status !== 'ready') return null;
   const videos = Array.isArray(o.videos) ? o.videos.map(fileRef).filter((f): f is AdFileRef => f !== null) : [];
   const poster = fileRef(o.poster);

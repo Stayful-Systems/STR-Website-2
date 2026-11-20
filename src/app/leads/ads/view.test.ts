@@ -156,7 +156,7 @@ test('a generated pack becomes three ad view models: 5b with its video slot and 
   const vms = view.ads.map((a) => adViewModel(a, (path) => `https://signed.example.test/${path}`));
   assert.deepEqual(vms.map((v) => v.angle), ['5b', '3a', '17']);
   const b = vms[0];
-  assert.equal(b.videoText, 'Video coming soon');
+  assert.equal(b.videoText, 'Your video is being made');
   assert.equal(b.cards.length, 0);
   for (const v of vms.slice(1)) {
     assert.equal(v.videoText, null);

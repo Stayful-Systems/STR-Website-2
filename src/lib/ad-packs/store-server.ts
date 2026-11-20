@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { DEFAULT_AD_PACK_SETTINGS, AD_PACK_KEYS, parseAdPackSettings, type AdPackSettings } from './settings.ts';
-import { AD_COLUMNS, adInsertRow, PACK_COLUMN_OF, PACK_COLUMNS, RUN_COLUMNS, sortAds, toAdRow, toPackRow, toRunRow } from './rows.ts';
+import { AD_COLUMNS, adInsertRow, PACK_COLUMN_OF, PACK_COLUMNS, parseFiles, RUN_COLUMNS, sortAds, toAdRow, toPackRow, toRunRow } from './rows.ts';
 import { signedDownloadUrlWith } from './download.ts';
 import {
   PackConflict,
@@ -144,6 +144,17 @@ export function createLiveStore(): AdPackStore {
       return sortAds(((data ?? []) as Record<string, unknown>[]).map(toAdRow));
     },
 
+    async setAdVideo(ownerId, packAdId, video) {
+      if (!UUID.test(ownerId) || !UUID.test(packAdId)) return false;
+      const { data: cur, error: readError } = await admin().from('ad_pack_ads').select('files').eq('id', packAdId).eq('owner_id', ownerId).maybeSingle();
+      if (readError) fail('ad_pack_ads files read', readError);
+      if (!cur) return false;
+      const files = parseFiles((cur as { files: unknown }).files);
+      const { data, error } = await admin().from('ad_pack_ads').update({ files: { images: files.images, video } }).eq('id', packAdId).eq('owner_id', ownerId).select('id');
+      if (error) fail('ad_pack_ads files', error);
+      return (data ?? []).length > 0;
+    },
+
     async clearAdsOfVersion(ownerId, packId, version) {
       const { data, error } = await admin().from('ad_pack_ads').delete().eq('owner_id', ownerId).eq('pack_id', packId).eq('version', version).select('id');
       if (error) fail('ad_pack_ads clear', error);
@@ -210,6 +221,25 @@ export async function uploadFile(path: string, bytes: Uint8Array, contentType: s
     return { ok: false };
   } catch {
     console.error('[ad-packs] upload failed: error');
+    return { ok: false };
+  }
+}
+
+/**
+ * Remove stored files (paths as made by the generator or the worker: `<owner>/<pack>/v<n>/<file>`). Used by a voice
+ * change to drop the cached voice.mp3 and script.json of a version. A path that is not that shape is skipped.
+ * Never throws; `ok` is false when the storage call failed (a file that was already gone is not a failure).
+ */
+export async function deleteFiles(paths: readonly string[]): Promise<{ ok: boolean }> {
+  const safe = paths.filter((p) => /^[0-9a-f-]{36}\/[0-9a-z-]{1,40}\/v\d{1,4}\/[0-9a-z._-]{1,80}$/i.test(p) && !p.includes('..'));
+  if (safe.length === 0) return { ok: paths.length === 0 };
+  try {
+    const { error } = await admin().storage.from(BUCKET).remove(safe);
+    if (!error) return { ok: safe.length === paths.length };
+    console.error('[ad-packs] delete failed: error');
+    return { ok: false };
+  } catch {
+    console.error('[ad-packs] delete failed: error');
     return { ok: false };
   }
 }

@@ -14,6 +14,8 @@ import {
   figureForBrief,
   isSafeRelative,
   loadRendererFiles,
+  parseProbe,
+  parseRenderInfo,
   RENDERER_FILES,
   renderErrCode,
   runRenderQueue,
@@ -25,7 +27,7 @@ import {
   type RenderReport,
 } from './render-core.ts';
 import { DEFAULT_RENDER_SETTINGS, parseAdVideo, parseRenderSettings, type RenderSettings } from './render-store.ts';
-import { FakeSandboxes, FakeStorage, MemoryRenderStore } from './render-test-store.ts';
+import { FakeSandboxes, FakeStorage, type MemoryRenderStore } from './render-test-store.ts';
 import type { AdPackStore, PackAdRow } from './store-types.ts';
 import type { SynthesiseResult } from './voice-core.ts';
 
@@ -41,12 +43,31 @@ const CPU_SECOND_PENCE = 0.00280889;
 const MP4 = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 2, 0, 1, 2, 3]);
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 const JPG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 1, 2, 3, 4, 5, 6, 7]);
+const RENDER_INFO = new TextEncoder().encode(JSON.stringify({ captions: 17, scenes: ['L1', 'L2', 'L3', 'L4', 'L5'], duration: 38.03 }));
 const OUTPUT_FILES: Record<string, Uint8Array> = {
   'out/notice_9x16.mp4': MP4,
   'out/notice_4x5.mp4': MP4,
   'out/notice_1x1.mp4': MP4,
   'out/poster.png': PNG,
+  'out/render-info.json': RENDER_INFO,
 };
+
+/** What ffprobe prints for one of the three files (a video stream, an audio stream, the container length). */
+function probeJson(file: string, over: { height?: number; audio?: boolean; duration?: string } = {}): string {
+  const height = over.height ?? (file.includes('9x16') ? 1920 : file.includes('4x5') ? 1350 : 1080);
+  return JSON.stringify({
+    streams: [{ codec_type: 'video', width: 1080, height }, ...(over.audio === false ? [] : [{ codec_type: 'audio' }])],
+    format: { duration: over.duration ?? '38.033333' },
+  });
+}
+/** The sandbox's answer to a command in a healthy render: success, and ffprobe's JSON on stdout. */
+function healthy(r: { advance: (ms: number) => void }, over: Parameters<typeof probeJson>[1] = {}) {
+  return (cmd: { cmd: string; args: string[] }) => {
+    r.advance(10_000);
+    if (cmd.cmd === 'ffprobe') return { exitCode: 0, stderr: '', timedOut: false, stdout: probeJson(cmd.args[cmd.args.length - 1], over) };
+    return { exitCode: 0, stderr: '', timedOut: false };
+  };
+}
 
 const SECRET_TEXT = 'Brightstone Stays';
 const BRAND: RenderBrand = { company: SECRET_TEXT, colour: '#1F6F5C', logoRef: 'https://cdn.example.test/logo.png', sitePhotoRef: null, feePct: 12 };
@@ -100,14 +121,11 @@ async function rig(opts: { fee?: number | null; settings?: Partial<RenderSetting
   const advance = (ms: number) => {
     h.now = new Date(h.now.getTime() + ms);
   };
-  const renders = new MemoryRenderStore(h.store);
-  renders.clock = () => h.now;
+  // The generator's own render queue is the worker's queue, as in the app (generate enqueues, the cron drains it).
+  const renders = h.renders;
   const sandboxes = new FakeSandboxes(advance);
   sandboxes.opts.outputs = OUTPUT_FILES;
-  sandboxes.opts.onRun = () => {
-    advance(10_000);
-    return { exitCode: 0, stderr: '', timedOut: false };
-  };
+  sandboxes.opts.onRun = healthy({ advance });
   const storage = new FakeStorage();
   const synthCalls: Rig['synthCalls'] = [];
   const logs: Rig['logs'] = [];
@@ -135,7 +153,8 @@ async function rig(opts: { fee?: number | null; settings?: Partial<RenderSetting
     now: () => h.now,
     log: (event, fields) => logs.push({ event, fields }),
   };
-  if (opts.queue !== false) await renders.enqueue(packId, 1, 'jane');
+  if (opts.queue === false) renders.rows.clear();
+  else await renders.enqueue(packId, 1, 'jane');
   renders.writes.length = 0;
   return {
     h,
@@ -162,13 +181,12 @@ const COMMANDS = [
   { cmd: 'python3', args: ['-m', 'venv', '/tmp/venv'], sudo: undefined },
   { cmd: '/tmp/venv/bin/pip', args: ['install', '--quiet', '--disable-pip-version-check', '-r', 'ad-render/requirements.txt'], sudo: undefined },
   { cmd: '/tmp/venv/bin/python', args: ['ad-render/notice.py', '--brief', 'brief.json'], sudo: undefined },
+  ...['notice_9x16.mp4', 'notice_4x5.mp4', 'notice_1x1.mp4'].map((f) => ({ cmd: 'ffprobe', args: ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', `out/${f}`], sudo: undefined })),
 ];
 
 function failRender(r: Rig, stderr = `Traceback (most recent call last): ${SECRET_TEXT} 12 Acacia Road\nERR missing_asset\n`) {
-  r.sandboxes.opts.onRun = (cmd) => {
-    r.advance(10_000);
-    return cmd.args[0] === 'ad-render/notice.py' ? { exitCode: 1, stderr, timedOut: false } : { exitCode: 0, stderr: '', timedOut: false };
-  };
+  const ok = healthy(r);
+  r.sandboxes.opts.onRun = (cmd) => (cmd.args[0] === 'ad-render/notice.py' ? (r.advance(10_000), { exitCode: 1, stderr, timedOut: false }) : ok(cmd));
 }
 
 // ── The happy path ──
@@ -306,8 +324,8 @@ test('a render failure stops the sandbox, goes back to queued with a short code,
   assert.equal(row.errorCode, 'missing_asset');
   assert.equal(row.attempts, 1);
   assert.equal(row.files, null);
-  // No video was written: the ad still says it is coming.
-  assert.equal((r.ad5b().files.video as { status: string }).status, 'coming');
+  // No video was written: the ad's slot goes back to queued for the retry (it was 'making' while the worker had it).
+  assert.equal((r.ad5b().files.video as { status: string }).status, 'queued');
 });
 
 test('any other renderer exit is render_failed; the sandbox is stopped on every failure path', async () => {
@@ -416,10 +434,7 @@ test('a retry reuses the stored voice: the voice is bought once', async () => {
   assert.ok(r.storage.files.has(`${folder}/voice.mp3`));
   assert.ok(r.storage.files.has(`${folder}/script.json`));
 
-  r.sandboxes.opts.onRun = () => {
-    r.advance(10_000);
-    return { exitCode: 0, stderr: '', timedOut: false };
-  };
+  r.sandboxes.opts.onRun = healthy(r);
   const second = await r.run();
   assert.equal(second.results[0].outcome, 'done');
   assert.equal(r.synthCalls.length, 1, 'synthesise was not called again');
@@ -825,9 +840,143 @@ test('settings: parsed with defaults, bad values fall back', () => {
   );
 });
 
-test('a parsed AdVideo: ready needs videos and a poster; coming stays coming; junk is null', () => {
+test('a parsed AdVideo: queued, making and failed (with a short code) are read; ready needs videos and a poster; coming stays coming; junk is null', () => {
+  assert.deepEqual(parseAdVideo({ status: 'queued' }), { status: 'queued' });
+  assert.deepEqual(parseAdVideo({ status: 'making' }), { status: 'making' });
+  assert.deepEqual(parseAdVideo({ status: 'failed', code: 'voice_unavailable' }), { status: 'failed', code: 'voice_unavailable' });
+  assert.deepEqual(parseAdVideo({ status: 'failed' }), { status: 'failed', code: 'render_failed' });
+  assert.deepEqual(parseAdVideo({ status: 'failed', code: 'x'.repeat(200) }), { status: 'failed', code: 'x'.repeat(60) });
   assert.deepEqual(parseAdVideo({ status: 'coming' }), { status: 'coming' });
   assert.equal(parseAdVideo(null), null);
   assert.equal(parseAdVideo({ status: 'ready', videos: [], poster: null }), null);
   assert.equal(parseAdVideo({ status: 'weird' }), null);
+});
+
+// ── 38b B5a: the video slot, the measurements and the video checks ──
+
+const videoCheckFailures = async (r: Rig) => ((await r.h.store.getPack(OWNER))!.checks?.failures ?? []).filter((f) => f.check === 'video');
+
+test('after a good render the video check passes: the checks hold a passing video result, the pack stays in preview', async () => {
+  const r = await rig();
+  await r.run();
+  const pack = (await r.h.store.getPack(OWNER))!;
+  assert.equal(pack.status, 'preview');
+  assert.equal(pack.checks?.ok, true);
+  assert.deepEqual(pack.checks?.results.find((c) => c.check === 'video'), { check: 'video', label: 'The video is made properly', ok: true, failures: 0, warnings: 0 });
+  assert.equal((r.ad5b().files.video as { status: string }).status, 'ready');
+  // And the operator may approve all three ads.
+  assert.ok((await r.h.engine.approvePack({ ownerId: OWNER })).ok);
+});
+
+test('ffprobe runs after the render, as an args array with JSON output, and the renderer’s render-info.json is read back', async () => {
+  const r = await rig();
+  await r.run();
+  const cmds = r.sandboxes.created[0].sandbox.commands;
+  const probes = cmds.filter((c) => c.cmd === 'ffprobe');
+  assert.equal(probes.length, 3);
+  assert.equal(cmds.findIndex((c) => c.cmd === 'ffprobe') > cmds.findIndex((c) => c.args[0] === 'ad-render/notice.py'), true, 'after the render');
+  for (const p of probes) {
+    assert.ok(Array.isArray(p.args));
+    assert.deepEqual(p.args.slice(0, 5), ['-v', 'error', '-print_format', 'json', '-show_format']);
+    assert.ok(p.args[p.args.length - 1].startsWith('out/notice_') && p.args[p.args.length - 1].endsWith('.mp4'));
+    assert.ok(p.args.every((a) => !/[;&|`$]/.test(a)));
+    assert.ok(p.timeoutMs > 0 && p.timeoutMs <= 30_000);
+    assert.equal(p.sudo, undefined);
+  }
+});
+
+test('each video failure puts the pack in checks_failed with the failing check in plain words; the render row stays done; approve is refused', async () => {
+  const cases: { name: string; make: (r: Rig) => void; rule: string; detail: RegExp }[] = [
+    { name: 'no audio track', make: (r) => (r.sandboxes.opts.onRun = healthy(r, { audio: false })), rule: 'video_audio', detail: /no sound/ },
+    { name: 'wrong size', make: (r) => (r.sandboxes.opts.onRun = healthy(r, { height: 1000 })), rule: 'video_size', detail: /must be exactly 1080x/ },
+    { name: 'too long', make: (r) => (r.sandboxes.opts.onRun = healthy(r, { duration: '61.2' })), rule: 'video_length', detail: /60 seconds or less/ },
+    { name: 'no length', make: (r) => (r.sandboxes.opts.onRun = healthy(r, { duration: '0' })), rule: 'video_length', detail: /no length/ },
+    { name: 'no captions', make: (r) => (r.sandboxes.opts.outputs = { ...OUTPUT_FILES, 'out/render-info.json': new TextEncoder().encode(JSON.stringify({ captions: 0, scenes: [], duration: 38 })) }), rule: 'video_captions', detail: /no captions/ },
+    { name: 'render-info.json missing', make: (r) => { const o = { ...OUTPUT_FILES }; delete o['out/render-info.json']; r.sandboxes.opts.outputs = o; }, rule: 'video_captions', detail: /no captions/ },
+    { name: 'ffprobe cannot read the file', make: (r) => { const ok = healthy(r); r.sandboxes.opts.onRun = (cmd) => (cmd.cmd === 'ffprobe' ? (r.advance(1000), { exitCode: 1, stderr: 'Invalid data', timedOut: false }) : ok(cmd)); }, rule: 'video_length', detail: /no length/ },
+  ];
+  for (const c of cases) {
+    const r = await rig();
+    c.make(r);
+    const report = await r.run();
+    assert.equal(report.results[0].outcome, 'done', c.name);
+    assert.equal(r.row()!.state, 'done', c.name);
+    const pack = (await r.h.store.getPack(OWNER))!;
+    assert.equal(pack.status, 'checks_failed', c.name);
+    assert.equal(pack.checks?.ok, false, c.name);
+    const fails = await videoCheckFailures(r);
+    assert.ok(fails.some((f) => f.rule === c.rule && c.detail.test(f.detail)), `${c.name}: ${JSON.stringify(fails)}`);
+    assert.ok(fails.every((f) => f.where.startsWith('ad 5b notice-') && f.detail.length > 0));
+    assert.ok(!/ERR |Traceback|Invalid data/.test(JSON.stringify(pack.checks)));
+    const approve = await r.h.engine.approvePack({ ownerId: OWNER });
+    assert.ok(!approve.ok && approve.code === 'not_preview', c.name);
+    assert.equal((await r.h.store.getPack(OWNER))!.status, 'checks_failed');
+  }
+});
+
+test('the video check leaves the other stored checks as they were, and a newer version, an approved or a regenerating pack is not touched', async () => {
+  const r = await rig();
+  const before = (await r.h.store.getPack(OWNER))!;
+  await r.run();
+  const after = (await r.h.store.getPack(OWNER))!;
+  assert.deepEqual(after.checks?.failures, before.checks?.failures);
+  assert.deepEqual(after.checks?.warnings, before.checks?.warnings);
+  assert.deepEqual(after.checks?.results.filter((c) => c.check !== 'video'), before.checks?.results.filter((c) => c.check !== 'video'));
+
+  for (const patch of [{ version: 2 }, { status: 'generating' as const }]) {
+    const x = await rig();
+    await x.h.store.updatePack(OWNER, x.packId, patch);
+    x.sandboxes.opts.onRun = healthy(x, { audio: false });
+    await x.run();
+    const pack = (await x.h.store.getPack(OWNER))!;
+    assert.equal(pack.status, patch.status ?? 'preview');
+    assert.deepEqual(pack.checks, before.checks, 'untouched');
+  }
+});
+
+test('the 5b slot follows the worker: ready when done, queued for a retry, failed with the code once left failed', async () => {
+  const r = await rig({ settings: { maxAttempts: 2 } });
+  failRender(r, 'ERR missing_asset\n');
+  await r.run();
+  assert.deepEqual(r.ad5b().files.video, { status: 'queued' });
+  assert.equal(r.row()!.state, 'queued');
+  await r.run();
+  assert.equal(r.row()!.state, 'failed');
+  assert.deepEqual(r.ad5b().files.video, { status: 'failed', code: 'missing_asset' });
+  // The pack stays in preview, and the screen reads the failure from both the slot and the row.
+  assert.equal((await r.h.store.getPack(OWNER))!.status, 'preview');
+  // voice_unavailable is left failed at once, in the slot too.
+  const v = await rig();
+  v.synthResult.value = () => ({ ok: false, code: 'voice_unavailable' });
+  await v.run();
+  assert.equal(v.row()!.state, 'failed');
+  assert.deepEqual(v.ad5b().files.video, { status: 'failed', code: 'voice_unavailable' });
+  assert.equal((await v.h.store.getPack(OWNER))!.status, 'preview', 'the pack stays in preview');
+});
+
+test('parseProbe: size, length and audio from ffprobe’s JSON; anything else is null', () => {
+  assert.deepEqual(parseProbe(probeJson('notice_9x16.mp4')), { width: 1080, height: 1920, durationSeconds: 38.03, hasAudio: true });
+  assert.equal(parseProbe(probeJson('notice_1x1.mp4', { audio: false }))?.hasAudio, false);
+  assert.equal(parseProbe(JSON.stringify({ streams: [{ codec_type: 'video', width: 10, height: 20, duration: '3.5' }], format: {} }))?.durationSeconds, 3.5);
+  for (const bad of [undefined, '', 'not json', '[]', '{}', JSON.stringify({ streams: [{ codec_type: 'audio' }] })]) assert.equal(parseProbe(bad), null, String(bad));
+});
+
+test('parseRenderInfo: the renderer’s counts; anything else is null', () => {
+  assert.deepEqual(parseRenderInfo(RENDER_INFO), { captions: 17, scenes: ['L1', 'L2', 'L3', 'L4', 'L5'], duration: 38.03 });
+  for (const bad of [null, new TextEncoder().encode('nope'), new TextEncoder().encode('{"captions":"x"}'), new TextEncoder().encode('{"captions":-1}')]) assert.equal(parseRenderInfo(bad), null);
+});
+
+test('requeueRender: resets a finished row in place (keeps the cost), creates a missing one, and refuses a running one', async () => {
+  const r = await rig();
+  await r.run();
+  const row = r.row()!;
+  row.costPence = 9;
+  const again = await r.renders.requeueRender({ packId: r.packId, version: 1, voiceKey: 'olivia' });
+  assert.ok(again && again.id === row.id);
+  assert.deepEqual([again!.state, again!.attempts, again!.errorCode, again!.files, again!.voiceKey, again!.costPence, again!.finishedAt, again!.leaseUntil], ['queued', 0, null, null, 'olivia', 9, null, null]);
+  row.state = 'running';
+  assert.equal(await r.renders.requeueRender({ packId: r.packId, version: 1, voiceKey: 'oliver' }), null);
+  assert.equal(r.row()!.voiceKey, 'olivia', 'a running row is left alone');
+  const fresh = await r.renders.requeueRender({ packId: r.packId, version: 7, voiceKey: 'jane' });
+  assert.ok(fresh && fresh.state === 'queued' && fresh.version === 7);
 });
