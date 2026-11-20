@@ -98,8 +98,24 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   `/leads/ads` -> fonts. ANY OTHER ROUTE THAT CALLS THE GENERATOR (e.g. an admin action page /admin/ad-packs, a cron) needs
   its own entry (Phase 10 must add `/admin/ad-packs`). Tests bundle images.tsx with esbuild (node can't load JSX). Figure
   cards never use a photo; WebP photos fall back to type-only.
-- [ ] **Phase 6 — Generator and store.** `store-server.ts`, `generate-server.ts`.
-  Notes:
+- [x] **Phase 6 — Generator and store.** `store-server.ts`, `generate-server.ts`.
+  Notes: 175 ad-packs tests pass (all phases), tsc/eslint clean. Files: settings, store-types, rows, month, download,
+  generate-core, test-store, store-server, generate-server (+tests). API (generate-server.ts): `generatePack({ownerId,
+  by:'operator'|'admin', dry?, input:{areaKey, bedrooms?, photos[<=4], brand:{company,logoUrl,brandColour,feePct,areas?,
+  photoUrl}, domain, websiteId?, typeOnly?}})` -> `{ok:true,dry:false,status:'preview'|'checks_failed',packId,version,
+  operatorCode,ads[{id,angle,code,adName,link}],checks,costPence,regenCount,regenerate}` | `{ok:true,dry:true,wouldBlock:
+  {code,message}|null,plan}` | `{ok:false,code,message,packId?}`. Codes: invalid_input, in_progress, no_brand_change,
+  regen_used, cost_cap, monthly_cap, spend_unknown, not_enough_data, store_failed, render_failed, upload_failed,
+  generate_failed. `approvePack({ownerId}) -> {ok:true,activityKind:'ad_pack_approved',packId,version,operatorCode} |
+  {ok:false,code:invalid_input|no_pack|not_preview|store_failed,message}`. `listPackForOwner(ownerId) -> PackView|null
+  {pack,ads(current version),showAds,olderCodes,freeRegensLeft}`. Also `brandHash, regenerateBlock, estimateRawPence,
+  generateMessage, GENERATE_CODES, MAX_PHOTOS`; store-server.ts `createLiveStore, readAdPackSettings, uploadFile,
+  signedDownloadUrl(ownerId, packAdId, fileName)` (5-min link, null unless owner's ad with that file). Deviations: run row
+  written only once the pack row exists (refusals and not_enough_data write nothing, since ad_pack_runs.pack_id is not
+  null); `bedrooms` input accepted but IGNORED (modal bedrooms used, per plan default); `pack.version/brand_hash/regen_count`
+  move only when a new version is stored; regen_count rises only when an operator regenerate reaches preview;
+  ad_packs.cost_pence = running total; `script` and `cardsText` live inside ad_pack_ads.texts. Phase 10 needs
+  `/admin/ad-packs` in next.config.ts outputFileTracingIncludes (fonts).
 - [x] **Phase 7 — Attribution on arrival.** `attribution.ts`, `attribution-server.ts`, one line in the lead route,
   `PackAdLine` on lead detail.
   Notes: 24 new tests, tsc/eslint clean. API: attribution.ts `matchLeadToAd` (optional operatorCode so another operator's code
