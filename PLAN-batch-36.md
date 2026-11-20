@@ -64,9 +64,16 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   ANGLE_LABELS`; limits `AD_LIMITS, checkLength(kind,text) -> {length, level green|amber|red, notes}, firstSentence, wordCount`.
   operatorCode/packCode/adLink THROW on invalid input. Primary text: first sentence ≤125 (amber if over), total ≤300 (red if over);
   description green ≤90, red over, note past 30 chars; empty = red.
-- [ ] **Phase 3 — Angles, copy, figures.** `angles.ts` (45 templates, 5b script, card text, lead-form questions),
+- [x] **Phase 3 — Angles, copy, figures.** `angles.ts` (45 templates, 5b script, card text, lead-form questions),
   `figures.ts`.
-  Notes:
+  Notes: 49 ad-packs tests pass, tsc/eslint clean. API: angles.ts `ANGLE_DEFS, angleDef, renderTexts({angle, brand:{company,
+  area,bedrooms,feePct}, figure}) -> {primary,headlines,descriptions}, renderCards -> Card[]{id,headline,body[],cta,big,label,
+  figure}, renderScript -> {lines,text,words}, feeSentence, SCRIPT_5B, leadFormQuestions`; figures.ts `buildFigure({area_label,
+  agg,feePct,netIncludesFee,minSamples?}) -> Figure|null, figureUnavailableReason, FIGURE_LABEL_RE, figureIsLabelled`. Market
+  figures are per YEAR; figures.ts divides by 12, rounds to £50. Templates use `{figure|fallback}`, `{fee|fallback}`,
+  `{bedrooms}-bed`; fee then figure dropped first if a primary would pass 300 chars. Zac to review wording in the PR: "Between
+  tenants, or thinking about it?", "Home empty while you're abroad?", "looks after the guests, the cleaning, the maintenance and
+  the keys" (assumes operators do this), lead-form question wording.
 - [ ] **Phase 4 — Checks, area, eligibility.** `checks.ts`, `area-server.ts`, `eligibility-server.ts`.
   Notes:
 - [ ] **Phase 5 — Image ads.** `images.tsx` (next/og, 1:1 / 4:5 / 9:16) + fonts.
