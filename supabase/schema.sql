@@ -9998,7 +9998,7 @@ grant execute on function public.website_version_snapshot(uuid, uuid) to service
 --   inserts the next version and copies its settings and pages onto websites;
 --   deletes the site's draft;
 --   keeps the newest 10 versions and returns the ids of the ones it pruned.
--- Returns {result: 'published' | 'stale', version_no, pruned: [uuid]}. Status
+-- Returns {result: 'published' | 'stale', version_no, version_id (on published), pruned: [uuid]}. Status
 -- is not read here: the app only calls it for a live site (or a rollback).
 create or replace function public.website_version_publish(
   p_website uuid, p_base_version integer, p_settings jsonb, p_pages jsonb,
@@ -10007,6 +10007,7 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_max integer;
   v_no integer;
+  v_id uuid;
   v_pruned uuid[];
 begin
   if p_website is null or p_settings is null or p_pages is null or p_kind is null or p_kind not in ('publish', 'restore') then
@@ -10022,7 +10023,8 @@ begin
 
   v_no := coalesce(v_max, 0) + 1;
   insert into public.website_versions (website_id, version_no, settings, pages, kind, restored_from, published_by)
-  values (p_website, v_no, p_settings, p_pages, p_kind, p_restored_from, p_by);
+  values (p_website, v_no, p_settings, p_pages, p_kind, p_restored_from, p_by)
+  returning id into v_id;
   update public.websites set settings = p_settings, pages = p_pages, updated_at = now() where id = p_website;
   delete from public.website_drafts where website_id = p_website;
 
@@ -10033,7 +10035,7 @@ begin
   )
   select coalesce(array_agg(id), '{}'::uuid[]) into v_pruned from doomed;
 
-  return jsonb_build_object('result', 'published', 'version_no', v_no, 'pruned', to_jsonb(v_pruned));
+  return jsonb_build_object('result', 'published', 'version_no', v_no, 'version_id', v_id, 'pruned', to_jsonb(v_pruned));
 end;
 $$;
 revoke all on function public.website_version_publish(uuid, integer, jsonb, jsonb, text, integer, uuid) from public, anon, authenticated;

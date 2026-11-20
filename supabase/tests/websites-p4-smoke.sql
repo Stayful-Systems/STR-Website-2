@@ -59,6 +59,7 @@ begin
   insert into website_drafts (website_id, settings, pages, base_version) values (w[1], '{"companyName":"Harbour Two"}', p0, 1);
   j := website_version_publish(w[1], 1, '{"companyName":"Harbour Two"}', p0, 'publish', null, u[1]);
   if j->>'result' <> 'published' or (j->>'version_no')::int <> 2 then raise exception 'publish on the current base should be version 2, got %', j; end if;
+  if (j->>'version_id') is null or not exists (select 1 from website_versions where id = (j->>'version_id')::uuid and version_no = 2) then raise exception 'publish should return the new version id'; end if;
   if (select settings->>'companyName' from websites where id = w[1]) <> 'Harbour Two' then raise exception 'publish should copy settings onto the site'; end if;
   if exists (select 1 from website_drafts where website_id = w[1]) then raise exception 'publish should delete the draft'; end if;
 

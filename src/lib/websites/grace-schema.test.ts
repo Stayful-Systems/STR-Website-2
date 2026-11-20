@@ -104,6 +104,7 @@ test('the publish function: base-version check under the row lock, then insert, 
   assert.match(fn, /p_base_version is distinct from v_max/);
   assert.match(fn, /'stale'/);
   assert.match(fn, /'published'/);
+  assert.match(fn, /'version_id', v_id/);
   assert.match(fn, /update public\.websites set settings = p_settings, pages = p_pages/);
   assert.match(fn, /delete from public\.website_drafts where website_id = p_website/);
   assert.match(fn, /order by version_no desc offset 10/);
