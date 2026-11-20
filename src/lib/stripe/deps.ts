@@ -5,7 +5,7 @@ import { emailKey } from '../supabase/email-key';
 import { getStripe } from './client';
 import { savePaymentMethod } from './customer';
 import { grantPlanCycle, grantTopup, grantUpgradeDifference } from './grants';
-import { expirePlanGrants, grant } from '../credit/ledger';
+import { expirePlanSource, grant } from '../credit/ledger';
 import { cardNeedsUpdateEmail, paymentFailedEmail } from '../email/billing';
 import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { getPlan } from '../credit/plans';
@@ -100,6 +100,13 @@ function liveAcademyWebhookDeps(): AcademyWebhookDeps {
       const r = await cancelTrialForRefund(paymentIntentId, fullyRefunded);
       return `academy refund ${r.outcome}${r.purchaseId ? ` (purchase ${r.purchaseId})` : ''}`;
     },
+    // Batch 32: whose trial a refunded Academy payment started, so only that trial's credit is removed.
+    trialFor: async (paymentIntentId) => {
+      const { data, error } = await admin.from('academy_purchases').select('user_id, trial_subscription_id').eq('stripe_payment_intent_id', paymentIntentId).maybeSingle();
+      if (error) throw new Error(`academy purchase read failed: ${error.message}`);
+      const row = data as { user_id: string | null; trial_subscription_id: string | null } | null;
+      return row ? { userId: row.user_id, subscriptionId: row.trial_subscription_id } : null;
+    },
   };
 }
 
@@ -136,7 +143,56 @@ export function liveWebhookDeps(): WebhookDeps {
     grantPlanCycle: (userId, planCode, sourceRef, periodEnd, email) => grantPlanCycle(userId, planCode, sourceRef, periodEnd, { email }),
     grantUpgradeDifference,
     grantTopup: (userId, amountPence, sourceRef, email) => grantTopup(userId, amountPence, sourceRef, { email }),
-    expirePlanGrants,
+    // Batch 32 (plan credit rollover): plan credit is removed only by source (a refunded or disputed plan
+    // invoice, a forfeited Academy trial); ending, pausing or downgrading a plan keeps it.
+    expirePlanSource: (userId, match, maxPence, reason) => expirePlanSource(userId, match, maxPence, reason),
+    planInvoiceForPayment: async (paymentIntentId) => {
+      // The payment row written when the invoice was paid (src/lib/payments), keyed inv:<invoice>.
+      const { data, error } = await admin.from('member_payments').select('id, user_id, amount_pence').eq('payment_intent_id', paymentIntentId).eq('kind', 'subscription').limit(1);
+      if (error) throw new Error(`payment lookup failed: ${error.message}`);
+      const row = (data ?? [])[0] as { id: string; user_id: string; amount_pence: number } | undefined;
+      if (row && row.id.startsWith('inv:')) return { userId: row.user_id, invoiceId: row.id.slice(4), paidPence: Number(row.amount_pence) || 0 };
+      // That row is bookkeeping and may be missing: ask Stripe which invoice the payment paid. A failure throws (Stripe retries).
+      const list = await stripe.invoicePayments.list({ payment: { type: 'payment_intent', payment_intent: paymentIntentId }, limit: 5 });
+      const paid = list.data.find((p) => p.status === 'paid') ?? null;
+      const invoiceId = paid ? (typeof paid.invoice === 'string' ? paid.invoice : paid.invoice?.id ?? null) : null;
+      if (!invoiceId) return null;
+      const invoice = await stripe.invoices.retrieve(invoiceId);
+      if (!invoice.parent?.subscription_details?.subscription) return null;
+      const customerId = typeof invoice.customer === 'string' ? invoice.customer : (invoice.customer?.id ?? null);
+      const user = customerId ? await one(admin.from('profiles').select(SELECT).eq('stripe_customer_id', customerId).maybeSingle()) : null;
+      return user ? { userId: user.id, invoiceId, paidPence: Number(invoice.amount_paid) || 0 } : null;
+    },
+    planInvoiceCredit: async (userId, invoiceId, reason) => {
+      const { data: grants, error } = await admin.from('credit_grants').select('id, amount_pence').eq('user_id', userId).eq('kind', 'plan').eq('source_ref', `inv:${invoiceId}`);
+      if (error) throw new Error(`plan grant lookup failed: ${error.message}`);
+      const rows = (grants ?? []) as { id: string; amount_pence: number | string }[];
+      if (rows.length === 0) return { grantedPence: 0, removedPence: 0 };
+      const grantedPence = rows.reduce((sum, r) => sum + (Number(r.amount_pence) || 0), 0);
+      const { data: tx, error: txError } = await admin
+        .from('credit_transactions')
+        .select('amount_pence')
+        .eq('user_id', userId)
+        .eq('kind', 'expire')
+        .in('grant_id', rows.map((r) => r.id))
+        .eq('metadata->>reason', reason);
+      if (txError) throw new Error(`plan clawback lookup failed: ${txError.message}`);
+      const removedPence = ((tx ?? []) as { amount_pence: number | string }[]).reduce((sum, r) => sum + Math.max(0, -(Number(r.amount_pence) || 0)), 0);
+      return { grantedPence, removedPence };
+    },
+    restorePlanCredit: async (userId, sourceRef, amountPence, description) => {
+      const { data: existing, error } = await admin.from('credit_grants').select('id').eq('source_ref', sourceRef).maybeSingle();
+      if (error) throw new Error(`plan grant lookup failed: ${error.message}`);
+      if (existing) return false;
+      // Idempotent on its source_ref in the database too (credit_grant returns the existing grant).
+      await grant(userId, 'plan', amountPence, { sourceRef, description });
+      return true;
+    },
+    subscriptionHasPaidInvoice: async (_userId, subscriptionId) => {
+      // member_payments carries no subscription id, so Stripe is asked; a failure throws (Stripe retries).
+      const list = await stripe.invoices.list({ subscription: subscriptionId, status: 'paid', limit: 100 });
+      return list.data.some((inv) => (Number(inv.amount_paid) || 0) > 0);
+    },
     savePaymentMethod,
     retrievePaymentIntent: async (id) => {
       try {

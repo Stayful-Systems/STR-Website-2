@@ -4,6 +4,8 @@ import type Stripe from 'stripe';
 import { handleStripeEvent, reasonFromStripeFeedback, type WebhookActivity, type WebhookDeps } from './webhook.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 import { dedupeKeyFor, purchaseFromPack, repeatPurchaseDue, repeatValue, subscribeFromInvoice } from '../meta/events.ts';
+import { clawbackDue, refundedShare, thisCycleGrants, trialEndedUnpaid, upgradeTopUpPence } from './plan-credit.ts';
+import { planSourcePattern } from '../credit/ledger.ts';
 
 const env = { STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_PRO_ANNUAL: 'price_annual' };
 
@@ -52,10 +54,6 @@ function fakeDeps() {
     grantTopup: async (...a) => {
       rec('grantTopup')(...a);
       return true;
-    },
-    expirePlanGrants: async (...a) => {
-      rec('expirePlanGrants')(...a);
-      return 1;
     },
     savePaymentMethod: async (...a) => rec('savePaymentMethod')(...a),
     retrievePaymentIntent: async (id) => ({ id, payment_method: 'pm_1', customer: 'cus_1', amount: 2500, amount_received: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } }) as unknown as Stripe.PaymentIntent,
@@ -130,11 +128,11 @@ test('invoice.paid for an unknown price is ignored', async () => {
   assert.equal(deps.calls.grantPlanCycle, undefined);
 });
 
-test('subscription deleted expires plan credit and drops the plan', async () => {
+test('subscription deleted drops the plan but keeps its plan credit (Batch 32)', async () => {
   const deps = fakeDeps();
   const r = await handleStripeEvent(ev('customer.subscription.deleted', { id: 'sub_1', status: 'canceled', customer: 'cus_1', cancel_at_period_end: false, items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1 }] } }), deps);
   assert.equal(r.handled, true);
-  assert.equal(deps.calls.expirePlanGrants![0][1], 'subscription_ended');
+  assert.match(r.note ?? '', /plan credit kept/);
   const patch = deps.calls.updateProfile![0][1] as Record<string, unknown>;
   assert.equal(patch.plan_code, null);
   assert.equal(patch.plan, 'free');
@@ -426,7 +424,7 @@ test('a churn log that throws does not fail the delivery', async () => {
   };
   const r = await handleStripeEvent(ev('customer.subscription.deleted', deadSub()), deps);
   assert.equal(r.handled, true);
-  assert.equal(deps.calls.expirePlanGrants!.length, 1);
+  assert.equal(deps.calls.onSubscriptionCancelled!.length, 1);
 });
 
 test('reasonFromStripeFeedback maps every Stripe value to something we report', () => {
@@ -1237,4 +1235,311 @@ test('Batch 31a: an Academy checkout asks Stripe strictly: an outage throws (Str
   };
   await assert.rejects(handleStripeEvent(ev('checkout.session.completed', academySession()), deps), /stripe down/);
   assert.equal(records.length, 0);
+});
+
+// ── Batch 32: plan credit rollover ──
+// A small in-memory plan ledger behind the plan deps: grants keyed by source_ref (unique, as in the
+// database), credit_expire_plan_source's LIKE match on the ledger's escaped pattern, and expire rows
+// carrying their reason, so redeliveries and cumulative refunds are checked against real sums.
+
+interface FakeGrant {
+  id: string;
+  sourceRef: string;
+  kind: 'plan' | 'topup';
+  amount: number;
+  remaining: number;
+  planCycle: boolean;
+  createdAt: string;
+}
+
+/** A LIKE pattern (with '\' escapes) as a RegExp, as Postgres reads it. */
+function likeRegex(pattern: string): RegExp {
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '\\') out += (pattern[++i] ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    else if (c === '%') out += '.*';
+    else if (c === '_') out += '.';
+    else out += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`, 's');
+}
+
+function planLedgerDeps() {
+  const deps = fakeDeps();
+  const grants: FakeGrant[] = [];
+  const expires: Array<{ grantId: string; amount: number; reason: string }> = [];
+  const invoices = new Map<string, { userId: string; invoiceId: string; paidPence: number }>();
+  const paidSubs = new Map<string, boolean>();
+  let clock = Date.UTC(2027, 0, 1);
+  const PLAN_CREDIT: Record<string, number> = { starter: 1900, pro: 3900, pro_annual: 3900 };
+  const add = (sourceRef: string, amount: number, planCycle: boolean, kind: 'plan' | 'topup' = 'plan'): boolean => {
+    if (grants.some((g) => g.sourceRef === sourceRef)) return false;
+    clock += 86_400_000;
+    grants.push({ id: `g${grants.length + 1}`, sourceRef, kind, amount, remaining: amount, planCycle, createdAt: new Date(clock).toISOString() });
+    return true;
+  };
+  const spend = (sourceRef: string, pence: number) => {
+    const g = grants.find((x) => x.sourceRef === sourceRef)!;
+    g.remaining -= pence;
+  };
+  const balance = () => grants.reduce((sum, g) => sum + g.remaining, 0);
+  const remainingOf = (sourceRef: string) => grants.find((g) => g.sourceRef === sourceRef)?.remaining ?? null;
+  deps.grantPlanCycle = async (_userId, planCode, sourceRef) => {
+    (deps.calls.grantPlanCycle ??= []).push([_userId, planCode, sourceRef]);
+    add(sourceRef, PLAN_CREDIT[planCode] ?? 0, true);
+  };
+  deps.grantUpgradeDifference = async (_userId, from, to, sourceRef) => {
+    (deps.calls.grantUpgradeDifference ??= []).push([_userId, from, to, sourceRef]);
+    // As grants.ts: the new plan's credit less THIS cycle's plan grants.
+    const cycle = thisCycleGrants(grants.filter((g) => g.kind === 'plan').map((g) => ({ amount_pence: g.amount, created_at: g.createdAt, plan_cycle: g.planCycle, source_ref: g.sourceRef })));
+    const diff = upgradeTopUpPence(PLAN_CREDIT[to] ?? 0, cycle, PLAN_CREDIT[from ?? ''] ?? 0);
+    if (diff > 0) add(sourceRef, diff, false);
+  };
+  deps.expirePlanSource = async (_userId, match, maxPence, reason) => {
+    (deps.calls.expirePlanSource ??= []).push([_userId, match, maxPence, reason]);
+    const re = likeRegex(planSourcePattern(match));
+    let left = maxPence;
+    let total = 0;
+    let n = 0;
+    for (const g of grants) {
+      if (g.kind !== 'plan' || !re.test(g.sourceRef) || g.remaining <= 0) continue;
+      if (left !== null && left <= 0) break;
+      const take = left === null ? g.remaining : Math.min(left, g.remaining);
+      g.remaining -= take;
+      expires.push({ grantId: g.id, amount: take, reason });
+      total += take;
+      if (left !== null) left -= take;
+      n++;
+    }
+    return { expiredPence: total, grants: n };
+  };
+  deps.planInvoiceForPayment = async (pi) => invoices.get(pi) ?? null;
+  deps.planInvoiceCredit = async (_userId, invoiceId, reason) => {
+    const own = grants.filter((g) => g.kind === 'plan' && g.sourceRef === `inv:${invoiceId}`);
+    const ids = new Set(own.map((g) => g.id));
+    return { grantedPence: own.reduce((s, g) => s + g.amount, 0), removedPence: expires.filter((e) => ids.has(e.grantId) && e.reason === reason).reduce((s, e) => s + e.amount, 0) };
+  };
+  deps.restorePlanCredit = async (_userId, sourceRef, amount) => {
+    (deps.calls.restorePlanCredit ??= []).push([_userId, sourceRef, amount]);
+    return add(sourceRef, amount, false);
+  };
+  deps.subscriptionHasPaidInvoice = async (_userId, subId) => paidSubs.get(subId) ?? false;
+  // Plan invoices' payments carry no metadata of ours.
+  deps.retrievePaymentIntent = async (pi) => ({ id: pi, amount: 1900, amount_received: 1900, metadata: {} }) as unknown as Stripe.PaymentIntent;
+  return { deps, grants, expires, invoices, paidSubs, add, spend, balance, remainingOf };
+}
+
+const planInvoice = (id: string, reason = 'subscription_cycle', price = 'price_starter') => ({
+  id,
+  customer: 'cus_1',
+  amount_paid: 1900,
+  billing_reason: reason,
+  parent: { subscription_details: { subscription: 'sub_1' } },
+  lines: { data: [{ period: { end: 1_800_000_000 }, pricing: { price_details: { price } } }] },
+});
+
+test('Batch 32: a redelivered plan invoice grants its credit once, and the next month adds on top of what is left', async () => {
+  const { deps, grants, spend, balance } = planLedgerDeps();
+  await handleStripeEvent(ev('invoice.paid', planInvoice('in_1', 'subscription_create')), deps);
+  await handleStripeEvent(ev('invoice.paid', planInvoice('in_1', 'subscription_create')), deps);
+  assert.equal(grants.length, 1);
+  assert.equal(balance(), 1900);
+  spend('inv:in_1', 600);
+  await handleStripeEvent(ev('invoice.paid', planInvoice('in_2')), deps);
+  await handleStripeEvent(ev('invoice.paid', planInvoice('in_2')), deps);
+  assert.equal(grants.length, 2);
+  assert.equal(balance(), 1300 + 1900, '£13 rolled over + £19 new');
+  assert.equal(deps.calls.expirePlanSource, undefined);
+});
+
+test('Batch 32: cancelling (scheduled, then ended) keeps the plan credit', async () => {
+  const { deps, add, balance } = planLedgerDeps();
+  add('inv:in_1', 1900, true);
+  add('inv:in_2', 1900, true);
+  await handleStripeEvent(ev('customer.subscription.updated', subObj({ cancel_at_period_end: true, cancel_at: 1_800_000_000 })), deps);
+  const r = await handleStripeEvent(ev('customer.subscription.deleted', deadSub()), deps);
+  assert.equal(r.handled, true);
+  assert.match(r.note ?? '', /plan credit kept/);
+  assert.equal(balance(), 3800);
+  assert.equal(deps.calls.expirePlanSource, undefined);
+  assert.equal((deps.calls.updateProfile!.at(-1)![1] as Record<string, unknown>).plan, 'free');
+});
+
+test('Batch 32: a pause and a downgrade keep the plan credit', async () => {
+  const { deps, add, balance } = planLedgerDeps();
+  deps.user.plan_code = 'pro';
+  add('inv:in_1', 3900, true);
+  await handleStripeEvent(ev('customer.subscription.updated', subObj({ pause_collection: { behavior: 'void', resumes_at: 1_810_000_000 } })), deps);
+  // Downgrade pro → starter: the subscription moves to the starter price.
+  await handleStripeEvent(ev('customer.subscription.updated', subObj({ items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] } })), deps);
+  assert.equal(balance(), 3900);
+  assert.equal(deps.calls.expirePlanSource, undefined);
+});
+
+test('Batch 32: an upgrade with banked credit still gets its top-up (only this cycle’s grants come off)', async () => {
+  const { deps, add, spend, remainingOf, balance } = planLedgerDeps();
+  add('inv:in_old', 1900, true);
+  spend('inv:in_old', 600); // £13 banked from last month
+  add('inv:in_now', 1900, true); // this month's starter credit
+  deps.setSub({ id: 'sub_1', status: 'active', cancel_at_period_end: false, customer: 'cus_1', items: { data: [{ price: { id: 'price_pro' }, current_period_end: 1_800_000_000 }] } } as unknown as Stripe.Subscription);
+  await handleStripeEvent(ev('invoice.paid', planInvoice('in_up', 'subscription_update', 'price_pro')), deps);
+  assert.equal(remainingOf('inv:in_up'), 2000, 'pro £39 − this cycle’s £19; the banked £13 does not count');
+  assert.equal(balance(), 1300 + 1900 + 2000);
+  // Redelivered: nothing more.
+  await handleStripeEvent(ev('invoice.paid', planInvoice('in_up', 'subscription_update', 'price_pro')), deps);
+  assert.equal(balance(), 1300 + 1900 + 2000);
+});
+
+test('Batch 32: this cycle’s grants and the upgrade top-up (pure)', () => {
+  const rows = [
+    { amount_pence: 1900, created_at: '2027-01-01T00:00:00Z', plan_cycle: true, source_ref: 'inv:a' },
+    { amount_pence: 2000, created_at: '2027-01-10T00:00:00Z', plan_cycle: false, source_ref: 'inv:up' },
+    { amount_pence: 1900, created_at: '2027-02-01T00:00:00Z', plan_cycle: true, source_ref: 'inv:b' },
+    { amount_pence: 500, created_at: '2027-02-03T00:00:00Z', plan_cycle: false, source_ref: 'inv:a:dispute_won' },
+    { amount_pence: 1000, created_at: '2027-02-05T00:00:00Z', plan_cycle: false, source_ref: 'inv:up2' },
+  ];
+  assert.deepEqual(thisCycleGrants(rows).map((r) => r.source_ref), ['inv:b', 'inv:up2']);
+  assert.equal(upgradeTopUpPence(3900, thisCycleGrants(rows)), 1000);
+  assert.equal(upgradeTopUpPence(1900, thisCycleGrants(rows)), 0, 'never below zero');
+  assert.deepEqual(thisCycleGrants([{ amount_pence: 1900, created_at: '2027-01-01T00:00:00Z', plan_cycle: false }]), []);
+  assert.equal(upgradeTopUpPence(3900, [], 1900), 2000, 'no cycle grant: the old plan’s credit stands in');
+});
+
+test('Batch 32: a refunded plan invoice removes only its own leftover credit, once', async () => {
+  const { deps, add, spend, invoices, remainingOf, expires } = planLedgerDeps();
+  add('inv:in_A', 1900, true);
+  spend('inv:in_A', 600);
+  add('inv:in_B', 1900, true);
+  add('pi:pi_top', 2500, false, 'topup');
+  invoices.set('pi_A', { userId: 'u1', invoiceId: 'in_A', paidPence: 1900 });
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 1900, amount_refunded: 1900, refunded: true }), deps);
+  assert.equal(r.handled, true);
+  assert.equal(remainingOf('inv:in_A'), 0, 'its unspent £13 removed, never below zero');
+  assert.equal(remainingOf('inv:in_B'), 1900, 'another month untouched');
+  assert.equal(remainingOf('pi:pi_top'), 2500, 'top-up untouched');
+  assert.equal(deps.calls.refundTopup, undefined);
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 1900, amount_refunded: 1900, refunded: true }), deps);
+  assert.equal(remainingOf('inv:in_B'), 1900);
+  assert.equal(expires.reduce((sum, e) => sum + e.amount, 0), 1300, 'a redelivery removes nothing more');
+  assert.deepEqual(deps.calls.expirePlanSource![0][1], { exact: 'inv:in_A' });
+});
+
+test('Batch 32: a partial plan refund removes the refunded share; a later refund of the rest removes the rest', async () => {
+  const { deps, add, invoices, remainingOf } = planLedgerDeps();
+  add('inv:in_A', 1900, true);
+  invoices.set('pi_A', { userId: 'u1', invoiceId: 'in_A', paidPence: 2280 });
+  // VAT-inclusive charge of £22.80 for £19 of credit; half refunded.
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 2280, amount_refunded: 1140, refunded: false }), deps);
+  assert.equal(remainingOf('inv:in_A'), 950);
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 2280, amount_refunded: 1140, refunded: false }), deps);
+  assert.equal(remainingOf('inv:in_A'), 950, 'redelivery: same cumulative amount, nothing more');
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_A', payment_intent: 'pi_A', captured: true, amount: 2280, amount_refunded: 2280, refunded: true }), deps);
+  assert.equal(remainingOf('inv:in_A'), 0);
+  assert.equal(refundedShare(1900, 1140, 2280), 950);
+  assert.equal(refundedShare(1900, 5000, 2280), 1900, 'never more than was granted');
+  assert.equal(clawbackDue(950, 1200), 0);
+});
+
+test('Batch 32: a chargeback removes the invoice’s leftover credit; a won dispute restores it once; a lost one restores nothing', async () => {
+  const { deps, add, spend, invoices, remainingOf, balance } = planLedgerDeps();
+  add('inv:in_A', 1900, true);
+  spend('inv:in_A', 400);
+  add('inv:in_B', 1900, true);
+  invoices.set('pi_A', { userId: 'u1', invoiceId: 'in_A', paidPence: 1900 });
+  deps.retrievePaymentIntentStrict = deps.retrievePaymentIntent;
+  await handleStripeEvent(ev('charge.dispute.created', { id: 'dp_A', payment_intent: 'pi_A', amount: 1900 }), deps);
+  await handleStripeEvent(ev('charge.dispute.created', { id: 'dp_A', payment_intent: 'pi_A', amount: 1900 }), deps);
+  assert.equal(remainingOf('inv:in_A'), 0);
+  assert.equal(remainingOf('inv:in_B'), 1900);
+  const lost = await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_A', payment_intent: 'pi_A', status: 'lost', amount: 1900 }), deps);
+  assert.equal(lost.handled, false);
+  assert.equal(balance(), 1900);
+  const won = await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_A', payment_intent: 'pi_A', status: 'won', amount: 1900 }), deps);
+  assert.equal(won.handled, true);
+  await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_A', payment_intent: 'pi_A', status: 'won', amount: 1900 }), deps);
+  assert.equal(remainingOf('inv:in_A:dispute_won'), 1500, 'what was removed comes back as plan credit');
+  assert.equal(balance(), 1900 + 1500, 'restored once');
+  assert.equal(deps.calls.restoreDisputedCredit, undefined);
+});
+
+test('Batch 32: a won dispute on a plan invoice whose credit was all spent gives nothing back', async () => {
+  const { deps, add, spend, invoices } = planLedgerDeps();
+  add('inv:in_A', 1900, true);
+  spend('inv:in_A', 1900);
+  invoices.set('pi_A', { userId: 'u1', invoiceId: 'in_A', paidPence: 1900 });
+  await handleStripeEvent(ev('charge.dispute.created', { id: 'dp_A', payment_intent: 'pi_A', amount: 1900 }), deps);
+  const r = await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_A', payment_intent: 'pi_A', status: 'won', amount: 1900 }), deps);
+  assert.match(r.note ?? '', /nothing was removed/);
+  assert.equal(deps.calls.restorePlanCredit, undefined);
+});
+
+test('Batch 32: a top-up refund still takes the top-up path when the plan path is wired', async () => {
+  const { deps } = planLedgerDeps();
+  deps.retrievePaymentIntent = async (id) => ({ id, amount: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } }) as unknown as Stripe.PaymentIntent;
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_t', payment_intent: 'pi_t', captured: true, amount: 2500, amount_refunded: 2500 }), deps);
+  assert.equal(r.note, 'top-up clawed back');
+  assert.equal(deps.calls.expirePlanSource, undefined);
+});
+
+test('Batch 32: a full Academy refund removes only that trial’s credit; a partial one removes nothing', async () => {
+  const { deps: academy } = academyDeps();
+  const { deps, add, remainingOf } = planLedgerDeps();
+  deps.academy = { ...academy.academy!, trialFor: async () => ({ userId: 'u1', subscriptionId: 'sub_x' }) };
+  deps.retrievePaymentIntent = academy.retrievePaymentIntent;
+  add('trial:sub_x:2027-01', 3900, true);
+  add('trial:sub_x:2027-02', 3900, true);
+  add('trial:sub_xy:2027-02', 3900, true); // another trial's (a prefix that only matches unescaped)
+  add('inv:in_B', 1900, true);
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_a', payment_intent: 'pi_academy', captured: true, amount: 9900, amount_refunded: 5000, refunded: false }), deps);
+  assert.equal(deps.calls.expirePlanSource, undefined, 'partial: nothing removed');
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_a', payment_intent: 'pi_academy', captured: true, amount: 9900, amount_refunded: 9900, refunded: true }), deps);
+  assert.match(r.note ?? '', /7800p trial credit removed/);
+  assert.equal(remainingOf('trial:sub_x:2027-01'), 0);
+  assert.equal(remainingOf('trial:sub_x:2027-02'), 0);
+  assert.equal(remainingOf('trial:sub_xy:2027-02'), 3900);
+  assert.equal(remainingOf('inv:in_B'), 1900);
+});
+
+test('Batch 32: an Academy trial cancelled before any paid month forfeits only its trial credit; after a paid month it keeps it', async () => {
+  const start = Date.UTC(2027, 0, 10) / 1000;
+  const end = start + 90 * 86400;
+  const academySub = (over: Record<string, unknown>) => ({ ...academyTrialSub(start, end), id: 'sub_1', ...over }) as unknown as Stripe.Subscription;
+
+  // Cancelled during the trial.
+  const a = planLedgerDeps();
+  a.add('trial:sub_1:2027-01', 3900, true);
+  a.add('pi:pi_top', 2500, false, 'topup');
+  a.add('inv:in_old', 1900, true); // an earlier paid plan's banked credit
+  const r = await handleStripeEvent(ev('customer.subscription.deleted', academySub({ status: 'canceled', ended_at: start + 20 * 86400, canceled_at: start + 20 * 86400 })), a.deps);
+  assert.match(r.note ?? '', /unpaid academy trial: 3900p/);
+  assert.equal(a.remainingOf('trial:sub_1:2027-01'), 0);
+  assert.equal(a.remainingOf('pi:pi_top'), 2500);
+  assert.equal(a.remainingOf('inv:in_old'), 1900);
+
+  // Ended after the trial with no paid invoice (the first charge failed).
+  const b = planLedgerDeps();
+  b.add('trial:sub_1:2027-01', 3900, true);
+  await handleStripeEvent(ev('customer.subscription.deleted', academySub({ status: 'canceled', ended_at: end + 10 * 86400 })), b.deps);
+  assert.equal(b.remainingOf('trial:sub_1:2027-01'), 0);
+
+  // Ended after a paid month: the trial credit rolls over like any plan credit.
+  const c = planLedgerDeps();
+  c.add('trial:sub_1:2027-01', 3900, true);
+  c.add('inv:in_91', 3900, true);
+  c.paidSubs.set('sub_1', true);
+  const rc = await handleStripeEvent(ev('customer.subscription.deleted', academySub({ status: 'canceled', ended_at: end + 40 * 86400 })), c.deps);
+  assert.doesNotMatch(rc.note ?? '', /unpaid/);
+  assert.equal(c.remainingOf('trial:sub_1:2027-01'), 3900);
+  assert.equal(c.deps.calls.expirePlanSource, undefined);
+
+  // Paused at the trial end without a card: not over, nothing removed.
+  const d = planLedgerDeps();
+  d.add('trial:sub_1:2027-01', 3900, true);
+  await handleStripeEvent(ev('customer.subscription.updated', academySub({ status: 'paused' })), d.deps);
+  assert.equal(d.remainingOf('trial:sub_1:2027-01'), 3900);
+
+  // A non-Academy subscription ending never forfeits anything.
+  assert.equal(trialEndedUnpaid({ trial_end: end, ended_at: start + 86400 }, new Date(), true), true);
+  assert.equal(trialEndedUnpaid({ trial_end: end, ended_at: end + 86400 }, new Date(), null), false, 'cannot tell: kept');
 });
