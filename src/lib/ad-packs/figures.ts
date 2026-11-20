@@ -1,5 +1,5 @@
 /**
- * Batch 36: the one labelled example figure an ad may carry.
+ * Batch 38: the one labelled example figure an ad may carry.
  *
  * Pure: no network, no database, no server-only. It takes one bedroom group of
  * an area's market snapshot (a structural copy of MarketBedroomAgg, so this

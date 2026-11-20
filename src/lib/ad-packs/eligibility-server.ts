@@ -9,7 +9,7 @@ import { evaluateEligibility, parseSwitch, type EligibilityFacts, type Eligibili
 export { evaluateEligibility, plainReason, ELIGIBILITY_REASONS, type EligibilityFacts, type EligibilityReason } from './eligibility.ts';
 
 /**
- * Batch 36: gathers the facts that decide whether an account may have an ad
+ * Batch 38: gathers the facts that decide whether an account may have an ad
  * pack (read only) and hands them to evaluateEligibility.
  *
  *   owner     ownerIdOrNull (a team member's own id finds nothing)

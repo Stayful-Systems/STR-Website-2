@@ -14,7 +14,7 @@ import { DEFAULT_MIN_AREA_SAMPLES, chooseSource, parseAreaKey, parseMinAreaSampl
 export { NET_INCLUDES_MANAGEMENT_FEE, matchArea, type AreaOption } from './area.ts';
 
 /**
- * Batch 36: the market areas an operator can build a pack for, and the one
+ * Batch 38: the market areas an operator can build a pack for, and the one
  * bedroom group of market data a pack's example figure rests on.
  *
  *   readMinAreaSamples()   the setting ad_pack_min_area_samples (default 5)

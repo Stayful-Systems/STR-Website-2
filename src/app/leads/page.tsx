@@ -164,7 +164,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
         {website ? <WebsiteEntryCard site={website} /> : null}
 
-        {/* Batch 36: owners whose website is live on its own domain see the ad pack card (one tiny read while the switch is off). */}
+        {/* Batch 38: owners whose website is live on its own domain see the ad pack card (one tiny read while the switch is off). */}
         {isOwner ? <Suspense fallback={null}><AdPackEntryCard userId={user.id} /></Suspense> : null}
 
         {isOwner ? <WallBanner notices={notices} showFunnelName={funnels.length > 1} /> : null}

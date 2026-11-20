@@ -1,5 +1,5 @@
 /**
- * Batch 36: the tracked link and the ad name for each ad in a pack, and the
+ * Batch 38: the tracked link and the ad name for each ad in a pack, and the
  * clean-up of Meta's ad id.
  *
  * The link carries the pack code (?ad=<CODE>, read by the lead form and kept

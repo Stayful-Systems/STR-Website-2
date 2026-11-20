@@ -1,5 +1,5 @@
 /**
- * Batch 36: the first instant of the UK calendar month, for the monthly spend
+ * Batch 38: the first instant of the UK calendar month, for the monthly spend
  * cap. Same arithmetic as monthStartIso in knowledge/gap/run.ts (which is
  * server-only and not exported).
  *

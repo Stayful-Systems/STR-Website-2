@@ -5,7 +5,7 @@ import { defaultFetchImage, type FetchImage } from './images';
 import { isUploadRef } from './photos.ts';
 
 /**
- * Batch 36 (Phase 8): the operator screen's file handling, in the private
+ * Batch 38 (Phase 8): the operator screen's file handling, in the private
  * `ad-packs` bucket (service role only).
  *
  *   adPackFetchImage        the image renderer's fetch: a stored photo reference

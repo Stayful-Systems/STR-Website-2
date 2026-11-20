@@ -1,5 +1,5 @@
 /**
- * Batch 36: pack codes. Every ad in an operator's pack carries a code in its
+ * Batch 38: pack codes. Every ad in an operator's pack carries a code in its
  * ad name and its link, so a website lead is recorded against the ad that
  * brought it (lead_sources.ad_code is varchar(40)).
  *

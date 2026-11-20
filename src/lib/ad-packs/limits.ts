@@ -1,5 +1,5 @@
 /**
- * Batch 36: text lengths for the pack's ads. Meta's own recommendations and
+ * Batch 38: text lengths for the pack's ads. Meta's own recommendations and
  * the stricter limits our pack texts keep, in ONE object so a Meta rule change
  * is a one-file edit.
  *

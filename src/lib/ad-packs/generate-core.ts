@@ -1,5 +1,5 @@
 /**
- * Batch 36: the pack generator, as a pure engine. Everything outside it is
+ * Batch 38: the pack generator, as a pure engine. Everything outside it is
  * injected (the store, the clock, the image renderer, the file uploader, the
  * area's market data and the price list), so it is tested with the in-memory
  * store and no database, network or server-only. generate-server.ts wires the
@@ -200,8 +200,8 @@ export type GenerateDeps = {
 // ── Pure helpers ──
 
 /**
- * Worst-case raw cost of generating the angles, in pence. 36a: 0 (the images
- * are made in-process and cost nothing per call). 36b extends this with the
+ * Worst-case raw cost of generating the angles, in pence. 38a: 0 (the images
+ * are made in-process and cost nothing per call). 38b extends this with the
  * voice and the render sandbox.
  */
 export function estimateRawPence(angles: readonly Angle[]): number {

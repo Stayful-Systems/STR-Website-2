@@ -1,5 +1,5 @@
 /**
- * Batch 36 phase 5: the image cards of an operator's ad pack (angles 3a and 17).
+ * Batch 38 phase 5: the image cards of an operator's ad pack (angles 3a and 17).
  *
  * Each card from renderCards (angles.ts) is drawn in the operator's own brand
  * with next/og's ImageResponse (Satori + Resvg), at the three Meta sizes:

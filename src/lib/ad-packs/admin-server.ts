@@ -12,7 +12,7 @@ import { PACK_COLUMNS, toPackRow } from './rows.ts';
 import type { PackRow } from './store-types.ts';
 
 /**
- * Batch 36: what /admin/ad-packs shows and does. Service role only.
+ * Batch 38: what /admin/ad-packs shows and does. Service role only.
  *
  * Reads (light, limited): ad_packs (newest first, 200 at most), the owners'
  * email (profiles) and company name (websites.settings), the packs' ads

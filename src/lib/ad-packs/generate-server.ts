@@ -19,7 +19,7 @@ export type {
 export { brandHash, estimateRawPence, generateMessage, GENERATE_CODES, MAX_PHOTOS, regenerateBlock } from './generate-core.ts';
 
 /**
- * Batch 36: the real wiring of the pack generator (generate-core.ts).
+ * Batch 38: the real wiring of the pack generator (generate-core.ts).
  *
  *   generatePack({ownerId, by, dry, input})   see generate-core.ts for the order and the codes
  *   approvePack({ownerId})                    preview -> approved; the Phase 8 action logs `activityKind`

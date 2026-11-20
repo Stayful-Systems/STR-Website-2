@@ -7,7 +7,7 @@ import { pickTextColour } from './checks.ts';
 import { loadImagesModule } from './images-test-support.ts';
 
 /**
- * Batch 36 phase 5: the image cards. These render real PNGs through next/og
+ * Batch 38 phase 5: the image cards. These render real PNGs through next/og
  * (Satori + Resvg) in plain Node, with no network: fetchImage is injected.
  * images.tsx has JSX, which Node cannot load, so images-test-support.ts bundles it first.
  */

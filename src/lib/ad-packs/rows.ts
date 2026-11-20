@@ -1,5 +1,5 @@
 /**
- * Batch 36: database rows to the typed rows of store-types.ts, and back (the
+ * Batch 38: database rows to the typed rows of store-types.ts, and back (the
  * column lists and patch maps the live store uses). Defensive about jsonb: a
  * value that is not the shape written reads as empty, never as a crash.
  *

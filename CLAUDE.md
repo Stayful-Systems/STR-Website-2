@@ -56,11 +56,11 @@ wire contract: `PLAN-batch-32.md`. Code: `src/lib/leaddb/`.
   (`messages.ts`).
 - **Knowledge.** Four draft entries in `seed.ts` (`leaddb_*`) and a line in `service-facts.ts`.
 
-# Batch 36: ad packs tag every website lead to the ad that brought it
+# Batch 38: ad packs tag every website lead to the ad that brought it
 
 An Academy operator whose website is live on its own domain gets a pack of three landlord Facebook ads in their own
 brand (tenant-notice video, moving abroad, renting rules changed), made from their website and uploaded by them to
-their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-batch-36-ads.md`. Code:
+their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-batch-38.md`. Code:
 `src/lib/ad-packs/`; screens `/leads/ads` (operator) and `/admin/ad-packs`.
 
 - **Contract.** Pack code `SI-<op>-<angle>-<n>` in the ad name and the link

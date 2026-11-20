@@ -1,5 +1,5 @@
 /**
- * Batch 36 (Phase 8): the operator's own photos for a pack, as pure rules.
+ * Batch 38 (Phase 8): the operator's own photos for a pack, as pure rules.
  *
  * A photo is uploaded through a server action into the private `ad-packs`
  * bucket under `<owner id>/uploads/<uuid>.<jpg|png>` (files-server.ts). That

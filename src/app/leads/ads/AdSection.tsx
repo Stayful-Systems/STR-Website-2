@@ -2,7 +2,7 @@ import { AdTexts, DownloadButton } from "./AdPackClient";
 import type { AdVm } from "./view";
 
 /**
- * Batch 36 (Phase 8): one ad of the pack. A server component: the image
+ * Batch 38 (Phase 8): one ad of the pack. A server component: the image
  * previews are signed links the page made for this owner's own files. In a
  * preview the texts are listed; once approved each has a Copy button and every
  * image file can be downloaded (the download links are made on tap, by an

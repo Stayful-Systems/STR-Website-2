@@ -10,7 +10,7 @@ import { harness, type Harness } from './test-store.ts';
 import type { PackRow } from './store-types.ts';
 
 /**
- * Batch 36 phase 10: the admin's ad pack table and its two actions, on the
+ * Batch 38 phase 10: the admin's ad pack table and its two actions, on the
  * in-memory store and a fake attribution store (no database, no network).
  */
 

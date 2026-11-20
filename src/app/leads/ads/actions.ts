@@ -16,7 +16,7 @@ import { approveOp, areaPreviewOp, copyOp, downloadOp, generateOp, uploadPhotoOp
 import { ADS_PATH, type AreaPreviewView } from './view';
 
 /**
- * Batch 36 (Phase 8): the ad pack screen's server actions. Each one is a few
+ * Batch 38 (Phase 8): the ad pack screen's server actions. Each one is a few
  * lines over ops.ts, which holds (and tests) the rules: the owner is always the
  * signed-in account owner's id, the browser only ever sends lookup keys and
  * choices, and a key that is not the owner's is refused before anything happens.

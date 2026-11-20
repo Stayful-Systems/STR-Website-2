@@ -1,4 +1,4 @@
-# Batch 36 (ads) — Ads A1: three branded landlord Facebook ads per operator, tagged from day one
+# Batch 38 (ads) — Ads A1: three branded landlord Facebook ads per operator, tagged from day one
 
 Academy operators whose website is live on its .co.uk domain get a pack of 3 landlord Facebook ads in their own
 brand (angle 5b tenant-notice video, 3a moving abroad, 17 renting rules changed). They upload the pack to their own
@@ -6,11 +6,13 @@ Meta ad account by following a guide, copying every piece of text with one tap. 
 ad name and link, so each website lead is recorded against the ad that brought it. Stayful runs nothing on Meta and
 has no Meta API.
 
-NAME CLASH (found at merge, 20 Nov): origin/main also has a "Batch 36" (customer websites Phase 4, #178) whose plan is
-`PLAN-batch-36.md`. This plan therefore lives in `PLAN-batch-36-ads.md`. Zac to decide whether to renumber the ads batch.
+NUMBER: this was first called Batch 36. `main` already has a different Batch 36 (customer websites Phase 4, #178), and
+35 is reserved for lead forms and 37 for moving a domain to a member's own registrar, so Zac moved the ads to **Batch 38**
+(20 Nov). Code, schema and CI names say 38; commit messages from before that still say 36. Settings keys, tables and the
+`ad_pack` / `adpack_` names are unchanged.
 
-Split: **36a** = everything but the video (switch `ad_packs_enabled` stays OFF). **36b** = video + voice + captions
-(after 36a is merged and the schema is run). Batch 35 stays lead forms.
+Split: **38a** = everything but the video (switch `ad_packs_enabled` stays OFF). **38b** = video + voice + captions
+(after 38a is merged and the schema is run). Batch 35 stays lead forms.
 
 Branch: `claude/nice-galileo-qv5mt2` (the session's assigned branch; the plan named `claude/elegant-euler-r9fx0b`).
 
@@ -26,10 +28,10 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
 
 ## Defaults taken
 
-- Voices (36b): Jane `RILOU7YmBhvwJGDGjNmP`, Olivia J `NbkKnEAZ7Bqw4EAkVEaz`, Oliver `lo1O1Dz1Tu4FWVEPaxuT`.
+- Voices (38b): Jane `RILOU7YmBhvwJGDGjNmP`, Olivia J `NbkKnEAZ7Bqw4EAkVEaz`, Oliver `lo1O1Dz1Tu4FWVEPaxuT`.
 - Bedrooms: the most common bedroom count in the chosen area (`modalBedrooms`).
 - Price: free with the Academy, one pack per operator. One free regenerate, only after a brand change (logo, colour,
-  company, fee, photos, area). Before approving, the voice can be changed once (36b). Admin regenerate unlimited,
+  company, fee, photos, area). Before approving, the voice can be changed once (38b). Admin regenerate unlimited,
   always Dry run first, never counts.
 - Pack code: `SI-<6-char operator code>-<angle>-<n>` upper case, e.g. `SI-3F9A2C-5B-1`; operator code = first 6 hex
   of the owner id upper-cased, next 6 on collision (unique column); n = pack version.
@@ -48,7 +50,7 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
 `ACCESS_COLUMNS`, `src/lib/academy/**`, `src/lib/websites/{LeadForm.tsx,sources.ts,report-server.ts}` (read only),
 `src/lib/management/report.ts`, `leads.status` / `leads.crm_pushed_at`.
 
-## Session 36a
+## Session 38a
 
 - [x] **Phase 0 — Setup.** Fetch main, record hash; plan file; baseline checks; schema-check script.
   Notes: origin/main = `0dd39a7` (as expected). Branch `claude/nice-galileo-qv5mt2` already at 0dd39a7 (no work on it).
@@ -56,7 +58,7 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   (8 smoke files, schema twice, no diff). Schema-check script: run
   `/tmp/claude-0/-home-user-STR-Website-2/40edeeda-a663-5737-9418-5656d9df67ae/scratchpad/schema-check.sh`
   (local Postgres 16 via `service postgresql start`; creates DB `schemacheck` each run; `npm ci` already done).
-- [x] **Phase 1 — Database.** `-- Batch 36: Ads A1` block (ad_packs, ad_pack_ads, ad_pack_runs, ad_pack_lead_links,
+- [x] **Phase 1 — Database.** `-- Batch 38: Ads A1` block (ad_packs, ad_pack_ads, ad_pack_runs, ad_pack_lead_links,
   private bucket `ad-packs`, billing_settings seeds), `supabase/tests/adpacks-smoke.sql`, CI step.
   Notes: block at schema.sql ~9141 (before Batch 31). `ad_packs.website_id` is a plain uuid, no FK (websites is created
   later in the file). `ad_pack_runs.by` is a column name. billing_settings values are jsonb: `ad_packs_enabled` false,
@@ -144,7 +146,7 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   exported (guide reuses copy button + `ad_text_copied` logging); next.config.ts `/leads/ads` trace also includes
   `public/ad-packs/guide/*.png`. 13 steps (page picked in its own step from the upload step: one action per screen); README
   lists the 13 PNG names Zac must supply. Missing screenshots show a plain-text placeholder (no broken images). Switch stays OFF
-  until the screenshots are in. UPDATE 20 Nov: Zac supplied all 13 screenshots (checked: cropped, account/Page names blurred, no payment data); they are in `public/ad-packs/guide/`. The switch still waits for 36b.
+  until the screenshots are in. UPDATE 20 Nov: Zac supplied all 13 screenshots (checked: cropped, account/Page names blurred, no payment data); they are in `public/ad-packs/guide/`. The switch still waits for 38b.
 - [x] **Phase 10 — Admin.** `/admin/ad-packs`.
   Notes: 27 admin tests (202 ad-packs tests pass), tsc/eslint clean. Files: src/app/admin/ad-packs/{page,actions,
   AdPacksPanel}, src/lib/ad-packs/{admin-view,admin-run,admin-server}.ts, next.config.ts one line. Regenerate Run needs the dry
@@ -155,7 +157,7 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
 - [x] **Phase 11 — Knowledge and docs.** placeholders, seed drafts, service-facts, CLAUDE.md section.
   Notes: npm test 4256/4256, tsc clean. placeholders.ts: `ad_pack_free_regens`, `ad_pack_voice_changes` (whole numbers, shown
   in words). seed.ts: five DRAFT entries `adpack_what/who/regenerate/tagging/not_included` (no typed figures). service-facts.ts:
-  "LANDLORD AD PACK" block (a test needs every placeholder it uses in a seed entry). CLAUDE.md: Batch 36 section only.
+  "LANDLORD AD PACK" block (a test needs every placeholder it uses in a seed entry). CLAUDE.md: Batch 38 section only.
   Zac to approve the drafts in Stayful Intelligence.
 - [x] **Phase 12 — Final checks, review, PR.**
   Notes: independent read-only review found NO cross-operator access hole, NO Stayful leak, schema/RLS/bucket/ACCESS_COLUMNS/
@@ -165,12 +167,12 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   KNOWN, LEFT FOR A FOLLOW-UP (minor): an operator regenerate of an APPROVED pack that fails its checks hides the live
   version's downloads (the admin path guards this, the operator path does not); two concurrent generates can race on regen
   count (narrow); `adPackFetchImage` serves any well-formed upload ref and site `photoUrl` is unvalidated (UUIDs unguessable);
-  PostgREST 1000-row default may undercount `monthSpendPence` / `knownMetaAdIds` / admin counts once 36b makes cost non-zero;
+  PostgREST 1000-row default may undercount `monthSpendPence` / `knownMetaAdIds` / admin counts once 38b makes cost non-zero;
   the fire-and-forget linker has no automatic sweep (admin Link missing leads covers it); a visitor can bind a real Meta ad
   id to the wrong pack ad for the same operator via the public form; downloads/copy do not re-check eligibility after a
   refund. Zac's decision still open: take-home maths (see Phase 4), Phase 3 copy wording.
 
-## Session 36b (after 36a merged and schema run)
+## Session 38b (after 38a merged and schema run)
 
 - [ ] B0 Setup (Vercel Sandbox available; Zac adds the 3 library voices to ElevenLabs)
 - [ ] B1 Database (`ad_pack_renders`, unit_costs row, smoke + CI)

@@ -1,7 +1,7 @@
 import { packAdLine } from "@/lib/ad-packs/attribution-server";
 
 /**
- * Batch 36: which of the operator's pack ads brought this lead. Read through
+ * Batch 38: which of the operator's pack ads brought this lead. Read through
  * the service role and filtered by the account owner id the page already
  * resolved with leadScope, so another account never sees it. Shows nothing
  * when the owner has no approved ad pack, and nothing on any failure.

@@ -7,7 +7,7 @@ import type { AdsState } from "./ops";
 import { areaPreviewView, NO_LOGO_TEXT, type AdCopy, type AreaPreviewView, type CopyItem, type LengthView } from "./view";
 
 /**
- * Batch 36 (Phase 8): the interactive parts of the ad pack screen. The page
+ * Batch 38 (Phase 8): the interactive parts of the ad pack screen. The page
  * (a server component) reads everything and passes plain data; this file only
  * lays out the form, the copy buttons and the download buttons. Every rule
  * (who may do what, which length is green) lives in ops.ts and view.ts.

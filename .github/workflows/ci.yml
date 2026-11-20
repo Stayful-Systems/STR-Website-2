@@ -98,7 +98,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/leaddb-smoke.sql
       - name: Website domain spend cap, one-per-site and charge checks (Batch 33)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/domains-smoke.sql
-      - name: Ad pack tables and lead link checks (Batch 36)
+      - name: Ad pack tables and lead link checks (Batch 38)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/adpacks-smoke.sql
       - name: Website edit versions, grace notices and delete-restrict checks (Batch 36)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/websites-p4-smoke.sql

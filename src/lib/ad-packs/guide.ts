@@ -1,5 +1,5 @@
 /**
- * Batch 36 (Phase 9): the step-by-step guide for putting an approved ad pack on
+ * Batch 38 (Phase 9): the step-by-step guide for putting an approved ad pack on
  * the operator's OWN Meta Ads Manager. We have no Meta connection and run
  * nothing on Meta: the operator does every step, and this file only says what.
  *

@@ -17,7 +17,7 @@ export { linkLead, linkMissing, matchLeadToAd, packAdLineView } from './attribut
 export type { AttributionStore, LinkCode, LinkMissingResult, PackAdLineView } from './attribution.ts';
 
 /**
- * Batch 36: the real database behind attribution on arrival. Service role
+ * Batch 38: the real database behind attribution on arrival. Service role
  * only: ad_packs, ad_pack_ads and ad_pack_lead_links have RLS on with no policy.
  *
  * Reads: leads (id, owner, created), website_reports (is it a website lead),

@@ -3,7 +3,7 @@ import { adPackEntry } from "@/lib/ad-packs/entry-server";
 import { ADS_PATH, entryCardView } from "./view";
 
 /**
- * Batch 36 (Phase 8): the small "Your ad pack" card on /leads, for an eligible
+ * Batch 38 (Phase 8): the small "Your ad pack" card on /leads, for an eligible
  * account owner only (nothing at all for anyone else). Rendered inside a
  * Suspense boundary by the page, so the Leads list never waits for it. There
  * is no nav item: this card is the way in.

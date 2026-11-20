@@ -12,7 +12,7 @@ export const maxDuration = 60;
 export const metadata: Metadata = { title: "Ad packs — Admin", robots: { index: false, follow: false } };
 
 /**
- * Batch 36: every operator's ad pack, what each ad has brought, and the two
+ * Batch 38: every operator's ad pack, what each ad has brought, and the two
  * admin actions (regenerate a pack; link missing leads), each a Dry run first.
  * Admin only: the same sign-in / not-found pattern as the other admin pages.
  */

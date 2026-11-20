@@ -1,10 +1,10 @@
 /**
- * Batch 36: the ad pack's billing_settings rows, one parser (parseAdPackSettings).
- * Seeded in supabase/schema.sql's Batch 36 block (values are jsonb numbers); a
+ * Batch 38: the ad pack's billing_settings rows, one parser (parseAdPackSettings).
+ * Seeded in supabase/schema.sql's Batch 38 block (values are jsonb numbers); a
  * missing or malformed value falls back to its default.
  *
  *   ad_pack_free_regens         free regenerations of a pack per owner (after a brand change)
- *   ad_pack_voice_changes       voice changes per owner (used by 36b)
+ *   ad_pack_voice_changes       voice changes per owner (used by 38b)
  *   ad_pack_max_raw_pence       most one generation may cost in raw spend
  *   ad_pack_monthly_cap_pence   most all generations may cost in a UK month
  *   ad_pack_min_area_samples    fewest reports an area figure may rest on

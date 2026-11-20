@@ -1,5 +1,5 @@
 /**
- * Batch 36: the three angles of an operator's ad pack, as FIXED templates.
+ * Batch 38: the three angles of an operator's ad pack, as FIXED templates.
  *
  * No AI writes any of this at runtime. Every text below is reviewed once, in
  * the pull request, and the render functions only fill slots:
@@ -248,7 +248,7 @@ export const ANGLE_DEFS: Record<Angle, AngleDef> = {
   },
 };
 
-/** The voiceover for the 5b video (36b). One string per paragraph; spoken, so numbers are words. */
+/** The voiceover for the 5b video (38b). One string per paragraph; spoken, so numbers are words. */
 export const SCRIPT_5B: readonly string[] = [
   "Has your tenant handed in their notice? We're {company}, and before your agent lines up the next one, there's another way to let it.",
   "It's a short-term let, like an Airbnb. Guests book a few nights at a time, and we run it all for you in {area}.",

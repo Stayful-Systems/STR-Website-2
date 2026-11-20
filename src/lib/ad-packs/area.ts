@@ -1,5 +1,5 @@
 /**
- * Batch 36: the pure half of the pack's area: matching what an operator typed
+ * Batch 38: the pure half of the pack's area: matching what an operator typed
  * to a market area, choosing which level a figure rests on, and what the
  * market's net revenue figure does and does not deduct.
  *

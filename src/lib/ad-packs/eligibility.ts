@@ -1,5 +1,5 @@
 /**
- * Batch 36: who may have an ad pack, as pure logic.
+ * Batch 38: who may have an ad pack, as pure logic.
  *
  * Eligible = the account owner, with a linked Academy purchase that has not
  * been refunded, whose website is live on its own domain, while the feature

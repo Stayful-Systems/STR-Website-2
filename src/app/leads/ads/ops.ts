@@ -1,5 +1,5 @@
 /**
- * Batch 36 (Phase 8): what each server action of the ad pack screen does, with
+ * Batch 38 (Phase 8): what each server action of the ad pack screen does, with
  * everything outside it injected (the session, eligibility, the generator, the
  * store, storage, the activity log), so the rules are tested without a session,
  * a database or storage. actions.ts wires the real ones.

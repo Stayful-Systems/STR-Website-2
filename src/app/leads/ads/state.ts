@@ -1,5 +1,5 @@
 /**
- * Batch 36 (Phase 8): which screen an operator's pack is on, and whether they
+ * Batch 38 (Phase 8): which screen an operator's pack is on, and whether they
  * may regenerate it, as pure decisions over what the generator reports
  * (PackView). The page only asks; the tests pin the rules.
  *

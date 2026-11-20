@@ -177,7 +177,7 @@ test('Batch 34b: the plan credit reminder and expiry are recorded, and are recor
   }
 });
 
-test("Batch 36's ad pack: approving it counts towards weekly active; copying a text is recorded only", () => {
+test("Batch 38's ad pack: approving it counts towards weekly active; copying a text is recorded only", () => {
   assert.equal(isActivityKind('ad_pack_approved'), true);
   assert.equal(kindLabel('ad_pack_approved'), 'Approved their ad pack');
   assert.equal(isQualifying('ad_pack_approved'), true);

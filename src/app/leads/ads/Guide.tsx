@@ -7,7 +7,7 @@ import { TextRow } from "./AdPackClient";
 import type { AdCopy } from "./view";
 
 /**
- * Batch 36 (Phase 9): the setup guide, one action per screen. The step text is
+ * Batch 38 (Phase 9): the setup guide, one action per screen. The step text is
  * data (src/lib/ad-packs/guide.ts); this file only lays it out. The name, link
  * and texts come from the pack itself through the same copy buttons as the ad
  * sections above (they log `ad_text_copied`). Where the operator got to is kept

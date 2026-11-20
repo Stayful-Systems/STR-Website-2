@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 /**
- * Batch 36 phase 8: the screen's wiring, in the repo's source-pin style (the
+ * Batch 38 phase 8: the screen's wiring, in the repo's source-pin style (the
  * page, the client component and the server actions need a session, a browser
  * and a database). The rules themselves are tested in ops.test.ts, view.test.ts
  * and state.test.ts.

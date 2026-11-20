@@ -1,9 +1,9 @@
 /**
- * Batch 36: the ad pack's rows and the store interface the generator runs on.
+ * Batch 38: the ad pack's rows and the store interface the generator runs on.
  * The real store (store-server.ts) is over Supabase; test-store.ts is an
  * in-memory copy for the tests.
  *
- * Column mapping (supabase/schema.sql, "Batch 36: Ads A1"):
+ * Column mapping (supabase/schema.sql, "Batch 38: Ads A1"):
  *   ad_packs      -> PackRow       one per owner; version = n in the codes
  *   ad_pack_ads   -> PackAdRow     one per ad per version; code is unique
  *   ad_pack_runs  -> RunRow        one per generation attempt (no owner column:
@@ -62,7 +62,7 @@ export type PackPatch = Partial<Omit<PackRow, 'id' | 'ownerId' | 'operatorCode' 
 export type NewPack = { ownerId: string; websiteId: string | null; operatorCode: string; status: PackStatus };
 
 export type AdFileRef = { name: string; path: string; width: number; height: number; contentType: string; bytes: number };
-/** `video` is {status:'coming'} for the 5b ad in 36a (36b fills it); null for the image ads. */
+/** `video` is {status:'coming'} for the 5b ad in 38a (38b fills it); null for the image ads. */
 export type AdFiles = { images: AdFileRef[]; video: { status: 'coming' } | null };
 
 /** Everything an operator copies. `script` is the 5b voiceover; `cardsText` is one string per image card. */

@@ -19,7 +19,7 @@ export { parseAdPackSettings, type AdPackSettings } from './settings.ts';
 export type { AdPackStore } from './store-types.ts';
 
 /**
- * Batch 36: the ad pack's rows (ad_packs, ad_pack_ads, ad_pack_runs) and its
+ * Batch 38: the ad pack's rows (ad_packs, ad_pack_ads, ad_pack_runs) and its
  * private storage bucket, service role only (RLS on, no policy).
  *
  *   createLiveStore()              the AdPackStore the generator runs on, over Supabase

@@ -1,5 +1,5 @@
 /**
- * Batch 36: an in-memory AdPackStore, renderer, uploader and area source for
+ * Batch 38: an in-memory AdPackStore, renderer, uploader and area source for
  * the tests. It mirrors what the SQL does: one pack per owner, unique operator
  * code, unique ad code, every read and write filtered by the owner id. Nothing
  * in the app imports it.

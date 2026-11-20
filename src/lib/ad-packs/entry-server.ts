@@ -5,7 +5,7 @@ import { createLiveStore } from './store-server.ts';
 import type { PackStatus } from './store-types.ts';
 
 /**
- * Batch 36 (Phase 8): the cheap check behind the "Your ad pack" card on /leads,
+ * Batch 38 (Phase 8): the cheap check behind the "Your ad pack" card on /leads,
  * which runs on every load of that page for an account owner.
  *
  *   1  the master switch (one tiny read). Off: nothing else is read. It is off

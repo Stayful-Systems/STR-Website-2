@@ -1,5 +1,5 @@
 /**
- * Batch 36: the admin's two ad pack actions, each as a Dry run and a Run over
+ * Batch 38: the admin's two ad pack actions, each as a Dry run and a Run over
  * the same engine call. The server actions (app/admin/ad-packs/actions.ts)
  * hand over here; everything outside is injected, so a dry run is shown to
  * write nothing and a non-admin is shown to be refused before anything is read.

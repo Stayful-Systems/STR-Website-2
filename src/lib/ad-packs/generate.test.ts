@@ -7,7 +7,7 @@ import { PackConflict } from './store-types.ts';
 import { loadImagesModule } from './images-test-support.ts';
 
 /**
- * Batch 36 phase 6: the pack generator, on the in-memory store with a fake
+ * Batch 38 phase 6: the pack generator, on the in-memory store with a fake
  * renderer, uploader and market data (no database, no network, no server-only).
  */
 
@@ -362,7 +362,7 @@ test('the run row carries the cost; the pack keeps the running total', async () 
   assert.equal(await h.store.monthSpendPence('2026-11-01T00:00:00Z'), 70);
 });
 
-test('estimateRawPence is 0p in 36a (images only)', () => {
+test('estimateRawPence is 0p in 38a (images only)', () => {
   assert.equal(estimateRawPence(ANGLES), 0);
 });
 

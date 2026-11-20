@@ -1,4 +1,4 @@
--- Batch 36 checks: the ad pack tables, the lead link table, the bucket and the seeds.
+-- Batch 38 checks: the ad pack tables, the lead link table, the bucket and the seeds.
 -- Run AFTER schema.sql: by hand in the Supabase SQL editor, or by CI (job "schema").
 -- One transaction, rolled back at the end: it leaves no data behind. A failing
 -- check raises; success prints notices.

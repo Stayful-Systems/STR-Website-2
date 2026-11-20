@@ -5,7 +5,7 @@ import { liveAdPackAdminRunner } from '@/lib/ad-packs/admin-server';
 import { NOT_ALLOWED, type LinkMissingAdminResult, type RegenerateResult } from '@/lib/ad-packs/admin-run';
 
 /**
- * Batch 36: /admin/ad-packs' actions. Each one is a thin hand-over to the
+ * Batch 38: /admin/ad-packs' actions. Each one is a thin hand-over to the
  * runner (src/lib/ad-packs/admin-run.ts), which checks the admin FIRST, from
  * the verified session user's email and never from an argument, then
  * validates its arguments. A Dry run writes nothing (admin-run.test.ts pins

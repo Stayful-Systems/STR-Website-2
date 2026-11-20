@@ -1,5 +1,5 @@
 /**
- * Batch 36: the automatic checks every pack passes before an operator sees it.
+ * Batch 38: the automatic checks every pack passes before an operator sees it.
  *
  * `runChecks(input)` reads the pack the way a reader of the ads would (every
  * text, the script, every card, every link and every image size) and returns

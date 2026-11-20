@@ -17,7 +17,7 @@ const PDF_ASSETS = [
 ];
 
 /**
- * Batch 36: the ad pack's image cards read their OFL typefaces from disk at
+ * Batch 38: the ad pack's image cards read their OFL typefaces from disk at
  * render time (src/lib/ad-packs/images.tsx), for the same reason as the PDF.
  * List every route that can call the generator (the /leads/ads page covers its
  * server actions).
@@ -25,7 +25,7 @@ const PDF_ASSETS = [
 const AD_PACK_FONTS = ["src/lib/ad-packs/fonts/**/*"];
 
 /**
- * Batch 36: the setup guide checks at render time which of its screenshots
+ * Batch 38: the setup guide checks at render time which of its screenshots
  * exist (src/lib/ad-packs/guide-server.ts), so the folder travels with /leads/ads.
  */
 const AD_PACK_GUIDE_SHOTS = ["public/ad-packs/guide/*.png"];

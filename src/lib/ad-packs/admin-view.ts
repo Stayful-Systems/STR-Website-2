@@ -1,5 +1,5 @@
 /**
- * Batch 36: how the admin's "Ad packs" table reads. Pure: no network, no
+ * Batch 38: how the admin's "Ad packs" table reads. Pure: no network, no
  * database, no server-only. The page draws these rows, so what an admin sees
  * about a pack (and the leads each ad has brought) is decided and tested here.
  *

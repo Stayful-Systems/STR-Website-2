@@ -9138,13 +9138,13 @@ revoke all on function public.credit_expire_idle_plan(uuid, timestamptz) from pu
 grant execute on function public.credit_expire_idle_plan(uuid, timestamptz) to service_role;
 
 -- =========================
--- Batch 36: Ads A1 (the ad pack: three landlord ads in an operator's own brand)
+-- Batch 38: Ads A1 (the ad pack: three landlord ads in an operator's own brand)
 -- =========================
 -- An Academy operator whose website is live on its own domain gets a pack of
 -- three landlord ads (angles 5b, 3a, 17) to upload to their own Meta account.
 -- Every ad carries a pack code in its ad name and link, so each website lead is
 -- recorded against the ad that brought it (ad_pack_lead_links). See
--- PLAN-batch-36-ads.md. Checked by supabase/tests/adpacks-smoke.sql.
+-- PLAN-batch-38.md. Checked by supabase/tests/adpacks-smoke.sql.
 --
 --   ad_packs            one per owner (owner_id unique). version is the pack
 --                       version n in the codes; operator_code is the first 6

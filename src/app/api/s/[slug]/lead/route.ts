@@ -185,7 +185,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   if (reportError) console.error(`[website-lead] report row not saved for lead ${leadId}:`, reportError.code ?? 'error');
 
   void enqueueLeadDbPush(leadId).catch(() => {}); // Batch 32: the operator's lead database gets it too (never throws, never waits)
-  void linkLeadToPackAd(leadId).catch(() => {}); // Batch 36: record which pack ad brought it (never throws, never waits)
+  void linkLeadToPackAd(leadId).catch(() => {}); // Batch 38: record which pack ad brought it (never throws, never waits)
 
   // ── 7. The operator hears of the lead now, not only when a report finishes. Once per lead. ──
   await notifyOperatorOfWebsiteLead({ leadId, websiteId: site.id });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 /**
- * Batch 36 phase 7: source pins (the server file needs a database and Next).
+ * Batch 38 phase 7: source pins (the server file needs a database and Next).
  */
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');

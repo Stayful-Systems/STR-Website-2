@@ -1,5 +1,5 @@
 /**
- * Batch 36 (Phase 8): what the ad pack screen says, as pure view models. The
+ * Batch 38 (Phase 8): what the ad pack screen says, as pure view models. The
  * page and the client component only lay these out; every sentence an operator
  * reads, every length indicator and every grouping of files is decided (and
  * tested) here, so no internal code, snake_case word or database field can
@@ -229,7 +229,7 @@ export function groupCardFiles(files: readonly { name: string; width: number; he
     .map(([card, list]) => ({ card, files: list, previewName: (list.find((f) => /-4x5\.png$/i.test(f.name)) ?? list[0]).name }));
 }
 
-/** The 5b ad's video slot: "Video coming soon" in 36a, nothing for an image ad. */
+/** The 5b ad's video slot: "Video coming soon" in 38a, nothing for an image ad. */
 export function videoSlotText(video: AdFiles['video']): string | null {
   if (!video) return null;
   return video.status === 'coming' ? 'Video coming soon' : null;

@@ -1,5 +1,5 @@
 /**
- * Batch 36: which stored file an owner may download, as pure logic. The bucket
+ * Batch 38: which stored file an owner may download, as pure logic. The bucket
  * is private; an operator gets a short signed link, and only for a pack ad
  * that is theirs and a file name that ad really has.
  *

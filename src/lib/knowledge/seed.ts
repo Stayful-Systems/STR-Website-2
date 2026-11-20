@@ -1067,10 +1067,10 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['Will links to my old website address still work?', 'I shared the temporary link, does it break?', 'Does the old address redirect?', 'What happens to the address I had before?'],
     answer: 'It redirects to your new web address, so any link you’ve already shared keeps working and takes people to your site on its own domain.',
   },
-  // ── Batch 36: the landlord ad pack (drafts for Zac to approve; the two counts are the ad_pack_free_regens and ad_pack_voice_changes settings) ──
+  // ── Batch 38: the landlord ad pack (drafts for Zac to approve; the two counts are the ad_pack_free_regens and ad_pack_voice_changes settings) ──
   {
     slug: 'adpack_what',
-    from: 'Batch 36, landlord ad pack',
+    from: 'Batch 38, landlord ad pack',
     category: 'how_it_works',
     channels: ['view', 'chat'],
     showWhen: null,
@@ -1080,7 +1080,7 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'adpack_who',
-    from: 'Batch 36, landlord ad pack (account owner of an Academy membership, website live on its own domain; free with the Academy)',
+    from: 'Batch 38, landlord ad pack (account owner of an Academy membership, website live on its own domain; free with the Academy)',
     category: 'account',
     channels: ['view', 'chat'],
     showWhen: null,
@@ -1090,7 +1090,7 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'adpack_regenerate',
-    from: 'Batch 36, landlord ad pack (free regenerates after a brand change; the video voice can be changed before approving; both counts are settings)',
+    from: 'Batch 38, landlord ad pack (free regenerates after a brand change; the video voice can be changed before approving; both counts are settings)',
     category: 'how_it_works',
     channels: ['view', 'chat'],
     showWhen: null,
@@ -1100,7 +1100,7 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'adpack_tagging',
-    from: 'Batch 36, landlord ad pack (pack code in the ad name and link; Ad unknown when there is no code or the link was changed)',
+    from: 'Batch 38, landlord ad pack (pack code in the ad name and link; Ad unknown when there is no code or the link was changed)',
     category: 'how_it_works',
     channels: ['view', 'chat'],
     showWhen: null,
@@ -1110,7 +1110,7 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'adpack_not_included',
-    from: 'Batch 36, landlord ad pack (what we do not do: no free refresh, no new angles, no Meta access, no performance numbers, no promised results)',
+    from: 'Batch 38, landlord ad pack (what we do not do: no free refresh, no new angles, no Meta access, no performance numbers, no promised results)',
     category: 'how_it_works',
     channels: ['view', 'chat'],
     showWhen: null,

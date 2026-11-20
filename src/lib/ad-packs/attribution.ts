@@ -1,5 +1,5 @@
 /**
- * Batch 36: attribution on arrival. A website lead arrives with the ad code
+ * Batch 38: attribution on arrival. A website lead arrives with the ad code
  * (?ad=<CODE>, kept in lead_sources.ad_code) and, when Meta filled it in, the
  * Meta ad id (utm_content = {{ad.id}}). This works out which pack ad brought it.
  *
