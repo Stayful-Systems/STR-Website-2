@@ -9,7 +9,8 @@ Branch: claude/dazzling-babbage-5j0m9x (the plan named claude/epic-ramanujan-rcv
 Coordinator rules: one subagent per phase, each replies in 150 words or fewer. After each phase: `git diff --stat`, re-run that phase's check, tick it below, commit "Phase N: <name>". Stop and ask if anything breaks the plan. Never redo ticked phases.
 
 ## Progress (32a)
-- [ ] Phase 0 — Setup
+- [x] Phase 0 — Setup
+  Notes: main still cf6935e. Baseline: npm test 3661/3661 pass; lint 0 errors, 79 warnings; typecheck 0 errors; build OK, no warnings. Schema check: `bash /tmp/claude-0/-home-user-STR-Website-2/1a23043a-0f19-5f4a-8fe2-b4631334ee33/scratchpad/schema-check.sh` (fresh PG16 cluster as user pgcheck in /var/tmp/str-schema-check; schema twice + index/dump diff + every supabase/tests/*-smoke.sql, new ones picked up automatically; passes on baseline).
 - [ ] Phase 1 — Database
 - [ ] Phase 2 — Grant and Stripe paths
 - [ ] Phase 3 — Pure rollover rules and summary
