@@ -944,6 +944,47 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['Am I the data controller for my website?', 'Is Stayful the data controller?', 'What happens to the details landlords enter?', 'Who sees the landlord’s address?'],
     answer: 'You are: as the operator you are the data controller for what landlords enter on your website, and Stayful is the processor acting for you. The landlord sees only a headline summary; the full address and report stay with you in Leads.',
   },
+  // ── Batch 32: website leads into the operator's lead database account (drafts for Zac to approve; no figures) ──
+  {
+    slug: 'leaddb_website_leads',
+    from: 'Batch 32, website leads into the lead database',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Can my website leads go into my lead database?',
+    variants: ['Can I send my website leads to the lead database?', 'How do I connect my lead database?', 'Do my website leads show up in my lead database account?', 'Can I follow up my website leads in the lead database?'],
+    answer: 'Yes. Connect your lead database account in Leads, then Integrations: we email a code to its login email to prove it is yours. After that each landlord who fills in your website form also lands in your lead database as your own lead, with their income report once it is ready, and they stay in Leads here too.',
+  },
+  {
+    slug: 'leaddb_not_charged',
+    from: 'Batch 32, website leads into the lead database (never charged, never resold)',
+    category: 'account',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Am I charged again in the lead database?',
+    variants: ['Do website leads cost me anything in the lead database?', 'Do website leads use up my lead plan?', 'Will my website leads be sold to other companies?', 'Who else can see my website leads in the lead database?'],
+    answer: 'No. A website lead costs nothing in the lead database, it does not use your plan or any credit there, and it is yours alone: it is never given, pooled or sold to anyone else.',
+  },
+  {
+    slug: 'leaddb_no_account',
+    from: 'Batch 32, website leads into the lead database (no account: Get the lead database)',
+    category: 'account',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'I don’t have a lead database account',
+    variants: ['It says there is no lead database account for my email', 'How do I get the lead database?'],
+    answer: 'You don’t need one: your website and your leads in Leads work the same without it. If you want your website leads in a lead database too, the connect screen has a Get the lead database link, or ask the team at {team_email}.',
+  },
+  {
+    slug: 'leaddb_report_coming',
+    from: 'Batch 32, website leads into the lead database (the lead goes at step one, the report follows)',
+    category: 'reports',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Why does it say Report coming?',
+    variants: ['Why is there no report on my lead in the lead database?', 'When does the report arrive in the lead database?', 'Why does the lead say report coming?'],
+    answer: 'The lead goes into your lead database as soon as the landlord’s first step is saved, and the income report is added to that same lead when it finishes, usually within minutes. If the report can’t be made, the lead stays there without one.',
+  },
 ];
 
 /**

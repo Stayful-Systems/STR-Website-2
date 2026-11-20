@@ -28,3 +28,30 @@ update `src/lib/knowledge/service-facts.ts` too. See
   resolved from settings, and `npm test` passes (the seed tests check every
   placeholder resolves against the schema's seeds and no answer types a
   figure).
+
+# Batch 32: website leads go into the operator's lead database account
+
+A landlord's website lead is also pushed, signed, to the operator's own lead
+database account (never charged, never given, pooled or sold on). Plan and the
+wire contract: `PLAN-batch-32.md`. Code: `src/lib/leaddb/`.
+
+- **Contract.** Four signed POSTs to `LEADDB_API_URL` (`/api/internal/si/link/start|confirm|revoke`
+  and `/api/internal/si/website-leads`), signed with `signatureHeader` (`src/lib/crm/signature.ts`) under
+  `SI_LEAD_PUSH_SECRET` (32+ characters, set on both Vercel projects, never in code or the database).
+  Unset or short on our side: the client returns `not_configured` (retryable) and the connect screen says
+  "Lead database link not available yet". Responses are codes only; the retry rule is in `client.ts`.
+- **Two names, never mixed.** The lead database stores these leads with `owner_source = 'si_website'`. That is
+  not `LEAD_DB_SOURCE = 'lead_db'` (§71, the analyser's `analyser_reports.source`).
+- **Tables.** `leaddb_links` (one row per owner: the confirmed link) and `leaddb_deliveries` (one row per lead:
+  the retry queue and its state). `leads.status` and `leads.crm_pushed_at` keep meaning "went to your CRM" and
+  are **never** written by this (a test pins it). Neither table is in `ACCESS_COLUMNS`.
+- **Flow.** `enqueueLeadDbPush(leadId)` runs after the step-1 save (`/api/s/[slug]/lead`) and after the report is
+  done (`report-server.ts`), as `void ….catch(() => {})`: it never throws and never waits. It acts only for a
+  website lead, not held, whose owner has an ACTIVE link. `/api/internal/leaddb-deliveries` (`3-59/10 * * * *`,
+  `?dry=1` lists and sends nothing) sweeps then drains. The lead goes first ("Report coming"); the report goes
+  again under the same SI lead id when `website_reports.state = 'done'`. Occupancy is a percent 0–100.
+- **Never log a lead.** Log lines carry a lead id and a code at most, never an address or a body.
+- **Connect.** `src/app/leads/integrations/LeadDbPanel.tsx`: login email → code → connected. Owner only
+  (`ownerIdOrNull`); logs the record-only kind `leaddb_connected`. A failure is shown in plain English
+  (`messages.ts`).
+- **Knowledge.** Four draft entries in `seed.ts` (`leaddb_*`) and a line in `service-facts.ts`.

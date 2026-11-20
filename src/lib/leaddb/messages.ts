@@ -25,6 +25,12 @@ const TEXT: Record<string, string> = {
   bad_request: 'The lead database could not read that. Please try again.',
   bad_report: 'The lead database could not accept the report. We will keep the lead and try again.',
   too_large: 'The report was too large for the lead database.',
+  lead_gone: 'The lead no longer exists, so there was nothing to send.',
+  archived: 'The lead was archived before it could be sent.',
+  not_a_website_lead: 'That lead did not come from a website, so it is not sent.',
+  owner_mismatch: 'The lead does not belong to the connected account.',
+  report_not_sent: 'The lead is in the lead database, but its report could not be built yet. We will try again.',
+  report_not_attached: 'The lead is in the lead database, but its report was not attached yet. We will try again.',
 };
 
 /** A sentence for a code; an unknown code reads as a generic try-again, never as the code itself. */

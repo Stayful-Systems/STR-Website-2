@@ -275,3 +275,64 @@ export async function leadDbBadges(leadIds: string[]): Promise<Map<string, strin
   }
   return out;
 }
+
+// ── Admin ──────────────────────────────────────────────────────────────────
+
+export interface LeadDbProblem {
+  leadId: string;
+  ownerId: string;
+  ownerEmail: string | null;
+  status: 'pending' | 'failed';
+  attempts: number;
+  code: string | null;
+  updatedAt: string;
+}
+
+/** Failed or stuck pushes from the last 14 days: ids, the error CODE and attempts. Never a lead's details. */
+export async function leadDbProblems(): Promise<LeadDbProblem[]> {
+  if (!hasServiceRole()) return [];
+  const admin = db();
+  const since = new Date(Date.now() - SWEEP_WINDOW_DAYS * 86_400_000).toISOString();
+  const stuckBefore = new Date(Date.now() - 60 * 60_000).toISOString();
+  const { data } = await admin
+    .from('leaddb_deliveries')
+    .select('lead_id, owner_id, status, attempts, last_error, updated_at, next_attempt_at')
+    .gte('updated_at', since)
+    .or(`status.eq.failed,and(status.eq.pending,next_attempt_at.lt.${stuckBefore})`)
+    .order('updated_at', { ascending: false })
+    .limit(200);
+  const rows = (data ?? []) as { lead_id: string; owner_id: string; status: 'pending' | 'failed'; attempts: number; last_error: string | null; updated_at: string }[];
+  const owners = [...new Set(rows.map((r) => r.owner_id))];
+  const { data: profiles } = owners.length ? await admin.from('profiles').select('id, email').in('id', owners) : { data: [] };
+  const email = new Map(((profiles ?? []) as { id: string; email: string | null }[]).map((p) => [p.id, p.email]));
+  return rows.map((r) => ({ leadId: r.lead_id, ownerId: r.owner_id, ownerEmail: email.get(r.owner_id) ?? null, status: r.status, attempts: r.attempts, code: r.last_error, updatedAt: r.updated_at }));
+}
+
+/** What a Retry would do, read only. */
+export async function leadDbRetryPreview(leadId: string): Promise<{ ok: boolean; message: string }> {
+  if (!hasServiceRole()) return { ok: false, message: 'The service role is not configured.' };
+  const admin = db();
+  const { data } = await admin.from('leaddb_deliveries').select('owner_id, status, attempts, last_error').eq('lead_id', leadId).maybeSingle();
+  const row = data as { owner_id: string; status: string; attempts: number; last_error: string | null } | null;
+  if (!row) return { ok: false, message: 'No push is recorded for that lead.' };
+  if (row.status === 'sent') return { ok: false, message: 'That push already went through. Nothing to retry.' };
+  const { data: link } = await admin.from('leaddb_links').select('status').eq('owner_id', row.owner_id).maybeSingle();
+  const status = (link as { status: string } | null)?.status ?? null;
+  if (status !== 'active') {
+    return { ok: false, message: `The owner's lead database link is ${status ?? 'not set up'}, so a retry would fail again. They need to connect it first (it retries by itself once they do).` };
+  }
+  return { ok: true, message: `Would reset ${row.attempts} attempt${row.attempts === 1 ? '' : 's'} (last error: ${row.last_error ?? 'none'}) and send this lead again on the next run, within about 10 minutes.` };
+}
+
+/** Resets one failed or stuck push so the next run sends it. */
+export async function leadDbRetry(leadId: string): Promise<boolean> {
+  if (!hasServiceRole()) return false;
+  const nowIso = new Date().toISOString();
+  const { data } = await db()
+    .from('leaddb_deliveries')
+    .update({ status: 'pending', attempts: 0, next_attempt_at: nowIso, lease_until: null, last_error: null, updated_at: nowIso })
+    .eq('lead_id', leadId)
+    .in('status', ['pending', 'failed'])
+    .select('lead_id');
+  return (data ?? []).length > 0;
+}
