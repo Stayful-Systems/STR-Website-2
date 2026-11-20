@@ -17,8 +17,8 @@ Baseline: `npm test` 3989 pass / 0 fail, `npm run lint` 0 errors (79 pre-existin
 ## Progress
 - [x] Phase 0 — Prep
   Notes: main still `0dd39a7`. Baseline test 3989/3989; lint 0 errors; build passes.
-- [ ] Phase 1 — Schema and settings
-  Notes:
+- [x] Phase 1 — Schema and settings
+  Notes: block appended after Batch 33 (5 tables, 2 functions, 3 seeds, 2 websites columns). Local Postgres 16: shim + schema run 3 times, schema/data/index dumps identical; websites-p4-smoke.sql passes (stale base, 11th publish leaves 10, snapshot twice = one v1, notice pk no-op, delete-restrict still holds); older smokes still pass. Deviation: domains/schema.test.ts already bounds at the next header so is unchanged, but src/lib/websites/settings.test.ts read to end of file and would have matched the new website_* seeds: bounded it at the next header (2 lines). Warning-days seed is the JSON string "30,14,3" (not valid bare JSON). Stage in website_grace_notices = the warning's day count.
 - [ ] Phase 2 — Pure rules (edit-rules, grace-rules, kinds, cap)
   Notes:
 - [ ] Phase 3 — Edit server (edit-run, edit-server, copy-server `only`)
