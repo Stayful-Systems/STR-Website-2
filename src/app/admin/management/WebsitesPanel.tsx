@@ -28,6 +28,7 @@ export function WebsitesPanel({ data }: { data: WebsitesAdminData }) {
         <p className="mt-1 text-xs text-muted-foreground">
           A website is given by invitation to a management company’s account owner. It starts invited, the member sets it up from /leads, and it lives at /s/&lt;slug&gt;. No lead contact details or addresses are shown here.
         </p>
+        <p className="mt-1 text-xs"><a href="/admin/websites" className="underline">Open the website console</a> (every site, switch-off and deletion, change requests).</p>
       </div>
       {data.readError ? <p className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">Read failed (schema.sql not run?): {data.readError}</p> : null}
       {!data.available ? <p className="rounded-md bg-muted p-3 text-sm text-muted-foreground">The service role is not configured, so websites cannot be listed or changed here.</p> : null}
