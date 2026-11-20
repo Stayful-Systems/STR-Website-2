@@ -9115,3 +9115,288 @@ revoke all on function public.website_report_charge(jsonb) from public, anon, au
 grant execute on function public.website_report_charge(jsonb) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 33: customer website domains (Phase 1: schema and settings)
+-- =========================
+-- When a member approves their website, Stayful buys <company>management.co.uk
+-- through Openprovider (Stayful holds it), connects it to the Vercel project
+-- with HTTPS, moves the site onto it and redirects the old /s/<slug> address.
+-- The first year is free. A yearly charge equal to the domain's cost is built
+-- but OFF (domain_charge_on). This section is the whole database side:
+--
+--   website_domain_offers    the names we offered a site (server-side, 24h): a
+--                            member can only choose a name from this list.
+--   website_domains          one live domain row per website (and per name), a
+--                            status that says where the purchase is, a
+--                            timestamp for each connect step, the renewal
+--                            decision and the last error (a code, 200 chars).
+--                            website_id is on delete restrict: a site with a
+--                            domain row is never deleted from under it.
+--   website_domain_spend     one row per spend claim (key unique: register:<id>,
+--                            renew:<id>:<expiry>). The daily cap counts claimed
+--                            plus bought pence for the UK day; void gives the
+--                            money back to the day.
+--   website_domain_charges   one row per charged year (domain + period). No
+--                            foreign keys: what was charged stays.
+--
+--   website_domain_spend_claim(...)   claimed | already | over_cap, under an
+--                                     advisory lock on the UK day, the cap read
+--                                     here from billing_settings.
+--   website_domain_spend_settle(...)  claimed -> bought | void.
+--   website_domain_charge(p)          charge one year, once, face pence.
+--                                     Reachable from the app only through one
+--                                     function that returns early when
+--                                     domain_charge_on is false.
+--
+-- Settings (billing_settings; src/lib/domains/settings.ts parses them):
+--   domain_charge_on                false: the yearly charge never runs
+--   domain_daily_spend_cap_pence    5000: most Stayful spends on domains per UK day
+--   domain_auto_buy                 true: buy as soon as a member chooses
+--
+-- Everything is additive, idempotent and service role only (the member reads
+-- are "your own offer" and "your own domain", listed columns only). Nothing
+-- here is in ACCESS_COLUMNS (src/lib/access.ts).
+
+-- ── websites.domain: one site per domain ──
+create unique index if not exists websites_domain_unique_idx on public.websites (lower(domain)) where domain is not null;
+
+-- ── website_domain_offers ──
+create table if not exists public.website_domain_offers (
+  website_id uuid primary key references public.websites(id) on delete cascade,
+  names text[] not null default '{}',
+  -- name -> price in pence (a GBP price from the registrar at the time of the offer)
+  prices jsonb not null default '{}'::jsonb,
+  offered_at timestamptz not null default now()
+);
+alter table public.website_domain_offers drop constraint if exists website_domain_offers_names_check;
+alter table public.website_domain_offers add constraint website_domain_offers_names_check check (coalesce(array_length(names, 1), 0) <= 6);
+alter table public.website_domain_offers enable row level security;
+revoke all on public.website_domain_offers from anon, authenticated;
+grant select on public.website_domain_offers to authenticated;
+drop policy if exists "Users can read own domain offer" on public.website_domain_offers;
+create policy "Users can read own domain offer"
+  on public.website_domain_offers for select to authenticated
+  using (exists (select 1 from public.websites w where w.id = website_id and w.user_id = (select auth.uid())));
+
+-- ── website_domains ──
+create table if not exists public.website_domains (
+  id uuid primary key default gen_random_uuid(),
+  website_id uuid not null references public.websites(id) on delete restrict,
+  -- The account owner. No foreign key: the record of a bought domain outlives anything else.
+  owner_id uuid not null,
+  name text not null,
+  status text not null default 'awaiting_admin',
+  registrar text,
+  registrar_ref text,
+  cost_pence integer,
+  bought_at timestamptz,
+  expires_at timestamptz,
+  -- Batch 36's switch: false stops a renewal (the plan's lapsed, the site is switched off).
+  renew_allowed boolean not null default true,
+  renew_decision text,
+  renew_decided_by uuid,
+  renew_decided_at timestamptz,
+  dns_set_at timestamptz,
+  vercel_added_at timestamptz,
+  https_ok_at timestamptz,
+  live_at timestamptz,
+  attempts integer not null default 0,
+  last_error text,
+  stuck_alerted_at timestamptz,
+  -- The expiry (date) the admin was last emailed a renewal reminder for: one email per domain per period.
+  renewal_alerted_for date,
+  state_changed_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.website_domains drop constraint if exists website_domains_name_check;
+alter table public.website_domains add constraint website_domains_name_check
+  check (name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.co\.uk$' and name !~ '(^|\.)xn--');
+alter table public.website_domains drop constraint if exists website_domains_status_check;
+alter table public.website_domains add constraint website_domains_status_check
+  check (status in ('awaiting_admin', 'held_cap', 'registering', 'connecting', 'live', 'needs_choice', 'failed', 'releasing', 'released'));
+alter table public.website_domains drop constraint if exists website_domains_renew_decision_check;
+alter table public.website_domains add constraint website_domains_renew_decision_check
+  check (renew_decision is null or renew_decision in ('renew', 'dont_renew'));
+alter table public.website_domains drop constraint if exists website_domains_last_error_check;
+alter table public.website_domains add constraint website_domains_last_error_check check (last_error is null or char_length(last_error) <= 200);
+alter table public.website_domains drop constraint if exists website_domains_attempts_check;
+alter table public.website_domains add constraint website_domains_attempts_check check (attempts >= 0);
+alter table public.website_domains drop constraint if exists website_domains_cost_check;
+alter table public.website_domains add constraint website_domains_cost_check check (cost_pence is null or cost_pence >= 0);
+-- One active domain per site, and one active owner per name; a released name can be used again.
+create unique index if not exists website_domains_site_active_idx on public.website_domains (website_id) where status <> 'released';
+create unique index if not exists website_domains_name_active_idx on public.website_domains (name) where status <> 'released';
+create index if not exists website_domains_status_idx on public.website_domains (status, state_changed_at);
+create index if not exists website_domains_expiry_idx on public.website_domains (expires_at) where status = 'live';
+alter table public.website_domains enable row level security;
+revoke all on public.website_domains from anon, authenticated;
+-- A member reads their own domain: the name and where it is, never the registrar's reference, the cost or an error.
+grant select (id, website_id, name, status, live_at, created_at) on public.website_domains to authenticated;
+drop policy if exists "Users can read own domain" on public.website_domains;
+create policy "Users can read own domain"
+  on public.website_domains for select to authenticated
+  using (owner_id = (select auth.uid()));
+
+-- ── website_domain_spend ──
+create table if not exists public.website_domain_spend (
+  id uuid primary key default gen_random_uuid(),
+  domain_id uuid not null references public.website_domains(id) on delete restrict,
+  kind text not null,
+  uk_day date not null,
+  pence integer not null,
+  status text not null default 'claimed',
+  key text not null,
+  registrar_ref text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.website_domain_spend drop constraint if exists website_domain_spend_kind_check;
+alter table public.website_domain_spend add constraint website_domain_spend_kind_check check (kind in ('register', 'renew'));
+alter table public.website_domain_spend drop constraint if exists website_domain_spend_status_check;
+alter table public.website_domain_spend add constraint website_domain_spend_status_check check (status in ('claimed', 'bought', 'void'));
+alter table public.website_domain_spend drop constraint if exists website_domain_spend_pence_check;
+alter table public.website_domain_spend add constraint website_domain_spend_pence_check check (pence > 0);
+create unique index if not exists website_domain_spend_key_idx on public.website_domain_spend (key);
+create index if not exists website_domain_spend_day_idx on public.website_domain_spend (uk_day) where status in ('claimed', 'bought');
+create index if not exists website_domain_spend_domain_idx on public.website_domain_spend (domain_id);
+alter table public.website_domain_spend enable row level security;  -- no policies: service role only
+revoke all on public.website_domain_spend from anon, authenticated;
+
+-- ── website_domain_charges: one row per charged year (the guard and the record) ──
+create table if not exists public.website_domain_charges (
+  domain_id uuid not null,
+  period text not null,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  pence numeric not null,
+  txn_id bigint,
+  status text not null default 'unpaid',
+  created_at timestamptz not null default now(),
+  primary key (domain_id, period)
+);
+alter table public.website_domain_charges drop constraint if exists website_domain_charges_status_check;
+alter table public.website_domain_charges add constraint website_domain_charges_status_check check (status in ('charged', 'unpaid'));
+create index if not exists website_domain_charges_owner_idx on public.website_domain_charges (owner_id, created_at desc);
+alter table public.website_domain_charges enable row level security;  -- no policies: service role only
+revoke all on public.website_domain_charges from anon, authenticated;
+
+-- ── billing_settings: the three switches and limits ──
+insert into public.billing_settings (key, value) values
+  ('domain_charge_on', 'false'),
+  ('domain_daily_spend_cap_pence', '5000'),
+  ('domain_auto_buy', 'true')
+on conflict (key) do nothing;
+
+-- ── Functions ──
+
+-- website_domain_spend_claim(p_domain, p_kind, p_pence, p_key): claim spend for
+-- one registrar purchase or renewal.
+--   'claimed'   this key now holds the money (it counts against today's cap)
+--   'already'   this key holds it already (claimed or bought): never spend twice
+--   'over_cap'  claimed + bought pence for the UK day, plus this, is over the cap
+-- The UK day and the cap (domain_daily_spend_cap_pence) are taken here, never
+-- from the app, and claims for one day queue on an advisory lock, so two
+-- approvals arriving together cannot both fit under the last pound of cap. A
+-- void claim does not count and can be claimed again under the same key.
+create or replace function public.website_domain_spend_claim(p_domain uuid, p_kind text, p_pence integer, p_key text)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_day date := public.website_uk_day();
+  v_cap integer := public.website_setting_int('domain_daily_spend_cap_pence', 5000);
+  v_used bigint;
+  v_row public.website_domain_spend;
+  v_exists boolean;
+begin
+  if p_domain is null or p_key is null or length(p_key) = 0 or p_kind not in ('register', 'renew') or p_pence is null or p_pence <= 0 then
+    raise exception 'website_domain_spend_claim_bad_input';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('website_domain_spend_claim:' || v_day::text, 0));
+
+  select * into v_row from public.website_domain_spend where key = p_key;
+  -- FOUND is overwritten by the next select, so keep the answer.
+  v_exists := found;
+  if v_exists and v_row.status <> 'void' then return 'already'; end if;
+
+  select coalesce(sum(pence), 0) into v_used
+    from public.website_domain_spend where uk_day = v_day and status in ('claimed', 'bought');
+  if v_used + p_pence > v_cap then return 'over_cap'; end if;
+
+  if v_exists then
+    update public.website_domain_spend
+       set status = 'claimed', uk_day = v_day, pence = p_pence, domain_id = p_domain, kind = p_kind, updated_at = now()
+     where key = p_key;
+  else
+    insert into public.website_domain_spend (domain_id, kind, uk_day, pence, status, key)
+    values (p_domain, p_kind, v_day, p_pence, 'claimed', p_key);
+  end if;
+  return 'claimed';
+end;
+$$;
+revoke all on function public.website_domain_spend_claim(uuid, text, integer, text) from public, anon, authenticated;
+grant execute on function public.website_domain_spend_claim(uuid, text, integer, text) to service_role;
+
+-- website_domain_spend_settle(p_key, p_status, p_ref): a claim became a real
+-- purchase ('bought', with the registrar's reference) or was given back
+-- ('void'). Only a claimed row moves; a bought one stays bought. Returns
+-- whether a row moved.
+create or replace function public.website_domain_spend_settle(p_key text, p_status text, p_ref text default null)
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  if p_status not in ('bought', 'void') then raise exception 'website_domain_spend_settle_bad_input'; end if;
+  update public.website_domain_spend
+     set status = p_status, registrar_ref = coalesce(p_ref, registrar_ref), updated_at = now()
+   where key = p_key and status = 'claimed';
+  return found;
+end;
+$$;
+revoke all on function public.website_domain_spend_settle(text, text, text) from public, anon, authenticated;
+grant execute on function public.website_domain_spend_settle(text, text, text) to service_role;
+
+-- website_domain_charge(p): charge one year of a domain, once, when charging is
+-- on (the app decides; this is never called at registration: year 1 is free).
+--   p: {owner, domain, period, pence, meta}
+-- Returns {result, already, pence, tx, status}:
+--   result 'charged'          the guard row went in and the face debit worked
+--          'unpaid'           the balance was short (P0402): recorded, not raised
+--          'already_charged'  this domain and period have a row already: nothing happens
+-- Modelled on website_report_charge: the guard row goes in first, under the
+-- owner's profile lock, so a retry or the cron can never charge a period twice.
+create or replace function public.website_domain_charge(p jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_owner uuid := nullif(p->>'owner', '')::uuid;
+  v_domain uuid := nullif(p->>'domain', '')::uuid;
+  v_period text := nullif(p->>'period', '');
+  v_meta jsonb := case when jsonb_typeof(p->'meta') = 'object' then p->'meta' else '{}'::jsonb end;
+  v_pence numeric := nullif(p->>'pence', '')::numeric;
+  v_tx bigint;
+  v_row public.website_domain_charges;
+begin
+  if v_owner is null or v_domain is null or v_period is null or v_pence is null or v_pence <= 0 then raise exception 'website_domain_charge_bad_input'; end if;
+
+  perform 1 from public.profiles where id = v_owner for update;
+
+  insert into public.website_domain_charges (domain_id, period, owner_id, pence, status)
+  values (v_domain, v_period, v_owner, v_pence, 'unpaid')
+  on conflict (domain_id, period) do nothing;
+  if not found then
+    select * into v_row from public.website_domain_charges where domain_id = v_domain and period = v_period;
+    return jsonb_build_object('result', 'already_charged', 'already', true, 'pence', v_row.pence, 'tx', v_row.txn_id, 'status', v_row.status);
+  end if;
+
+  begin
+    v_tx := public.credit_debit_face(v_owner, v_pence,
+      v_meta || jsonb_build_object('action', 'website_domain', 'description', 'Website domain, yearly', 'domain_id', v_domain, 'period', v_period, 'quantity', 1));
+  exception when sqlstate 'P0402' then
+    return jsonb_build_object('result', 'unpaid', 'already', false, 'pence', v_pence, 'tx', null, 'status', 'unpaid');
+  end;
+
+  update public.website_domain_charges set txn_id = v_tx, status = 'charged' where domain_id = v_domain and period = v_period;
+  return jsonb_build_object('result', 'charged', 'already', false, 'pence', v_pence, 'tx', v_tx, 'status', 'charged');
+end;
+$$;
+revoke all on function public.website_domain_charge(jsonb) from public, anon, authenticated;
+grant execute on function public.website_domain_charge(jsonb) to service_role;
+
+notify pgrst, 'reload schema';

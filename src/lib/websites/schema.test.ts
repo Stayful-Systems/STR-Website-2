@@ -18,9 +18,8 @@ const section = start === -1 ? '' : sql.slice(start, after === -1 ? undefined : 
 const TABLES = ['websites', 'lead_sources', 'website_reports', 'website_report_slots', 'website_report_charges'];
 const FUNCTIONS = ['website_uk_day', 'website_setting_int', 'website_free_report_claim', 'website_report_charge'];
 
-test('the section is the last in the file and ends by reloading the schema cache', () => {
+test('the section ends by reloading the schema cache (later batches append their own sections after it)', () => {
   assert.ok(section.length > 0, 'no "Batch 31" section in schema.sql');
-  assert.equal(after, -1, 'nothing may follow the Batch 31 section');
   assert.match(section.trimEnd(), /notify pgrst, 'reload schema';$/);
 });
 
