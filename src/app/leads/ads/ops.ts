@@ -19,22 +19,31 @@
  *   copy       the pack ad must be the owner's, and have that text; the log gets the
  *              ad code, the kind of text and its position, NEVER the text
  *   upload     the owner's own folder only; type, size and first bytes are checked here
+ *   voice      (38b) changeVoice / retryVideo: the pack id must be the owner's pack and the version on screen
+ *              is pinned; eligibility is checked (they can cost money); the generator's refusals become one
+ *              plain sentence (videoActionMessage)
+ *   poll       (38b) read only: the pack id must be the owner's; answers with the video, approve and voice
+ *              fields of view.ts (PollView) and nothing else: no id, no code, no path, no secret
+ *   video url  (38b) a one-hour view link for a file of the owner's own READY video (or its poster) only
  *
  * Nothing here returns a database field, an internal code or a raw error: every
  * refusal is one plain sentence.
  *
  * Pure: no network, no database, no server-only.
  */
-import type { ApproveResult, GenerateRequest, GenerateResult, PackView } from '../../../lib/ad-packs/generate-core.ts';
+import type { ApproveResult, ChangeVoiceResult, GenerateRequest, GenerateResult, PackView, RetryVideoResult } from '../../../lib/ad-packs/generate-core.ts';
 import { parseAreaKey } from '../../../lib/ad-packs/area.ts';
 import { plainReason, type EligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
 import { checkPhoto, cleanPhotoRefs, MAX_UPLOADS_PER_OWNER, PHOTO_MESSAGES, uploadRef } from '../../../lib/ad-packs/photos.ts';
 import type { PackAdRow } from '../../../lib/ad-packs/store-types.ts';
-import { areaPreviewView, brandOfSettings, brandProblemText, copyTargetExists, isCopyKind, LOGO_REFUSAL, type AreaPreviewInput, type AreaPreviewView, type CopyKind, type SiteBrandInput } from './view.ts';
+import { isVoiceKey, type VoiceKey } from '../../../lib/ad-packs/voices.ts';
+import { areaPreviewView, brandOfSettings, brandProblemText, copyTargetExists, isCopyKind, LOGO_REFUSAL, pollViewOf, videoActionMessage, isVideoFileName, VIDEO_POSTER_NAME, type AreaPreviewInput, type AreaPreviewView, type CopyKind, type PollView, type SiteBrandInput } from './view.ts';
 
 export type AdsState = { ok?: boolean; error?: string; notice?: string };
 export type UploadState = { ok: true; ref: string; previewUrl: string | null } | { ok: false; error: string };
 export type DownloadState = { ok: true; url: string } | { ok: false; error: string };
+/** The answer to a poll: the lightweight video / approve / voice fields, or nothing (signed out, not the owner's pack). */
+export type PollState = ({ ok: true } & PollView) | { ok: false };
 
 export const MESSAGES = {
   signed_out: 'Please sign in again.',
@@ -45,6 +54,7 @@ export const MESSAGES = {
   try_again: 'Something went wrong. Please try again.',
   download: 'We could not make that download link. Please try again.',
   not_eligible: 'The ad pack is not available for this account yet.',
+  voice: 'Please choose one of the three voices.',
 } as const;
 
 export type Session = { ok: true; ownerId: string; email: string | null; admin: boolean } | { ok: false; reason: 'signed_out' | 'member' };
@@ -67,6 +77,10 @@ export interface AdsDeps {
   listPack(ownerId: string): Promise<PackView | null>;
   generate(req: GenerateRequest): Promise<GenerateResult>;
   approve(req: { ownerId: string; expectedVersion?: number }): Promise<ApproveResult>;
+  /** 38b: another voice for the same version, before approving. */
+  changeVoice(req: { ownerId: string; voiceKey: string; expectedVersion?: number }): Promise<ChangeVoiceResult>;
+  /** 38b: try a failed video again. */
+  retryVideo(req: { ownerId: string; expectedVersion?: number }): Promise<RetryVideoResult>;
   /** One pack ad, only if it is the owner's. */
   getAd(ownerId: string, packAdId: string): Promise<PackAdRow | null>;
   /** A short signed download link, only for the owner's ad and a file it has; null otherwise. */
@@ -94,7 +108,7 @@ async function ownPack(deps: AdsDeps, ownerId: string, packId: unknown): Promise
 
 // ── Generate ──
 
-export type GenerateInput = { packId?: unknown; areaKey?: unknown; photoRefs?: unknown; typeOnly?: unknown };
+export type GenerateInput = { packId?: unknown; areaKey?: unknown; photoRefs?: unknown; typeOnly?: unknown; voiceKey?: unknown };
 
 /** Make (or remake) the owner's pack. */
 export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<AdsState> {
@@ -114,6 +128,10 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
   if (problems.length > 0) return { error: brandProblemText(problems[0]) };
   const typeOnly = input.typeOnly === true || input.typeOnly === 'on' || input.typeOnly === 'true';
   if (brand.logoUrl === null && !typeOnly) return { error: LOGO_REFUSAL };
+  // 38b: the voice for the video. Absent (a regenerate keeps the pack's voice) is fine; anything else must be one of the three.
+  const voiceSent = input.voiceKey !== undefined && input.voiceKey !== null && input.voiceKey !== '';
+  if (voiceSent && !isVoiceKey(input.voiceKey)) return { error: MESSAGES.voice };
+  const voiceKey: VoiceKey | undefined = voiceSent && isVoiceKey(input.voiceKey) ? input.voiceKey : undefined;
 
   const result = await deps.generate({
     ownerId: s.ownerId,
@@ -125,6 +143,7 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
       domain: elig.domain,
       websiteId: elig.website.id,
       typeOnly: brand.logoUrl === null && typeOnly,
+      ...(voiceKey ? { voiceKey } : {}),
     },
   });
   if (!result.ok) return { error: result.message };
@@ -212,4 +231,74 @@ export async function areaPreviewOp(deps: AdsDeps, input: { areaKey?: unknown })
   if (!elig.eligible) return { ok: false, bedrooms: null, text: eligibilityError(elig) };
   if (typeof input.areaKey !== 'string' || parseAreaKey(input.areaKey) === null) return { ok: false, bedrooms: null, text: MESSAGES.area };
   return areaPreviewView(await deps.areaPreview(input.areaKey));
+}
+
+// ── The video (38b): change voice, try again, poll, view link ──
+
+/** The version the screen showed, as a number: the new actions need it (a pack that moved on is never changed unseen). */
+const shownVersion = (v: unknown): number | undefined => (typeof v === 'string' && /^[0-9]{1,6}$/.test(v) ? Number(v) : typeof v === 'number' && Number.isInteger(v) && v > 0 && v < 1_000_000 ? v : undefined);
+
+/** The owner's own pack, only when `packId` names it; a missing pack id is not a pack. */
+async function mustOwnPack(deps: AdsDeps, ownerId: string, packId: unknown): Promise<PackView | null> {
+  if (typeof packId !== 'string' || packId === '') return null;
+  const mine = await ownPack(deps, ownerId, packId);
+  return mine.ok ? mine.view : null;
+}
+
+export async function changeVoiceOp(deps: AdsDeps, input: { packId?: unknown; voiceKey?: unknown; version?: unknown }): Promise<AdsState> {
+  const s = await deps.session();
+  if (!s.ok) return { error: sessionError(s) };
+  const elig = await deps.eligibility(s.ownerId, { admin: s.admin });
+  if (!elig.eligible) return { error: eligibilityError(elig) };
+  if (!(await mustOwnPack(deps, s.ownerId, input.packId))) return { error: MESSAGES.not_found };
+  if (!isVoiceKey(input.voiceKey)) return { error: MESSAGES.voice };
+  const expectedVersion = shownVersion(input.version);
+  if (expectedVersion === undefined) return { error: MESSAGES.not_found };
+
+  const out = await deps.changeVoice({ ownerId: s.ownerId, voiceKey: input.voiceKey, expectedVersion });
+  if (!out.ok) return { error: videoActionMessage(out.code, out.message) };
+  return { ok: true, notice: out.free ? 'Your video is being made again with the new voice. This change was free.' : 'Your video is being made again with the new voice. It usually takes 3 to 6 minutes.' };
+}
+
+export async function retryVideoOp(deps: AdsDeps, input: { packId?: unknown; version?: unknown }): Promise<AdsState> {
+  const s = await deps.session();
+  if (!s.ok) return { error: sessionError(s) };
+  const elig = await deps.eligibility(s.ownerId, { admin: s.admin });
+  if (!elig.eligible) return { error: eligibilityError(elig) };
+  if (!(await mustOwnPack(deps, s.ownerId, input.packId))) return { error: MESSAGES.not_found };
+  const expectedVersion = shownVersion(input.version);
+  if (expectedVersion === undefined) return { error: MESSAGES.not_found };
+
+  const out = await deps.retryVideo({ ownerId: s.ownerId, expectedVersion });
+  if (!out.ok) return { error: videoActionMessage(out.code, out.message) };
+  return { ok: true, notice: 'Trying again. Your video usually takes 3 to 6 minutes.' };
+}
+
+/**
+ * The screen asks every few seconds while the video is being made. Read only, so no eligibility lookup (it would
+ * repeat every few seconds): the pack read is already the session owner's, and the pack id must be theirs.
+ */
+export async function pollPackOp(deps: AdsDeps, input: { packId?: unknown }): Promise<PollState> {
+  const s = await deps.session();
+  if (!s.ok) return { ok: false };
+  const view = await mustOwnPack(deps, s.ownerId, input.packId);
+  if (!view) return { ok: false };
+  return { ok: true, ...pollViewOf(view) };
+}
+
+/**
+ * A one-hour view link (not a download) for one file of the owner's own READY video, or its poster: the player asks
+ * when its first link has run out. Only the three video names and the poster are ever signed.
+ */
+export async function videoUrlOp(deps: AdsDeps, input: { adId?: unknown; fileName?: unknown }): Promise<DownloadState> {
+  const s = await deps.session();
+  if (!s.ok) return { ok: false, error: sessionError(s) };
+  if (typeof input.adId !== 'string' || input.adId === '' || typeof input.fileName !== 'string') return { ok: false, error: MESSAGES.download };
+  if (!isVideoFileName(input.fileName) && input.fileName !== VIDEO_POSTER_NAME) return { ok: false, error: MESSAGES.download };
+  const ad = await deps.getAd(s.ownerId, input.adId);
+  if (!ad || ad.ownerId !== s.ownerId || !ad.files.video || ad.files.video.status !== 'ready') return { ok: false, error: MESSAGES.download };
+  const file = [...ad.files.video.videos, ad.files.video.poster].find((f) => f.name === input.fileName);
+  if (!file || !file.path.startsWith(`${s.ownerId}/`) || file.path.includes('..')) return { ok: false, error: MESSAGES.download };
+  const url = await deps.previewUrl(s.ownerId, file.path);
+  return url ? { ok: true, url } : { ok: false, error: MESSAGES.download };
 }

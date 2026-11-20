@@ -14,7 +14,7 @@ import { AdSection } from "./AdSection";
 import { Guide } from "./Guide";
 import { ApproveForm, GenerateForm, type PhotoItem } from "./AdPackClient";
 import { packScreen, regenView } from "./state";
-import { adViewModel, areaPreviewView, brandOfSettings, brandProblemText, checksFailedView, eligibilityView, figureCallout, type AreaPreviewView } from "./view";
+import { adViewModel, approvalVm, areaPreviewView, brandOfSettings, brandProblemText, checksFailedView, eligibilityView, figureCallout, voiceVm, type AreaPreviewView } from "./view";
 
 export const metadata: Metadata = { title: "Your ad pack — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -136,7 +136,8 @@ export default async function AdsPage() {
   const regen = regenView(view, { company: brand.company, logoUrl: brand.logoUrl, brandColour: brand.brandColour, feePct: brand.feePct });
   const packPhotos = (pack.photos ?? []).filter((ref) => ownUploadRef(ownerId, ref));
   const ads = screen.kind === "checks_failed" ? [] : view.ads;
-  const previewPaths = ads.flatMap((a) => a.files.images.map((f) => f.path));
+  // The notice ad's video (once ready): the three sizes and the poster get view links too, so the player has its first link at once.
+  const previewPaths = ads.flatMap((a) => [...a.files.images.map((f) => f.path), ...(a.files.video && a.files.video.status === "ready" ? [...a.files.video.videos, a.files.video.poster].map((f) => f.path) : [])]);
   const urls = await signedPreviewUrls(ownerId, [...previewPaths, ...packPhotos]);
   const initialPhotos: PhotoItem[] = packPhotos.map((ref) => ({ ref, url: urls.get(ref) ?? null }));
   const currentKey = pack.areaKey ?? null;
@@ -189,7 +190,9 @@ export default async function AdsPage() {
   // ── Preview and approved ──
   const approved = screen.kind === "approved";
   const figure = figureCallout(pack.figures);
-  const adVms = ads.map((a) => adViewModel(a, (path) => urls.get(path) ?? null));
+  const adVms = ads.map((a) => adViewModel(a, (path) => urls.get(path) ?? null, a.angle === "5b" ? view.video : null));
+  const voice = voiceVm(view.voice);
+  const approval = approvalVm(view);
 
   return (
     <Frame intro={approved ? "Your ads are ready. Download the images and copy every text, one tap each." : "Here are your three ads. Have a look, then approve them."}>
@@ -210,9 +213,9 @@ export default async function AdsPage() {
         </p>
       ) : null}
 
-      {adVms.map((ad) => <AdSection key={ad.id} ad={ad} approved={approved} />)}
+      {adVms.map((ad) => <AdSection key={ad.id} ad={ad} approved={approved} pack={{ id: pack.id, version: pack.version, voiceKey: pack.voiceKey }} voice={voice} />)}
 
-      {approved || pack.status !== "preview" ? null : <ApproveForm packId={pack.id} version={pack.version} />}
+      {approved || pack.status !== "preview" ? null : <ApproveForm packId={pack.id} version={pack.version} blockedReason={approval.ok ? null : approval.message} />}
 
       {approved ? (
         <section id="guide" className={card}>
@@ -220,7 +223,7 @@ export default async function AdsPage() {
           <p className="mt-1 text-sm text-muted-foreground">One step at a time, on your own Meta account. We never touch it, and you can stop and come back whenever you like.</p>
           <div className="mt-4">
             <Guide
-              ads={adVms.map((a) => ({ id: a.id, title: a.title, videoText: a.videoText, copy: a.copy }))}
+              ads={adVms.map((a) => ({ id: a.id, title: a.title, isVideo: a.video !== null, copy: a.copy }))}
               shots={availableGuideShots()}
               storageKey={pack.id}
             />

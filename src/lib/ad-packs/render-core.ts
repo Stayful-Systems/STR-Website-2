@@ -357,11 +357,11 @@ export function scriptLinesOf(ad: Pick<PackAdRow, 'texts'>): string[] {
 }
 
 /** Read ad-render/ files from disk (explicit list), relative to the process's working folder. */
-export async function loadRendererFiles(root: string = path.join(process.cwd(), 'ad-render')): Promise<RendererFile[]> {
+export async function loadRendererFiles(root: string = path.join(/*turbopackIgnore: true*/ process.cwd(), 'ad-render')): Promise<RendererFile[]> {
   const out: RendererFile[] = [];
   for (const rel of RENDERER_FILES) {
     try {
-      out.push({ path: `ad-render/${rel}`, content: new Uint8Array(await readFile(path.join(root, rel))) });
+      out.push({ path: `ad-render/${rel}`, content: new Uint8Array(await readFile(path.join(/*turbopackIgnore: true*/ root, rel))) });
     } catch {
       throw new RenderFail('missing_asset');
     }

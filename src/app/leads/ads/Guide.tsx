@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { GUIDE_STEPS, clampStep, copyListFor, needsAdPicker, nextStepIndex, prevStepIndex, screenshotView, stepNumberLabel } from "@/lib/ad-packs/guide";
+import { GUIDE_STEPS, clampStep, copyListFor, needsAdPicker, nextStepIndex, prevStepIndex, screenshotView, stepNumberLabel, uploadHint } from "@/lib/ad-packs/guide";
 import { TextRow } from "./AdPackClient";
 import type { AdCopy } from "./view";
 
@@ -15,7 +15,7 @@ import type { AdCopy } from "./view";
  * id="guide", so /leads/ads#guide opens straight to it.
  */
 
-export type GuideAd = { id: string; title: string; videoText: string | null; copy: AdCopy };
+export type GuideAd = { id: string; title: string; /** The notice ad is a video; the other two are images. */ isVideo: boolean; copy: AdCopy };
 
 const TOTAL = GUIDE_STEPS.length;
 
@@ -93,10 +93,8 @@ export function Guide({ ads, shots, storageKey }: { ads: GuideAd[]; shots: strin
               </Button>
             ))}
           </div>
-          {ad?.videoText ? (
-            <p className="mt-2 rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground">
-              Video arrives soon. The name, link and texts for this ad are ready now, so you can set them up and add the video when it comes.
-            </p>
+          {ad && step.id === "upload-file" ? (
+            <p className="mt-2 rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground">{uploadHint(ad.isVideo)}</p>
           ) : null}
         </div>
       ) : null}

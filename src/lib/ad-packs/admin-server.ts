@@ -7,7 +7,7 @@ import { ownSite, parseSiteSettings, siteById } from '../websites/store-server';
 import { linkMissingLeads } from './attribution-server';
 import { generatePack } from './generate-server';
 import { adPackAdminRunner, type AdPackAdminRunner, type RegenSource } from './admin-run.ts';
-import { ADMIN_PACK_LIMIT, buildAdminView, type AdminAdInput, type AdminLinkInput, type AdminOwnerInput, type AdminView } from './admin-view.ts';
+import { ADMIN_PACK_LIMIT, buildAdminView, type AdminAdInput, type AdminLinkInput, type AdminOwnerInput, type AdminRenderInput, type AdminView } from './admin-view.ts';
 import { PACK_COLUMNS, toPackRow } from './rows.ts';
 import type { PackRow } from './store-types.ts';
 
@@ -16,7 +16,8 @@ import type { PackRow } from './store-types.ts';
  *
  * Reads (light, limited): ad_packs (newest first, 200 at most), the owners'
  * email (profiles) and company name (websites.settings), the packs' ads
- * (id, pack, version, angle, code) and the link rows of those owners
+ * (id, pack, version, angle, code), the packs' video renders (38b: voice, state,
+ * attempts, short error code, cost) and the link rows of those owners
  * (owner, pack ad, match only: never a lead's id or contact details).
  *
  * Writes: none here. The actions go through generatePack (by:'admin') and
@@ -47,14 +48,16 @@ export async function loadAdPacksAdmin(): Promise<AdPacksAdminData> {
 
   const ownerIds = [...new Set(packs.map((p) => p.ownerId))];
   const packIds = packs.map((p) => p.id);
-  const [profiles, sites, adsRes] = await Promise.all([
+  const [profiles, sites, adsRes, rendersRes] = await Promise.all([
     db.from('profiles').select('id, email').in('id', ownerIds),
     db.from('websites').select('user_id, settings').in('user_id', ownerIds),
     db.from('ad_pack_ads').select('id, pack_id, version, angle, code').in('pack_id', packIds).limit(5000),
+    // 38b: the notice video's renders. States, counts and short codes only: never the files or a sandbox id.
+    db.from('ad_pack_renders').select('pack_id, version, voice_key, state, attempts, error_code, cost_pence').in('pack_id', packIds).limit(5000),
   ]);
 
   let readError: string | null = null;
-  for (const [name, res] of [['profiles', profiles], ['websites', sites], ['ad_pack_ads', adsRes]] as const) {
+  for (const [name, res] of [['profiles', profiles], ['websites', sites], ['ad_pack_ads', adsRes], ['ad_pack_renders', rendersRes]] as const) {
     if (res.error) {
       console.error(`[ad-packs] admin ${name} read failed:`, res.error.code ?? 'error');
       readError = 'Some details could not be read just now.';
@@ -73,6 +76,10 @@ export async function loadAdPacksAdmin(): Promise<AdPacksAdminData> {
   }
   const ads = ((adsRes.data ?? []) as { id: string; pack_id: string; version: number; angle: string; code: string }[]).map(
     (a): AdminAdInput => ({ id: a.id, packId: a.pack_id, version: a.version, angle: a.angle, code: a.code }),
+  );
+
+  const renders = ((rendersRes.data ?? []) as { pack_id: string; version: number | string; voice_key: string | null; state: string; attempts: number | string | null; error_code: string | null; cost_pence: number | string | null }[]).map(
+    (r): AdminRenderInput => ({ packId: r.pack_id, version: Number(r.version) || 1, voiceKey: r.voice_key ?? '', state: r.state, attempts: Number(r.attempts) || 0, errorCode: r.error_code ?? null, costPence: Number(r.cost_pence) || 0 }),
   );
 
   // Link rows, a page at a time (the database returns 1000 at most). Only owner, ad and match.
@@ -96,7 +103,7 @@ export async function loadAdPacksAdmin(): Promise<AdPacksAdminData> {
     if (page === MAX_LINK_PAGES - 1) linksTruncated = true;
   }
 
-  return { available: true, readError, view: buildAdminView({ packs, owners, ads, links }), linksTruncated };
+  return { available: true, readError, view: buildAdminView({ packs, owners, ads, links, renders }), linksTruncated };
 }
 
 /**

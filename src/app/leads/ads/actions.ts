@@ -8,11 +8,11 @@ import { isAdminEmail } from '@/lib/admin';
 import { recordActivity } from '@/lib/activity/log';
 import { packEligibility } from '@/lib/ad-packs/eligibility-server';
 import { areaPreview } from '@/lib/ad-packs/area-server';
-import { approvePack, generatePack, listPackForOwner } from '@/lib/ad-packs/generate-server';
+import { approvePack, changeVoice, generatePack, listPackForOwner, retryVideo } from '@/lib/ad-packs/generate-server';
 import { createLiveStore, signedDownloadUrl, uploadFile } from '@/lib/ad-packs/store-server';
 import { countUploads, signedPreviewUrl } from '@/lib/ad-packs/files-server';
 import { PHOTO_MAX_BYTES, PHOTO_MESSAGES } from '@/lib/ad-packs/photos';
-import { approveOp, areaPreviewOp, copyOp, downloadOp, generateOp, uploadPhotoOp, type AdsDeps, type AdsState, type DownloadState, type Session, type UploadState } from './ops';
+import { approveOp, areaPreviewOp, changeVoiceOp, copyOp, downloadOp, generateOp, pollPackOp, retryVideoOp, uploadPhotoOp, videoUrlOp, type AdsDeps, type AdsState, type DownloadState, type PollState, type Session, type UploadState } from './ops';
 import { ADS_PATH, type AreaPreviewView } from './view';
 
 /**
@@ -39,6 +39,8 @@ function liveDeps(): AdsDeps {
     listPack: listPackForOwner,
     generate: generatePack,
     approve: approvePack,
+    changeVoice,
+    retryVideo,
     getAd: (ownerId, packAdId) => createLiveStore().getPackAd(ownerId, packAdId),
     signDownload: signedDownloadUrl,
     upload: uploadFile,
@@ -58,6 +60,8 @@ export async function generatePackAction(_prev: AdsState, formData: FormData): P
     areaKey: text(formData.get('areaKey')),
     photoRefs: formData.getAll('photoRef').filter((v): v is string => typeof v === 'string'),
     typeOnly: text(formData.get('typeOnly')) === 'on',
+    // 38b: the voice picked in the form (a regenerate sends none and keeps the pack's voice); ops.ts checks it is one of the three.
+    voiceKey: text(formData.get('voiceKey')),
   });
   // Whether it worked or not the pack may have moved (made, failed, checks failed): the page reads it again.
   revalidatePath(ADS_PATH);
@@ -68,6 +72,30 @@ export async function approvePackAction(_prev: AdsState, formData: FormData): Pr
   const out = await approveOp(liveDeps(), { packId: text(formData.get('packId')), version: text(formData.get('version')) });
   revalidatePath(ADS_PATH);
   return out;
+}
+
+/** 38b: another voice for the video, before approving; the version on screen is pinned. */
+export async function changeVoiceAction(_prev: AdsState, formData: FormData): Promise<AdsState> {
+  const out = await changeVoiceOp(liveDeps(), { packId: text(formData.get('packId')), voiceKey: text(formData.get('voiceKey')), version: text(formData.get('version')) });
+  revalidatePath(ADS_PATH);
+  return out;
+}
+
+/** 38b: try a failed video again. */
+export async function retryVideoAction(_prev: AdsState, formData: FormData): Promise<AdsState> {
+  const out = await retryVideoOp(liveDeps(), { packId: text(formData.get('packId')), version: text(formData.get('version')) });
+  revalidatePath(ADS_PATH);
+  return out;
+}
+
+/** 38b: asked every few seconds while the video is made. Read only; answers with the video, approve and voice fields. */
+export async function pollPackAction(packId: string): Promise<PollState> {
+  return pollPackOp(liveDeps(), { packId });
+}
+
+/** 38b: a fresh one-hour view link for a file of the owner's own ready video, for the player. */
+export async function videoUrlAction(adId: string, fileName: string): Promise<DownloadState> {
+  return videoUrlOp(liveDeps(), { adId, fileName });
 }
 
 /** A short signed link to one file of one of the owner's ads. */

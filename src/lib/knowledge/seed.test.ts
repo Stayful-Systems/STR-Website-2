@@ -110,3 +110,22 @@ test('the seed plan skips a retired entry whose seed text changed', async () => 
   const same = planSeed([{ slug: e.slug, seedHash: 'same', draftState: 'none', draftSource: null, retired: true }], [e], () => 'same');
   assert.deepEqual(same.unchanged, [e.slug]);
 });
+
+// Batch 38b: the ad pack's video is part of the pack; the draft says so, the count is a placeholder, nothing says "later release".
+test('the ad pack drafts cover the tenant notice video and its voice, with the count as a placeholder', async () => {
+  const { SERVICE_FACTS } = await import('./service-facts.ts');
+  const adpack = SEED.filter((e) => e.slug.startsWith('adpack_'));
+  assert.deepEqual(adpack.map((e) => e.slug), ['adpack_what', 'adpack_who', 'adpack_regenerate', 'adpack_video_voice', 'adpack_tagging', 'adpack_not_included']);
+  const voice = SEED.find((e) => e.slug === 'adpack_video_voice');
+  assert.ok(voice);
+  assert.match(voice.answer, /\{ad_pack_voice_changes\}/);
+  assert.match(voice.answer, /sample/);
+  assert.match(voice.answer, /few minutes/);
+  assert.match(voice.answer, /isn’t available yet/);
+  assert.deepEqual(voice.channels, ['view', 'chat']);
+  assert.match(SEED.find((e) => e.slug === 'adpack_what')!.answer, /voiceover/);
+  for (const e of adpack) assert.doesNotMatch(`${e.question} ${e.variants.join(' ')} ${e.answer}`, /later release|coming soon|arrives/i, e.slug);
+  assert.doesNotMatch(SERVICE_FACTS, /later release|arrives in a later|don't promise a date/);
+  assert.match(SERVICE_FACTS, /tenant notice video/i);
+  assert.match(SERVICE_FACTS, /\{ad_pack_voice_changes\}/);
+});

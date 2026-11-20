@@ -130,6 +130,7 @@ export function AdPacksPanel({ view }: { view: AdminView }) {
                 <th className="pr-3 font-medium">Approved</th>
                 <th className="pr-3 font-medium">Regens</th>
                 <th className="pr-3 font-medium">Cost</th>
+                <th className="pr-3 font-medium">Video</th>
                 <th className="pr-3 font-medium">Leads per ad</th>
                 <th className="pr-3 font-medium">No ad</th>
                 <th className="font-medium">Regenerate</th>
@@ -148,6 +149,14 @@ export function AdPacksPanel({ view }: { view: AdminView }) {
                   <td className="pr-3">{day(r.approvedAt)}</td>
                   <td className="pr-3">{r.regenCount}</td>
                   <td className="pr-3">{r.costLabel}</td>
+                  <td className="pr-3">
+                    <div className="font-medium text-foreground">{r.video.voiceLabel} · {r.video.stateLabel}</div>
+                    <ul className="text-muted-foreground">
+                      {r.video.hasRender ? <li>{r.video.attempts} {r.video.attempts === 1 ? "attempt" : "attempts"}</li> : null}
+                      {r.video.errorCode ? <li>Code: <span className="font-mono">{r.video.errorCode}</span></li> : null}
+                      <li>Render cost {r.video.renderCostLabel}</li>
+                    </ul>
+                  </td>
                   <td className="pr-3">
                     <div className="font-medium text-foreground">{r.taggedLeads} in all</div>
                     <ul className="text-muted-foreground">

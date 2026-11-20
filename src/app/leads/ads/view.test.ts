@@ -19,8 +19,26 @@ import {
   figureCallout,
   groupCardFiles,
   lengthView,
-  videoSlotText,
+  approvalVm,
+  isVideoFileName,
+  pollStep,
+  pollViewOf,
+  POLL_GIVE_UP_MS,
+  POLL_INTERVAL_MS,
+  VIDEO_ACTION_TEXT,
+  VIDEO_FILE_LABELS,
+  videoActionMessage,
+  videoCardView,
+  videoFilesOf,
+  videoViewOfSlot,
+  videoVm,
+  voiceCards,
+  voiceVm,
+  VOICE_STEP_HELP,
 } from './view.ts';
+import { VOICES } from '../../../lib/ad-packs/voices.ts';
+import { VIDEO_ACTION_CODES, VIDEO_MESSAGES, type PackView } from '../../../lib/ad-packs/generate-core.ts';
+import { readyVideo } from '../../../lib/ad-packs/test-store.ts';
 
 const OWNER = '3f9a2c11-1111-4111-8111-111111111111';
 
@@ -139,10 +157,6 @@ test('files are grouped by card with plain size words; the preview is the 4:5 fi
   assert.equal(groupCardFiles([{ name: '3a-card3-9x16.png', width: 1, height: 1 }])[0].previewName, '3a-card3-9x16.png');
 });
 
-test('the 5b ad shows "Video coming soon"; an image ad shows no video slot', () => {
-  assert.equal(videoSlotText({ status: 'coming' }), 'Video coming soon');
-  assert.equal(videoSlotText(null), null);
-});
 
 test('a generated pack becomes three ad view models: 5b with its video slot and no cards, the others with five cards of three files', async () => {
   const h = harness();
@@ -156,10 +170,11 @@ test('a generated pack becomes three ad view models: 5b with its video slot and 
   const vms = view.ads.map((a) => adViewModel(a, (path) => `https://signed.example.test/${path}`));
   assert.deepEqual(vms.map((v) => v.angle), ['5b', '3a', '17']);
   const b = vms[0];
-  assert.equal(b.videoText, 'Your video is being made');
+  assert.equal(b.video?.card.state, 'queued');
+  assert.equal(b.video?.card.poll, true);
   assert.equal(b.cards.length, 0);
   for (const v of vms.slice(1)) {
-    assert.equal(v.videoText, null);
+    assert.equal(v.video, null);
     assert.equal(v.cards.length, 5);
     assert.ok(v.cards.every((c) => c.files.length === 3 && c.previewUrl?.includes('-4x5.png')));
   }
@@ -237,4 +252,169 @@ test('the entry card says something plain for every pack status, with no code', 
   assert.equal(entryCardView(null).cta, 'Make my ads');
   assert.equal(entryCardView('preview').cta, 'Look at my ads');
   assert.equal(entryCardView('approved').title, 'Your ads are ready to use');
+});
+
+
+// ── The voice step and the video (38b) ──
+
+test('the voice step: three cards from the voice list, each with its free sample clip, and the plain instruction', () => {
+  const cards = voiceCards();
+  assert.deepEqual(cards.map((c) => c.key), ['jane', 'olivia', 'oliver']);
+  for (const c of cards) {
+    assert.ok(c.label && c.description.length > 10);
+    assert.match(c.previewUrl, /^https:\/\//, 'the sample plays from a secure address');
+    assert.equal(c.previewUrl, VOICES.find((v) => v.key === c.key)!.previewUrl);
+  }
+  assert.equal(VOICE_STEP_HELP, 'Pick the voice for your video. Press play to hear it first.');
+});
+
+const pending = { status: 'queued', code: null, poll: true, canRetry: false, message: null } as const;
+
+test('the video card: making, ready, and each failure has one plain sentence and the right action', () => {
+  const making = videoCardView(pending);
+  assert.equal(making.poll, true);
+  assert.equal(making.action, 'none');
+  assert.match(making.message ?? '', /^Making your video… this usually takes 3 to 6 minutes\. You can leave this page and come back\.$/);
+  assert.equal(videoCardView({ ...pending, status: 'making' }).state, 'making');
+
+  const ready = videoCardView({ status: 'ready', code: null, poll: false, canRetry: false, message: null });
+  assert.deepEqual([ready.poll, ready.message, ready.action], [false, null, 'none']);
+
+  const voice = videoCardView({ status: 'failed', code: 'voice_unavailable', poll: false, canRetry: false, message: VIDEO_MESSAGES.voice_unavailable });
+  assert.equal(voice.action, 'change_voice');
+  assert.equal(voice.message, "That voice isn't available yet. Please choose another.");
+
+  const retry = videoCardView({ status: 'failed', code: 'sandbox_failed', poll: false, canRetry: true, message: VIDEO_MESSAGES.video_failed });
+  assert.equal(retry.action, 'retry');
+  assert.match(retry.message ?? '', /Try again/);
+
+  const stuck = videoCardView({ status: 'failed', code: 'bad_brief', poll: false, canRetry: false, message: VIDEO_MESSAGES.video_failed });
+  assert.equal(stuck.action, 'contact');
+  assert.doesNotMatch(stuck.message ?? '', /Try again/, 'there is no button to press');
+
+  assert.equal(videoCardView({ status: 'coming', code: null, poll: false, canRetry: false, message: null }).action, 'contact');
+  // Whatever the code, nothing internal is shown and nothing says "coming soon" or "later release".
+  for (const code of ['sandbox_failed', 'monthly_cap', 'voice_quota', 'timeout', 'voice_unavailable', null]) {
+    for (const canRetry of [true, false]) {
+      const v = videoCardView({ status: 'failed', code, poll: false, canRetry, message: null });
+      const everything = `${v.heading} ${v.message}`;
+      assert.doesNotMatch(everything, LOOKS_LIKE_A_CODE, `${code}: ${everything}`);
+      assert.doesNotMatch(everything, /coming soon|later release|arrives/i);
+    }
+  }
+});
+
+test('the video slot of an ad stands in for the live state when there is none', () => {
+  assert.equal(videoViewOfSlot(null).status, 'coming');
+  assert.equal(videoViewOfSlot({ status: 'coming' }).status, 'coming');
+  assert.deepEqual(videoViewOfSlot({ status: 'queued' }), { status: 'queued', code: null, poll: true, canRetry: false, message: null });
+  assert.equal(videoViewOfSlot({ status: 'making' }).poll, true);
+  assert.equal(videoViewOfSlot({ status: 'failed', code: 'voice_unavailable' }).code, 'voice_unavailable');
+  assert.equal(videoViewOfSlot(readyVideo(OWNER, 'p', 1)).poll, false);
+});
+
+test('the video files: three sizes in order with their plain labels, the poster, and only for a ready video', () => {
+  const ready = readyVideo(OWNER, 'pack-1', 1);
+  const shuffled = { ...ready, videos: [...ready.videos].reverse() };
+  const out = videoFilesOf(shuffled);
+  assert.deepEqual(out.files.map((f) => f.label), ['Stories and Reels (9:16)', 'Feed (4:5)', 'Square (1:1)']);
+  assert.deepEqual(out.files.map((f) => f.ratio), ['9:16', '4:5', '1:1']);
+  assert.equal(out.poster, 'notice-poster.png');
+  assert.equal(out.seconds, 38);
+  assert.deepEqual(videoFilesOf({ status: 'queued' }), { files: [], poster: null, seconds: null });
+  assert.deepEqual(videoFilesOf(null), { files: [], poster: null, seconds: null });
+  // A name that is not one of the three is not offered; inherited object keys are not names.
+  const odd = videoFilesOf({ ...ready, videos: [...ready.videos, { ...ready.videos[0], name: 'voice.mp3' }, { ...ready.videos[0], name: 'toString' }] });
+  assert.equal(odd.files.length, 3);
+  assert.ok(isVideoFileName('notice-1x1.mp4') && !isVideoFileName('toString') && !isVideoFileName('notice-poster.png') && !isVideoFileName(3));
+  assert.deepEqual(Object.keys(VIDEO_FILE_LABELS), ['notice-9x16.mp4', 'notice-4x5.mp4', 'notice-1x1.mp4']);
+});
+
+test('videoVm: view links only for a ready video, by file name', () => {
+  const ready = readyVideo(OWNER, 'pack-1', 1);
+  const vm = videoVm(ready, videoViewOfSlot(ready), (p) => `https://signed.example.test/${p}`);
+  assert.equal(vm.card.state, 'ready');
+  assert.deepEqual(Object.keys(vm.urls).sort(), ['notice-1x1.mp4', 'notice-4x5.mp4', 'notice-9x16.mp4', 'notice-poster.png']);
+  assert.equal(vm.urls['notice-9x16.mp4'], `https://signed.example.test/${OWNER}/pack-1/v1/notice-9x16.mp4`);
+  const waiting = videoVm({ status: 'queued' }, videoViewOfSlot({ status: 'queued' }), () => 'https://x.example.test/');
+  assert.deepEqual([waiting.files, waiting.urls], [[], {}]);
+  // A signer that cannot sign leaves the link out.
+  assert.deepEqual(videoVm(ready, videoViewOfSlot(ready), () => null).urls, {});
+});
+
+test('every refusal code of the video actions has a plain sentence, and a sentence from the generator wins over a code', () => {
+  const codes = [...VIDEO_ACTION_CODES, 'cost_cap', 'monthly_cap', 'spend_unknown'];
+  assert.deepEqual(Object.keys(VIDEO_ACTION_TEXT).sort(), [...codes].sort());
+  for (const [code, text] of Object.entries(VIDEO_ACTION_TEXT)) {
+    assert.ok(/[.]$/.test(text) && text.length > 20, code);
+    assert.doesNotMatch(text, LOOKS_LIKE_A_CODE, code);
+  }
+  // Where the generator has its own wording, the screen says the same thing.
+  for (const key of ['after_approval', 'same_voice', 'voice_limit_used', 'video_running', 'not_retryable'] as const) assert.equal(VIDEO_ACTION_TEXT[key], VIDEO_MESSAGES[key]);
+  assert.equal(videoActionMessage('same_voice', 'A short but real sentence.'), 'A short but real sentence.');
+  assert.equal(videoActionMessage('same_voice', 'same_voice'), VIDEO_ACTION_TEXT.same_voice);
+  assert.equal(videoActionMessage('nope', undefined), 'Something went wrong. Please try again.');
+  assert.equal(videoActionMessage(undefined, 'Error: x at /var/task/a.js:1:2 and more words'), 'Something went wrong. Please try again.');
+});
+
+/** A PackView with only the parts the video screen reads. */
+function packView(over: { video: PackView['video']; approval?: PackView['approval']; voice?: Partial<PackView['voice']> }): PackView {
+  return {
+    pack: { version: 3 } as PackView['pack'],
+    ads: [],
+    showAds: true,
+    olderCodes: [],
+    freeRegensLeft: 1,
+    render: null,
+    video: over.video,
+    voice: { key: 'jane', changesLeft: 1, canChange: true, free: false, blocked: null, ...over.voice },
+    approval: over.approval ?? { ok: true },
+  };
+}
+
+test('approve is off, with a plain reason, while the video is being made, failed or missing, and on when it is ready', () => {
+  const v = (status: PackView['video']['status'], code: string | null = null, canRetry = false): PackView['video'] => ({ status, code, message: null, poll: status === 'queued' || status === 'making', canRetry });
+  assert.deepEqual(approvalVm(packView({ video: v('ready') })), { ok: true });
+  const waiting = approvalVm(packView({ video: v('making'), approval: { ok: false, code: 'video_pending', message: VIDEO_MESSAGES.video_pending } }));
+  assert.deepEqual(waiting, { ok: false, message: 'Your video is still being made. It usually takes a few minutes.' });
+  const failed = approvalVm(packView({ video: v('failed', 'bad_brief'), approval: { ok: false, code: 'video_failed', message: VIDEO_MESSAGES.video_failed } }));
+  assert.equal(failed.ok, false);
+  assert.doesNotMatch(failed.ok ? '' : failed.message, /Try again/, 'there is no retry button for this one');
+  const missing = approvalVm(packView({ video: v('coming'), approval: { ok: false, code: 'video_pending', message: VIDEO_MESSAGES.video_pending } }));
+  assert.match(missing.ok ? '' : missing.message, /no video with this pack/);
+  const checks = approvalVm(packView({ video: v('ready'), approval: { ok: false, code: 'not_preview', message: 'Only a pack that is ready to look at can be approved.' } }));
+  assert.deepEqual(checks, { ok: false, message: 'Only a pack that is ready to look at can be approved.' });
+});
+
+test('the voice step says how many changes are left, and that a free change is free', () => {
+  const base = { key: 'jane', changesLeft: 1, canChange: true, free: false, blocked: null } as const;
+  assert.equal(voiceVm(base).note, 'You can change the voice once before you approve.');
+  assert.equal(voiceVm({ ...base, changesLeft: 3 }).note, 'You can change the voice 3 times before you approve.');
+  assert.equal(voiceVm({ ...base, changesLeft: 0, canChange: false, blocked: { code: 'voice_limit_used', message: VIDEO_MESSAGES.voice_limit_used } }).note, 'You have used your voice change.');
+  assert.equal(voiceVm({ ...base, changesLeft: 0, free: true }).note, 'The first voice could not be used, so this change is free.');
+  const blocked = voiceVm({ ...base, canChange: false, blocked: { code: 'video_running', message: VIDEO_MESSAGES.video_running } });
+  assert.equal(blocked.blocked, VIDEO_MESSAGES.video_running);
+  assert.equal(voiceVm(base).currentLabel, 'Jane');
+  assert.equal(voiceVm({ ...base, key: null }).currentLabel, null);
+});
+
+test('polling stops when the video settles or the pack moves on, waits otherwise, and gives up after fifteen minutes', () => {
+  assert.equal(POLL_INTERVAL_MS, 8000);
+  assert.equal(POLL_GIVE_UP_MS, 15 * 60 * 1000);
+  assert.equal(pollStep({ startedMs: 0, nowMs: 8000, poll: true }), 'wait');
+  assert.equal(pollStep({ startedMs: 0, nowMs: 8000, poll: false }), 'settled');
+  assert.equal(pollStep({ startedMs: 0, nowMs: 8000, poll: true, versionChanged: true }), 'settled');
+  assert.equal(pollStep({ startedMs: 0, nowMs: POLL_GIVE_UP_MS - 1, poll: true }), 'wait');
+  assert.equal(pollStep({ startedMs: 0, nowMs: POLL_GIVE_UP_MS, poll: true }), 'give_up');
+  // A video that settled at the very end is a reload, not "taking longer".
+  assert.equal(pollStep({ startedMs: 0, nowMs: POLL_GIVE_UP_MS + 5000, poll: false }), 'settled');
+});
+
+test('a poll answer holds the version, the video card, the approve state and the voice step, and no ids, paths or codes', () => {
+  const view = packView({ video: { status: 'failed', code: 'sandbox_failed', message: VIDEO_MESSAGES.video_failed, poll: false, canRetry: true }, approval: { ok: false, code: 'video_failed', message: VIDEO_MESSAGES.video_failed } });
+  const out = pollViewOf(view);
+  assert.deepEqual(Object.keys(out).sort(), ['approval', 'version', 'video', 'voice']);
+  assert.equal(out.version, 3);
+  assert.equal(out.video.action, 'retry');
+  assert.doesNotMatch(JSON.stringify(out), /sandbox_failed|video_failed|[a-z]+_[a-z]+/);
 });

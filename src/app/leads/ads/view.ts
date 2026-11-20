@@ -17,6 +17,8 @@ import { ANGLE_LABELS } from '../../../lib/ad-packs/links.ts';
 import type { Angle } from '../../../lib/ad-packs/codes.ts';
 import type { CheckId } from '../../../lib/ad-packs/checks.ts';
 import type { AdFiles, AdTexts, PackStatus } from '../../../lib/ad-packs/store-types.ts';
+import type { PackView, VideoView } from '../../../lib/ad-packs/generate-core.ts';
+import { VOICES, voiceByKey, type VoiceKey } from '../../../lib/ad-packs/voices.ts';
 
 export const ADS_PATH = '/leads/ads';
 
@@ -229,13 +231,6 @@ export function groupCardFiles(files: readonly { name: string; width: number; he
     .map(([card, list]) => ({ card, files: list, previewName: (list.find((f) => /-4x5\.png$/i.test(f.name)) ?? list[0]).name }));
 }
 
-/** The 5b ad's video slot text: nothing for an image ad. (38b, B5b: the screen shows the live video state from PackView.video.) */
-export function videoSlotText(video: AdFiles['video']): string | null {
-  if (!video) return null;
-  if (video.status === 'coming') return 'Video coming soon';
-  return video.status === 'queued' || video.status === 'making' ? 'Your video is being made' : null;
-}
-
 export const angleTitle = (angle: Angle): string => ANGLE_LABELS[angle] ?? 'Ad';
 
 // ── A pack that did not pass its checks ──
@@ -312,14 +307,18 @@ export type AdVm = {
   adName: string;
   copy: AdCopy;
   cards: AdCardVm[];
-  /** "Video coming soon" for the 5b ad, null for an image ad. */
-  videoText: string | null;
+  /** The notice ad's video (38b), null for an image ad. */
+  video: VideoVm | null;
 };
 
-/** Everything the screen shows for one pack ad. `urlOf` turns a stored path into a view link (or null). */
+/**
+ * Everything the screen shows for one pack ad. `urlOf` turns a stored path into a view link (or null). `live` is the
+ * 5b video's live state from the pack read (it follows the render row); without it the ad's own video slot decides.
+ */
 export function adViewModel(
   ad: { id: string; angle: Angle; code: string; adName: string; link: string; texts: Pick<AdTexts, 'primary' | 'headlines' | 'descriptions'>; files: AdFiles },
   urlOf: (path: string) => string | null,
+  live?: Pick<VideoView, 'status' | 'code' | 'poll' | 'canRetry' | 'message'> | null,
 ): AdVm {
   const pathOf = (name: string) => ad.files.images.find((f) => f.name === name)?.path ?? null;
   return {
@@ -333,6 +332,213 @@ export function adViewModel(
       const path = pathOf(c.previewName);
       return { card: c.card, previewUrl: path ? urlOf(path) : null, files: c.files };
     }),
-    videoText: videoSlotText(ad.files.video),
+    video: ad.angle === '5b' ? videoVm(ad.files.video, live ?? videoViewOfSlot(ad.files.video), urlOf) : null,
   };
+}
+
+// ── The voice step (38b) ──
+
+export const VOICE_STEP_TITLE = 'Pick the voice for your video';
+export const VOICE_STEP_HELP = 'Pick the voice for your video. Press play to hear it first.';
+export const VOICE_CHANGE_TITLE = 'Change the voice';
+export const VOICE_REMAKE_NOTE = 'Your video is made again with the new voice. That takes 3 to 6 minutes.';
+
+export type VoiceCardVm = { key: VoiceKey; label: string; description: string; previewUrl: string };
+
+/** The three voices, each with the free sample clip the operator plays before choosing. */
+export function voiceCards(): VoiceCardVm[] {
+  return VOICES.map((v) => ({ key: v.key, label: v.label, description: v.description, previewUrl: v.previewUrl }));
+}
+
+// ── Plain words for the video actions (38b) ──
+
+const TRY_AGAIN = 'Something went wrong. Please try again.';
+
+/** Every refusal changeVoice and retryVideo can give, as one plain sentence (the generator's own wording where it has some). */
+export const VIDEO_ACTION_TEXT: Record<string, string> = {
+  invalid_input: TRY_AGAIN,
+  no_pack: 'We could not find your pack. Please reload the page and try again.',
+  not_preview: 'Only a pack that is ready to look at can be changed. Please reload the page and look at it again.',
+  after_approval: 'You can change the voice before you approve your ads.',
+  same_voice: 'That is the voice your video already has. Choose a different one.',
+  voice_limit_used: 'You have already used your voice change.',
+  video_running: 'Your video is being made right now. Wait until it is finished, then change the voice.',
+  not_retryable: 'There is nothing to try again right now.',
+  store_failed: TRY_AGAIN,
+  cost_cap: 'This pack would cost more than the limit for one pack, so it was not made.',
+  monthly_cap: 'The limit for making packs this month has been reached. Try again next month.',
+  spend_unknown: 'We could not check this month’s limit just now. Try again shortly.',
+};
+
+/**
+ * One sentence for a refusal. The generator's message is used when it reads as a sentence; anything that looks like an
+ * internal code, a stack line or is not text at all falls back to the sentence for the code, then to "try again".
+ */
+export function videoActionMessage(code: unknown, message: unknown): string {
+  const m = typeof message === 'string' ? message.trim() : '';
+  const sentence = m.length >= 8 && m.length <= 300 && /\s/.test(m) && !/[a-z]+_[a-z]+|\bat \S+:\d+|Error:|undefined|\[object/.test(m);
+  if (sentence) return m;
+  return (typeof code === 'string' ? VIDEO_ACTION_TEXT[code] : undefined) ?? TRY_AGAIN;
+}
+
+// ── The video's state, as the screen says it (38b) ──
+
+export const VIDEO_MAKING_TEXT = 'Making your video… this usually takes 3 to 6 minutes. You can leave this page and come back.';
+export const VIDEO_SLOW_TEXT = 'This is taking longer than usual. You can leave this page and come back later: your video keeps being made.';
+export const VOICE_UNAVAILABLE_TEXT = "That voice isn't available yet. Please choose another.";
+export const VIDEO_CONTACT_TEXT = 'We could not make your video. Please contact support and we will sort it out. Nothing has gone live.';
+export const VIDEO_MISSING_TEXT = 'There is no video with this pack yet. Please contact support and we will add it.';
+
+/** What the operator can do about the video: nothing, try again, choose another voice, or ask us. */
+export type VideoAction = 'none' | 'retry' | 'change_voice' | 'contact';
+
+export type VideoCardView = {
+  state: VideoView['status'];
+  heading: string;
+  /** One plain sentence, or null when the video is ready. Never a code. */
+  message: string | null;
+  /** Ask again every few seconds while true. */
+  poll: boolean;
+  action: VideoAction;
+};
+
+type VideoLike = Pick<VideoView, 'status' | 'code' | 'poll' | 'canRetry' | 'message'>;
+
+export function videoCardView(v: VideoLike): VideoCardView {
+  switch (v.status) {
+    case 'queued':
+    case 'making':
+      return { state: v.status, heading: 'Making your video', message: VIDEO_MAKING_TEXT, poll: true, action: 'none' };
+    case 'ready':
+      return { state: 'ready', heading: 'Your video', message: null, poll: false, action: 'none' };
+    case 'failed':
+      if (v.code === 'voice_unavailable') return { state: 'failed', heading: 'Your video needs another voice', message: VOICE_UNAVAILABLE_TEXT, poll: false, action: 'change_voice' };
+      if (v.canRetry) return { state: 'failed', heading: 'We could not make your video', message: videoActionMessage(null, v.message), poll: false, action: 'retry' };
+      return { state: 'failed', heading: 'We could not make your video', message: VIDEO_CONTACT_TEXT, poll: false, action: 'contact' };
+    default:
+      return { state: 'coming', heading: 'Your video', message: VIDEO_MISSING_TEXT, poll: false, action: 'contact' };
+  }
+}
+
+/** The video's state from the ad's own slot, for when the pack read has no render row to follow. */
+export function videoViewOfSlot(video: AdFiles['video']): VideoLike {
+  if (!video || video.status === 'coming') return { status: 'coming', code: null, poll: false, canRetry: false, message: null };
+  if (video.status === 'failed') return { status: 'failed', code: video.code, poll: false, canRetry: false, message: null };
+  return { status: video.status, code: null, poll: video.status === 'queued' || video.status === 'making', canRetry: false, message: null };
+}
+
+// ── The video files ──
+
+export type VideoFileVm = { name: string; label: string; ratio: '9:16' | '4:5' | '1:1'; width: number; height: number };
+
+/** The three sizes, in the order they are offered, named the way Meta names the placements. */
+export const VIDEO_FILE_LABELS: Record<string, { label: string; ratio: VideoFileVm['ratio']; order: number }> = {
+  'notice-9x16.mp4': { label: 'Stories and Reels (9:16)', ratio: '9:16', order: 0 },
+  'notice-4x5.mp4': { label: 'Feed (4:5)', ratio: '4:5', order: 1 },
+  'notice-1x1.mp4': { label: 'Square (1:1)', ratio: '1:1', order: 2 },
+};
+export const VIDEO_POSTER_NAME = 'notice-poster.png';
+export const isVideoFileName = (name: unknown): name is string => typeof name === 'string' && Object.prototype.hasOwnProperty.call(VIDEO_FILE_LABELS, name);
+
+/** The video files a ready video has, in order, with their plain labels; empty unless the video is ready. */
+export function videoFilesOf(video: AdFiles['video']): { files: VideoFileVm[]; poster: string | null; seconds: number | null } {
+  if (!video || video.status !== 'ready') return { files: [], poster: null, seconds: null };
+  const files = video.videos
+    .filter((f) => isVideoFileName(f.name))
+    .sort((a, b) => VIDEO_FILE_LABELS[a.name].order - VIDEO_FILE_LABELS[b.name].order)
+    .map((f): VideoFileVm => ({ name: f.name, label: VIDEO_FILE_LABELS[f.name].label, ratio: VIDEO_FILE_LABELS[f.name].ratio, width: f.width, height: f.height }));
+  return { files, poster: video.poster?.name === VIDEO_POSTER_NAME ? video.poster.name : null, seconds: video.durationSeconds > 0 ? Math.round(video.durationSeconds) : null };
+}
+
+export type VideoVm = {
+  card: VideoCardView;
+  files: VideoFileVm[];
+  poster: string | null;
+  /** View links by file name (the three videos and the poster), made for this owner's own files. */
+  urls: Record<string, string>;
+  seconds: number | null;
+};
+
+/** The 5b ad's video: its live state, and (when ready) its files with view links. */
+export function videoVm(video: AdFiles['video'], live: VideoLike, urlOf: (path: string) => string | null): VideoVm {
+  const card = videoCardView(live);
+  const { files, poster, seconds } = card.state === 'ready' ? videoFilesOf(video) : { files: [], poster: null, seconds: null };
+  const urls: Record<string, string> = {};
+  if (video && video.status === 'ready' && card.state === 'ready') {
+    for (const f of [...video.videos, video.poster]) {
+      const url = f ? urlOf(f.path) : null;
+      if (url) urls[f.name] = url;
+    }
+  }
+  return { card, files, poster, urls, seconds };
+}
+
+// ── Approve: why it may not be pressed yet ──
+
+export type ApprovalVm = { ok: true } | { ok: false; message: string };
+
+const VIDEO_PENDING_TEXT = 'Your video is still being made. It usually takes a few minutes.';
+
+/** Approve is off, with the plain reason, until the video is ready and every check has passed. */
+export function approvalVm(view: Pick<PackView, 'approval' | 'video'>): ApprovalVm {
+  if (view.approval.ok) return { ok: true };
+  const s = view.video.status;
+  if (s === 'queued' || s === 'making') return { ok: false, message: VIDEO_PENDING_TEXT };
+  if (s === 'failed' || s === 'coming') return { ok: false, message: videoCardView(view.video).message ?? VIDEO_CONTACT_TEXT };
+  return { ok: false, message: videoActionMessage(view.approval.code, view.approval.message) };
+}
+
+// ── Change voice ──
+
+export type VoiceVm = {
+  current: VoiceKey | null;
+  currentLabel: string | null;
+  canChange: boolean;
+  changesLeft: number;
+  /** The change would not use the allowance (the first voice could not be used). */
+  free: boolean;
+  /** How many changes are left, in a sentence. */
+  note: string;
+  /** Why a change is not possible right now, or null. */
+  blocked: string | null;
+};
+
+export function voiceVm(v: PackView['voice']): VoiceVm {
+  const note = v.free
+    ? 'The first voice could not be used, so this change is free.'
+    : v.changesLeft > 0
+      ? `You can change the voice ${v.changesLeft === 1 ? 'once' : `${v.changesLeft} times`} before you approve.`
+      : 'You have used your voice change.';
+  return {
+    current: v.key,
+    currentLabel: voiceByKey(v.key)?.label ?? null,
+    canChange: v.canChange,
+    changesLeft: v.changesLeft,
+    free: v.free,
+    note,
+    blocked: v.blocked ? videoActionMessage(v.blocked.code, v.blocked.message) : null,
+  };
+}
+
+// ── Polling while the video is made ──
+
+export const POLL_INTERVAL_MS = 8000;
+export const POLL_GIVE_UP_MS = 15 * 60 * 1000;
+
+export type PollStep = 'wait' | 'settled' | 'give_up';
+
+/**
+ * What the screen does after an answer from the server: keep waiting, reload the page because the video has
+ * settled (ready, failed, or the pack moved on), or stop and say it is taking longer than usual.
+ */
+export function pollStep(i: { startedMs: number; nowMs: number; poll: boolean; versionChanged?: boolean }): PollStep {
+  if (!i.poll || i.versionChanged) return 'settled';
+  return i.nowMs - i.startedMs >= POLL_GIVE_UP_MS ? 'give_up' : 'wait';
+}
+
+/** The lightweight answer to a poll: what the video, the approve button and the voice step need, nothing else. */
+export type PollView = { version: number; video: VideoCardView; approval: ApprovalVm; voice: VoiceVm };
+
+export function pollViewOf(view: PackView): PollView {
+  return { version: view.pack.version, video: videoCardView(view.video), approval: approvalVm(view), voice: voiceVm(view.voice) };
 }

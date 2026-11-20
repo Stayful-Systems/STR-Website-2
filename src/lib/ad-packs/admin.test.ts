@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { adPackAdminRunner, NOT_ALLOWED, pageGuard, planToken, type AdPackAdminDeps, type RegenSource } from './admin-run.ts';
-import { ADMIN_PACK_LIMIT, buildAdminView, type AdminAdInput, type AdminLinkInput } from './admin-view.ts';
+import { ADMIN_PACK_LIMIT, buildAdminView, type AdminAdInput, type AdminLinkInput, type AdminRenderInput } from './admin-view.ts';
 import { linkMissing, type AttributionStore, type LinkRow, type MissingLead } from './attribution.ts';
 import { operatorCode, packCode } from './codes.ts';
 import type { GenerateInput } from './generate-core.ts';
@@ -534,6 +534,53 @@ test('the view counts leads per ad and untagged leads per owner from sample rows
   assert.equal(b.untagged, 1);
   assert.equal(b.unplaced, 0);
   assert.deepEqual(totals, { packs: 2, taggedLeads: 6, untagged: 4, unplaced: 1, costPence: 150 });
+});
+
+const render = (packId: string, version: number, over: Partial<AdminRenderInput> = {}): AdminRenderInput => ({ packId, version, voiceKey: 'jane', state: 'done', attempts: 1, errorCode: null, costPence: 20, ...over });
+
+test('the view has a Video line per pack: voice, render state, attempts, short error code and the render cost so far', () => {
+  const packs = [
+    pack({ id: 'p-a', ownerId: OWNER_A, version: 2, voiceKey: 'olivia' }),
+    pack({ id: 'p-b', ownerId: OWNER_B, version: 1, voiceKey: 'oliver' }),
+    pack({ id: 'p-c', ownerId: OWNER_B, version: 1, voiceKey: null }),
+  ];
+  const renders = [
+    render('p-a', 1, { voiceKey: 'jane', costPence: 18 }),
+    render('p-a', 2, { voiceKey: 'olivia', state: 'failed', attempts: 3, errorCode: 'sandbox_failed', costPence: 35 }),
+    render('p-b', 1, { voiceKey: 'oliver', state: 'running', attempts: 1, costPence: 0 }),
+  ];
+  const { rows } = buildAdminView({ packs, owners: new Map(), ads: [], links: [], renders });
+  const [a, b, c] = rows.map((r) => r.video);
+  assert.deepEqual(a, { hasRender: true, voiceLabel: 'Olivia', state: 'failed', stateLabel: 'Failed', attempts: 3, errorCode: 'sandbox_failed', renderCostPence: 53, renderCostLabel: '£0.53' });
+  assert.deepEqual([b.voiceLabel, b.stateLabel, b.attempts, b.errorCode, b.renderCostLabel], ['Oliver', 'Running', 1, null, '£0']);
+  // A pack with no render yet says so, and costs nothing.
+  assert.deepEqual([c.hasRender, c.state, c.stateLabel, c.attempts, c.renderCostLabel], [false, null, 'No video yet', 0, '£0']);
+  // Only the current version's state and code are shown; the cost covers every version.
+  assert.equal(buildAdminView({ packs: [pack({ id: 'p-a', ownerId: OWNER_A, version: 3 })], owners: new Map(), ads: [], links: [], renders }).rows[0].video.hasRender, false);
+  // Without any render rows the view still works (the older call shape).
+  assert.equal(buildAdminView({ packs, owners: new Map(), ads: [], links: [] }).rows[2].video.stateLabel, 'No video yet');
+});
+
+test('the Video column shows only states, counts and short codes: never files, paths, sandbox ids or a text', () => {
+  const blob = JSON.stringify(buildAdminView({ packs: [pack({ id: 'p-a', ownerId: OWNER_A })], owners: new Map(), ads: [], links: [], renders: [render('p-a', 2, { errorCode: 'x'.repeat(200) })] }));
+  assert.doesNotMatch(blob, /sandbox_id|files|path|\.mp4|\.png|voice\.mp3/);
+  assert.ok(!blob.includes('x'.repeat(61)), 'an error code is cut at 60 characters');
+  const server = code(read('./admin-server.ts'));
+  assert.match(server, /select\('pack_id, version, voice_key, state, attempts, error_code, cost_pence'\)/);
+  assert.doesNotMatch(server, /sandbox_id|lease_until|\bfiles\b.*ad_pack_renders/);
+  const panel = code(read('../../app/admin/ad-packs/AdPacksPanel.tsx'));
+  assert.match(panel, /<th className="pr-3 font-medium">Video<\/th>/);
+  assert.match(panel, /r\.video\.voiceLabel/);
+  assert.doesNotMatch(panel, /requeue|Re-queue/i, 'no new action on a render from this screen');
+});
+
+test('the admin dry run says the video is made by the worker, not now, and never says "coming"', async () => {
+  const r = await rig();
+  r.site.company = 'Brightstone Lettings';
+  const dry = await r.runner.dryRegenerate(PACK_A);
+  const text = dry.lines.join('\n');
+  assert.match(text, /video, made by the render worker in Jane’s voice \(nothing is made by a dry run\)/);
+  assert.doesNotMatch(text, /video coming/i);
 });
 
 test('the view: a pack with no ads or links reads as zeros; no stored area means no regenerate; an unknown angle is skipped', () => {
