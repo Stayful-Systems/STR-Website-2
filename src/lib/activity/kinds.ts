@@ -90,6 +90,8 @@ export const ACTIVITY_KINDS = {
   lead_action: inApp('Worked a lead'),
   funnel_edited: inApp('Set up or changed a funnel'),
   api_key_created: inApp('Created an API key'),
+  // Batch 32: a confirmed link to the operator's lead database account (record only: no other new member action).
+  leaddb_connected: recordOnly('Connected the lead database'),
 
   // Money
   topup: inApp('Topped up'),

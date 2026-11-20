@@ -18,9 +18,10 @@ const section = start === -1 ? '' : sql.slice(start, after === -1 ? undefined : 
 const TABLES = ['websites', 'lead_sources', 'website_reports', 'website_report_slots', 'website_report_charges'];
 const FUNCTIONS = ['website_uk_day', 'website_setting_int', 'website_free_report_claim', 'website_report_charge'];
 
-test('the section is the last in the file and ends by reloading the schema cache', () => {
+test('the section ends by reloading the schema cache, and only Batch 32 (its own section) may follow it', () => {
   assert.ok(section.length > 0, 'no "Batch 31" section in schema.sql');
-  assert.equal(after, -1, 'nothing may follow the Batch 31 section');
+  // Batch 32 appends its own block after this one (it has its own checks in supabase/tests/leaddb-smoke.sql).
+  if (after !== -1) assert.match(sql.slice(after, after + 120), /^\n-- =+\n-- Batch 32: /, 'only Batch 32 may follow the Batch 31 section');
   assert.match(section.trimEnd(), /notify pgrst, 'reload schema';$/);
 });
 

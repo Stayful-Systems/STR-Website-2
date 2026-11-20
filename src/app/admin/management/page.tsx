@@ -9,6 +9,7 @@ import { money } from "@/lib/funnels/tiers";
 import { mcReport, type McAccount, type McCharge } from "@/lib/management/report";
 import { FunnelNoticePanel, TestMonthPanel } from "./Panels";
 import { WebsitesPanel } from "./WebsitesPanel";
+import { LeadDbFailuresPanel } from "./LeadDbFailuresPanel";
 import { loadWebsitesAdmin } from "@/lib/websites/admin-server";
 
 export const dynamic = "force-dynamic";
@@ -127,6 +128,7 @@ export default async function AdminManagement() {
       </div>
 
       <WebsitesPanel data={websites} />
+      <LeadDbFailuresPanel />
     </main>
   );
 }

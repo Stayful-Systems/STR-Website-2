@@ -6,6 +6,8 @@ import { redirect } from "next/navigation";
 import { listConnections, connectionBlockers } from "@/lib/crm/connections";
 import { MondayPanel } from "./MondayPanel";
 import { WebhookPanel } from "./WebhookPanel";
+import { LeadDbPanel } from "./LeadDbPanel";
+import { leadDbPanelData } from "@/lib/leaddb/store";
 
 export const metadata: Metadata = {
   title: "Integrations — Stayful Intelligence",
@@ -27,6 +29,7 @@ export default async function IntegrationsPage() {
   if (!(await ownerIdOrNull(user))) redirect("/leads");
 
   const connections = await listConnections(user.id);
+  const leadDb = await leadDbPanelData(user.id);
   const monday = connections.find((c) => c.provider === "monday") ?? null;
   const webhook = connections.find((c) => c.provider === "webhook") ?? null;
 
@@ -54,6 +57,7 @@ export default async function IntegrationsPage() {
         <div className="space-y-5">
           <MondayPanel connection={withBlockers(monday)} />
           <WebhookPanel connection={withBlockers(webhook)} />
+          <LeadDbPanel available={leadDb.available} canEdit link={leadDb.link} />
         </div>
 
         <div className="mt-8 rounded-xl border border-dashed border-border p-5">

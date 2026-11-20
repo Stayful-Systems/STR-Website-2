@@ -7,6 +7,7 @@ import type { AnalysisInput } from '../analysis/input';
 import { InsufficientCreditError, faceAvailableFor } from '../credit/ledger';
 import { isTrustworthyReport } from '../market/quality';
 import { completeLead } from '../leads/store';
+import { enqueueLeadDbPush } from '../leaddb/deliver';
 import { parseLeadRules } from '../leads/rules';
 import type { AnalysisResult } from '../types';
 import { readWebsiteSettings } from './store-server';
@@ -423,6 +424,7 @@ export async function runWebsiteReport(leadId: string, opts: RunWebsiteReportOpt
   const summary = buildSummary(result, quality);
   if (!done) return stateOf(await reread(admin, ctx), null);
 
+  void enqueueLeadDbPush(leadId).catch(() => {}); // Batch 32: the report is done, so the lead database gets it (never throws, never waits)
   await sendLandlordEmail({ leadId, kind: summary ? 'summary' : 'will_contact', summary });
   // Safety net for the step-1 notice (once per lead: 'already' when it went at step 1).
   await notifyOperatorOfWebsiteLead({ leadId, websiteId: report.websiteId });
