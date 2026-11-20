@@ -511,7 +511,7 @@ test('the voice file paths match the render worker’s own', async () => {
 
 // ── Retry ──
 
-test('retryVideo: a failed render with a retryable code goes round again on the same version and voice, counting nothing', async () => {
+test('retryVideo: a failed render with a retryable code goes round again on the same version and voice, counting nothing, attempts kept', async () => {
   const h = harness();
   const made = await first(h, { voiceKey: 'olivia' });
   const row = (await renderRow(h))!;
@@ -528,7 +528,7 @@ test('retryVideo: a failed render with a retryable code goes round again on the 
   assert.ok(r.ok, JSON.stringify(r));
   if (r.ok) assert.deepEqual([r.packId, r.version, r.voiceKey], [made.packId, 1, 'olivia']);
   const after = (await renderRow(h))!;
-  assert.deepEqual([after.id, after.state, after.attempts, after.errorCode, after.voiceKey, after.costPence], [row.id, 'queued', 0, null, 'olivia', 7]);
+  assert.deepEqual([after.id, after.state, after.attempts, after.errorCode, after.voiceKey, after.costPence], [row.id, 'queued', 3, null, 'olivia', 7]);
   assert.equal(await slotStatus(h), 'queued');
   assert.deepEqual(h.deleted, [], 'the cached voice is kept: a retry never pays for the voice twice');
   const pack = (await h.store.getPack(OWNER_A))!;
@@ -558,6 +558,83 @@ test('retryVideo: refused for voice_unavailable (change the voice instead), bad_
   assert.ok((await h.engine.approvePack({ ownerId: OWNER_A })).ok);
   await h.setRender(OWNER_A, { state: 'failed', errorCode: 'timeout' });
   await refused('after_approval');
+});
+
+test('retryVideo does not reset attempts and is refused once the row has used twice the worker limit (plain message, nothing written)', async () => {
+  const h = harness();
+  await first(h);
+  const live = h.renders.rows.get((await renderRow(h))!.id)!;
+  live.state = 'failed';
+  live.errorCode = 'sandbox_failed';
+  live.attempts = 3;
+  // Each retry keeps the count: 3 -> still 3 when requeued, the worker claims it (4), fails it again...
+  assert.ok((await h.engine.retryVideo({ ownerId: OWNER_A })).ok);
+  assert.equal((await renderRow(h))!.attempts, 3);
+  for (const attempts of [4, 5]) {
+    live.state = 'failed';
+    live.attempts = attempts;
+    assert.equal((await h.engine.listPackForOwner(OWNER_A))!.video.canRetry, true, `attempts ${attempts}`);
+    assert.ok((await h.engine.retryVideo({ ownerId: OWNER_A })).ok, `attempts ${attempts}`);
+    assert.equal((await renderRow(h))!.attempts, attempts, 'never reset to 0');
+  }
+  live.state = 'failed';
+  live.attempts = 6; // 2 x ad_pack_render_max_attempts (3)
+  const view = (await h.engine.listPackForOwner(OWNER_A))!;
+  assert.equal(view.video.canRetry, false);
+  assert.equal(view.video.message, VIDEO_MESSAGES.retries_used);
+  assert.equal(VIDEO_MESSAGES.still_checking, 'We’re still checking your video.');
+  assert.equal(VIDEO_MESSAGES.retries_used, 'We couldn’t make your video after several tries. Please contact support.');
+  const before = await snapshot(h);
+  const r = await h.engine.retryVideo({ ownerId: OWNER_A });
+  assert.ok(!r.ok && r.code === 'not_retryable' && r.message === VIDEO_MESSAGES.retries_used, JSON.stringify(r));
+  assert.equal(await snapshot(h), before);
+  // The limit follows the setting (2 x 2 = 4), and a voice change starts the count again.
+  h.store.settings.renderMaxAttempts = 2;
+  live.attempts = 3;
+  assert.ok((await h.engine.retryVideo({ ownerId: OWNER_A })).ok);
+  live.state = 'failed';
+  live.attempts = 4;
+  assert.ok(!(await h.engine.retryVideo({ ownerId: OWNER_A })).ok);
+  const changed = await h.engine.changeVoice({ ownerId: OWNER_A, voiceKey: 'olivia' });
+  assert.ok(changed.ok, JSON.stringify(changed));
+  assert.equal((await renderRow(h))!.attempts, 0);
+});
+
+test('approve fails closed: checks.ok, a ready slot and a done render are not enough without a video check that RAN and passed', async () => {
+  const h = harness();
+  await first(h);
+  // The worker would merge the video check first; here the slot and the row are made ready but no video check is recorded.
+  const row = (await renderRow(h))!;
+  const live = h.renders.rows.get(row.id)!;
+  live.state = 'done';
+  live.files = readyVideo(OWNER_A, row.packId, 1);
+  const pack = (await h.store.getPack(OWNER_A))!;
+  await h.store.setAdVideo(OWNER_A, (await ad5b(h)).id, readyVideo(OWNER_A, pack.id, 1));
+  assert.equal(pack.checks?.ok, true);
+  assert.equal(pack.checks?.results.find((c) => c.check === 'video')?.ok, true, 'the "not checked yet" entry looks passing');
+  const early = await h.engine.approvePack({ ownerId: OWNER_A });
+  assert.ok(!early.ok && early.code === 'video_pending' && early.message === VIDEO_MESSAGES.still_checking, JSON.stringify(early));
+  const view = (await h.engine.listPackForOwner(OWNER_A))!;
+  assert.deepEqual(view.approval, { ok: false, code: 'video_pending', message: VIDEO_MESSAGES.still_checking });
+  assert.equal((await h.store.getPack(OWNER_A))!.status, 'preview');
+  // Once the video check has run and passed (what finishVideo records), the same pack is approvable.
+  await h.finishVideo(OWNER_A);
+  assert.equal((await h.engine.listPackForOwner(OWNER_A))!.approval.ok, true);
+  assert.ok((await h.engine.approvePack({ ownerId: OWNER_A })).ok);
+});
+
+test('approve refuses a pack whose stored video result says it did not run, or ran and failed', async () => {
+  const h = harness();
+  await first(h);
+  await h.finishVideo(OWNER_A);
+  const pack = (await h.store.getPack(OWNER_A))!;
+  const results = (pack.checks?.results ?? []).map((c) => (c.check === 'video' ? { check: c.check, label: c.label, ok: true, failures: 0, warnings: 0 } : c));
+  await h.store.updatePack(OWNER_A, pack.id, { checks: { ...pack.checks!, results } });
+  const r = await h.engine.approvePack({ ownerId: OWNER_A });
+  assert.ok(!r.ok && r.code === 'video_pending' && r.message === VIDEO_MESSAGES.still_checking);
+  const failed = (pack.checks?.results ?? []).map((c) => (c.check === 'video' ? { ...c, ok: false, ran: true as const } : c));
+  await h.store.updatePack(OWNER_A, pack.id, { checks: { ...pack.checks!, results: failed } });
+  assert.ok(!(await h.engine.approvePack({ ownerId: OWNER_A })).ok);
 });
 
 test('retryVideo: the cost caps apply before a retry is queued', async () => {

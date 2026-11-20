@@ -13,29 +13,34 @@
  *   a  sweep     running rows whose lease ended: back to queued (attempts stay counted),
  *                or failed with `timeout` once attempts has reached the limit
  *   b  claim     queued rows, oldest first, one conditional update each
- *                (state running, lease_until = now + max_seconds + 60 s, attempts + 1)
+ *                (state running, lease_until = now + max(route limit 300 s, max_seconds) + 60 s, attempts + 1)
  *   per claimed row:
+ *   b2 current   before anything is spent: the row's version must be the pack's current version and the pack must be
+ *                in 'preview' or 'approved'; else the row is failed `superseded` (no retry, no cost, no voice, no sandbox)
  *   c  cap       this UK month's spend (ad_pack_runs, non-dry, which includes every
  *                render's cost: see settle()) plus this render's worst case over
  *                ad_pack_monthly_cap_pence: failed `monthly_cap`, no retry
  *   d  voice     the version's voice.mp3 + script.json already in the private bucket are
  *                reused (a retry never pays twice); otherwise B3 `synthesise`
- *   e  brief     brief.json from the pack's stored ad script, figure, area and the
- *                operator's brand, photos fetched into the sandbox folder
+ *   e  brief     brief.json from the 5b ad's stored script and its PINNED brand snapshot (`texts.brand`, written when the
+ *                version was made: company, colour, logo, photos, area, bedrooms, fee line, figure). The live website settings
+ *                are never read, so a retry or a voice change after a brand edit cannot mix new brand with the old script.
+ *                A missing snapshot is `bad_brief`. Photos are fetched into the sandbox folder
  *   f  sandbox   create (vcpus, timeout, NO secrets in the env, network allow-all because
  *                apt and pip need the internet), upload ad-render/**, the brief, the assets
  *                and the voice, run the commands, read the outputs back, ALWAYS stop
  *   f2 measure   still in the sandbox: `ffprobe` (args array, JSON on stdout) on each MP4 for its size,
  *                length and whether it has an audio track, and the renderer's `render-info.json`
  *                (caption count, scene ids, duration) read back
- *   g  files     the three MP4s and the poster go to the private bucket; the 5b ad's
- *                `files.video` becomes the ready shape; the render row is done
+ *   g  files     the three MP4s and the poster go to the private bucket
  *   g2 checks    the video check (checks.ts videoChecks: exact sizes, 0 < length <= 60 s, audio, captions)
- *                is merged into the pack's stored `checks`; a failure puts the pack in 'checks_failed'
- *                (the render row stays 'done'; approve is refused). Only for the pack's CURRENT version
- *                while it is in 'preview'.
+ *                is merged into the pack's stored `checks` (the video result is marked `ran`: approve needs it); a
+ *                failure puts the pack in 'checks_failed' (the render row stays 'done'; approve is refused). Only for
+ *                the pack's CURRENT version while it is in 'preview' (else `superseded`); a store failure is
+ *                `store_failed`. THEN the 5b ad's `files.video` becomes the ready shape and the render row is done,
+ *                so a row never ends 'done' without its video check recorded.
  *   h  failure   a code only (never stderr, a brief text, a url or an address): back to
- *                queued while attempts < max, else failed; voice_unavailable, bad_brief and
+ *                queued while attempts < max, else failed; voice_unavailable, bad_brief, superseded and
  *                monthly_cap are never retried
  *
  * THE VIDEO SLOT. The 5b ad's `files.video` follows the row: 'making' when the worker takes it, 'ready'
@@ -43,7 +48,8 @@
  * (The generator writes 'queued' when it enqueues; a voice change and a retry write 'queued' again.)
  *
  * COST. cost = ceil(vcpus x wall seconds x unit_costs 'vercel'/'sandbox_cpu_second' pence + the
- * voice's raw cost). Wall seconds run from creating the sandbox to its stop (an upper bound of
+ * voice's raw cost; a voice call that reached ElevenLabs and failed (a timeout, a 5xx, a 200 we could not use) still
+ * counts estimateVoicePence once per call made, since it may have been billed). Wall seconds run from creating the sandbox to its stop (an upper bound of
  * the Active CPU the price is quoted on). The cost goes on the render row (cumulative over
  * attempts), on ad_packs.cost_pence, and on ONE non-dry ad_pack_runs row per attempt that cost
  * anything (by 'admin' = the system, result.kind 'render'). monthSpendPence in the pack store
@@ -55,7 +61,6 @@
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { feeSentence } from './angles.ts';
 import { cleanLines, validateBriefScript, type BriefScript } from './captions.ts';
 import { mergeVideoChecks, type CheckVideo } from './checks.ts';
 import { monthStartIso } from './month.ts';
@@ -63,7 +68,7 @@ import { PHOTO_MAX_BYTES, sniffPhoto } from './photos.ts';
 import { fitsCap } from './settings.ts';
 import { isVoiceKey, type VoiceKey } from './voices.ts';
 import { estimateVoicePence, type SynthesiseResult, type VoiceCode } from './voice-core.ts';
-import { StoreError, type AdFileRef, type AdPackStore, type PackAdRow, type PackRow, type RunResult } from './store-types.ts';
+import { StoreError, type AdFileRef, type AdPackStore, type PackAdRow, type PackRow, type RunResult, type VideoBrand } from './store-types.ts';
 import type { AdVideo, AdVideoReady, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
 
 // ── Interfaces ──
@@ -89,18 +94,6 @@ export interface StorageLike {
 
 export type FetchedImage = { bytes: Uint8Array; contentType?: string | null };
 
-/** What the video's look rests on, read from the operator's website at render time. */
-export type RenderBrand = {
-  company: string;
-  colour: string | null;
-  /** The logo's address (https) or a stored upload reference; null for a name in type only. */
-  logoRef: string | null;
-  /** The website's own photo: used when the pack has no photo of its own. */
-  sitePhotoRef: string | null;
-  /** The operator's own management fee percent (the only source of any fee line). */
-  feePct: number | null;
-};
-
 export type RendererFile = { path: string; content: Uint8Array };
 
 export type RenderDeps = {
@@ -111,7 +104,6 @@ export type RenderDeps = {
   synth: (i: { voiceKey: VoiceKey; lines: readonly string[]; packId: string }) => Promise<SynthesiseResult>;
   storage: StorageLike;
   fetchImage: (ref: string) => Promise<FetchedImage>;
-  loadBrand: (ownerId: string, websiteId: string | null) => Promise<RenderBrand | null>;
   /** The files of ad-render/ that go into the sandbox (explicit list). */
   rendererFiles: () => Promise<RendererFile[]>;
   /** Raw pence per sandbox CPU-second (the unit_costs row; the seed when unreadable). */
@@ -162,7 +154,7 @@ export const OUTPUTS = [
 export const POSTER = { src: 'poster.png', name: 'notice-poster.png', width: 1080, height: 1920, contentType: 'image/png' } as const;
 
 /** Codes a retry cannot fix. */
-const NO_RETRY = new Set(['voice_unavailable', 'monthly_cap', 'bad_brief']);
+const NO_RETRY = new Set(['voice_unavailable', 'monthly_cap', 'bad_brief', 'superseded']);
 
 const VOICE_CODE_OF: Record<VoiceCode, string> = {
   voice_unavailable: 'voice_unavailable',
@@ -411,6 +403,15 @@ export type RenderReport = {
 
 // ── The worker ──
 
+/**
+ * The lease of a claimed row: from the claim, the longest one invocation can run (the route's own limit, or the
+ * render's time limit when that is longer) plus a minute. A low ad_pack_render_max_seconds can therefore never make the
+ * lease shorter than the invocation still working on the row (the sweep must not hand a live render to someone else).
+ */
+export function leaseUntilFor(at: Date, settings: Pick<RenderSettings, 'maxSeconds'>): string {
+  return new Date(at.getTime() + (Math.max(ROUTE_MAX_SECONDS, settings.maxSeconds) + LEASE_EXTRA_SECONDS) * 1000).toISOString();
+}
+
 type Spend = { voicePence: number; sandboxSeconds: number; sandboxId: string | null; videos: CheckVideo[] };
 
 export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; limit?: number } = {}): Promise<RenderReport> {
@@ -439,11 +440,10 @@ export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; li
   }
 
   // b: claim and run, oldest first.
-  const leaseUntil = new Date(now.getTime() + (settings.maxSeconds + LEASE_EXTRA_SECONDS) * 1000).toISOString();
   const candidates = await deps.renders.listQueued(limit * 2 + 2);
   for (const c of candidates) {
     if (report.claimed >= limit) break;
-    const row = await deps.renders.claim(c.id, nowIso, leaseUntil);
+    const row = await deps.renders.claim(c.id, nowIso, leaseUntilFor(deps.now(), settings));
     if (!row) continue;
     report.claimed++;
     report.results.push(await runOne(deps, row, settings));
@@ -460,9 +460,16 @@ async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings
   let code = 'render_failed';
   try {
     pack = await deps.renders.getPack(row.packId);
-    if (!pack) throw new RenderFail('bad_brief');
+    // Before anything is spent: a row for a pack that is gone, has moved to another version or is not being looked at
+    // (preview) or live (approved) is not worth a voice or a sandbox.
+    if (!pack || pack.version !== row.version || (pack.status !== 'preview' && pack.status !== 'approved')) throw new RenderFail('superseded');
     await setVideoSlot(deps, pack, row.version, { status: 'making' });
-    files = await renderPack(deps, row, pack, settings, spend);
+    const made = await renderPack(deps, row, pack, settings, spend);
+    // The video check goes into the pack's checks BEFORE the slot is ready and the row is done: a failure here (or a pack that
+    // moved on meanwhile) leaves neither, and the row is released with a code.
+    await applyVideoChecks(deps, pack, row.version, spend.videos);
+    if (!(await deps.renders.setAdFiles(pack.ownerId, made.ad.id, { images: made.ad.files.images, video: made.ready }))) throw new RenderFail('store_failed');
+    files = made.ready;
   } catch (e) {
     code = e instanceof RenderFail ? e.code : e instanceof StoreError ? 'store_failed' : 'render_failed';
   }
@@ -493,7 +500,6 @@ async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings
       const ok = await deps.renders.complete(row.id, row.attempts, { costPence: total, sandboxId: spend.sandboxId, files, finishedAt });
       result = ok ? line('done') : line('lost');
       log(ok ? 'render_done' : 'render_lost', { packId: row.packId, code: ok ? 'done' : 'lost', seconds: Math.round(spend.sandboxSeconds) });
-      if (ok) await applyVideoChecks(deps, pack, row.version, spend.videos);
     } else {
       const retry = !NO_RETRY.has(code) && row.attempts < settings.maxAttempts;
       const ok = await deps.renders.release(row.id, row.attempts, {
@@ -505,7 +511,7 @@ async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings
       });
       result = ok ? line(retry ? 'queued' : 'failed', code) : line('lost', code);
       log(retry ? 'render_retry' : 'render_failed', { packId: row.packId, code, seconds: Math.round(spend.sandboxSeconds) });
-      if (ok && pack) await setVideoSlot(deps, pack, row.version, retry ? { status: 'queued' } : { status: 'failed', code: code.slice(0, 60) });
+      if (ok && pack && code !== 'superseded') await setVideoSlot(deps, pack, row.version, retry ? { status: 'queued' } : { status: 'failed', code: code.slice(0, 60) });
     }
   } catch {
     // The lease runs out and the sweep puts the row back; the cost below is still recorded.
@@ -529,20 +535,32 @@ async function setVideoSlot(deps: RenderDeps, pack: PackRow, version: number, vi
 }
 
 /**
- * g2: the video check on a finished render, merged into the pack's stored checks. Only the pack's current version
- * while it is in 'preview' is touched (a newer version, an approved or regenerating pack is left alone). Never throws.
+ * g2: the video check on a finished render, merged into the pack's stored checks (with `ran` on the video result,
+ * which approve requires). Runs BEFORE the render row is marked done and the slot ready. Only the pack's current
+ * version while it is in 'preview' is touched: any other pack state (a newer version, approved, regenerating, gone) is
+ * `superseded`, and a store failure is `store_failed` (the row is released and tried again). The video failing its
+ * checks is not a failure here: the pack goes to 'checks_failed', the row still ends done and approve is refused.
  */
 async function applyVideoChecks(deps: RenderDeps, pack: PackRow, version: number, videos: CheckVideo[]): Promise<void> {
   const log = deps.log ?? (() => {});
+  let fresh: PackRow | null;
   try {
-    const fresh = await deps.packs.getPack(pack.ownerId);
-    if (!fresh || fresh.id !== pack.id || fresh.version !== version || fresh.status !== 'preview') return;
-    const checks = mergeVideoChecks(fresh.checks, videos);
-    await deps.packs.updatePack(pack.ownerId, pack.id, checks.ok ? { checks } : { checks, status: 'checks_failed' }, { from: ['preview'] });
-    if (!checks.ok) log('render_checks_failed', { packId: pack.id, code: 'video_checks' });
+    fresh = await deps.packs.getPack(pack.ownerId);
   } catch {
     log('render_checks_store_failed', { packId: pack.id, code: 'store_failed' });
+    throw new RenderFail('store_failed');
   }
+  if (!fresh || fresh.id !== pack.id || fresh.version !== version || fresh.status !== 'preview') throw new RenderFail('superseded');
+  const checks = mergeVideoChecks(fresh.checks, videos);
+  let updated: PackRow | null;
+  try {
+    updated = await deps.packs.updatePack(pack.ownerId, pack.id, checks.ok ? { checks } : { checks, status: 'checks_failed' }, { from: ['preview'] });
+  } catch {
+    log('render_checks_store_failed', { packId: pack.id, code: 'store_failed' });
+    throw new RenderFail('store_failed');
+  }
+  if (!updated) throw new RenderFail('superseded');
+  if (!checks.ok) log('render_checks_failed', { packId: pack.id, code: 'video_checks' });
 }
 
 /** The cost on the pack and in the month's runs (the generator's cap reads ad_pack_runs). Never throws. */
@@ -611,7 +629,12 @@ async function voiceFor(deps: RenderDeps, ownerId: string, pack: PackRow, row: R
   if (!isVoiceKey(row.voiceKey)) throw new RenderFail('voice_unavailable');
   await capCheck(estimateVoicePence(lines, row.voiceKey));
   const res = await deps.synth({ voiceKey: row.voiceKey, lines, packId: pack.id });
-  if (!res.ok) throw new RenderFail(VOICE_CODE_OF[res.code] ?? 'voice_failed');
+  if (!res.ok) {
+    // A call that reached ElevenLabs may have been billed even though it gave us nothing usable: count the estimate once per call made.
+    const billed = Number.isInteger(res.billedCalls) && (res.billedCalls as number) > 0 ? Math.min(res.billedCalls as number, 5) : 0;
+    spend.voicePence += billed * estimateVoicePence(lines, row.voiceKey);
+    throw new RenderFail(VOICE_CODE_OF[res.code] ?? 'voice_failed');
+  }
   spend.voicePence += res.costPence;
   const a = await deps.storage.put(paths.audio, res.audio, 'audio/mpeg');
   const s = a.ok ? await deps.storage.put(paths.script, new TextEncoder().encode(JSON.stringify(res.script)), 'application/json') : { ok: false };
@@ -620,7 +643,7 @@ async function voiceFor(deps: RenderDeps, ownerId: string, pack: PackRow, row: R
 }
 
 /** Everything for one claimed row. Throws RenderFail with a code; fills `spend`. */
-async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, settings: RenderSettings, spend: Spend): Promise<AdVideoReady> {
+async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, settings: RenderSettings, spend: Spend): Promise<{ ready: AdVideoReady; ad: PackAdRow }> {
   const ownerId = pack.ownerId;
   const log = deps.log ?? (() => {});
 
@@ -629,11 +652,11 @@ async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, setti
   if (!ad) throw new RenderFail('bad_brief');
   const lines = scriptLinesOf(ad);
   if (lines.length < 3) throw new RenderFail('bad_brief');
-  const figure = figureForBrief(pack.figures);
+  // The look is the snapshot pinned on the ad when its version was made, never the live website settings or the pack's current columns.
+  const brand: VideoBrand | undefined = ad.texts.brand;
+  if (!brand) throw new RenderFail('bad_brief');
+  const figure = figureForBrief(brand.figure ? [brand.figure] : []);
   if (figure === undefined) throw new RenderFail('bad_brief');
-
-  const brand = await deps.loadBrand(ownerId, pack.websiteId);
-  if (!brand) throw new RenderFail('store_failed');
   const company = brand.company.replace(/\s+/g, ' ').trim();
   if (!company) throw new RenderFail('bad_brief');
 
@@ -659,7 +682,7 @@ async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, setti
       logo = a.path;
     }
   }
-  const photoRefs = (pack.photos ?? []).slice(0, MAX_RENDER_PHOTOS);
+  const photoRefs = brand.photos.slice(0, MAX_RENDER_PHOTOS);
   if (photoRefs.length === 0 && brand.sitePhotoRef) photoRefs.push(brand.sitePhotoRef);
   const photos: string[] = [];
   for (const ref of photoRefs) {
@@ -676,10 +699,10 @@ async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, setti
     colour: brand.colour,
     logo,
     photos,
-    area: pack.areaLabel ?? '',
-    bedrooms: pack.bedrooms,
+    area: brand.areaLabel,
+    bedrooms: brand.bedrooms,
     figure,
-    feeSentence: spokenFee ? feeSentence(brand.feePct) || null : null,
+    feeSentence: spokenFee ? brand.feeSentence : null,
     script,
   });
   if (briefProblems(brief).length > 0) throw new RenderFail('bad_brief');
@@ -790,7 +813,5 @@ async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, setti
   if (!poster) throw new RenderFail('render_failed');
   const ready: AdVideoReady = { status: 'ready', videos: refs, poster, durationSeconds: Math.round(script.duration * 10) / 10, voice: row.voiceKey };
 
-  const okSet = await deps.renders.setAdFiles(ownerId, ad.id, { images: ad.files.images, video: ready });
-  if (!okSet) throw new RenderFail('store_failed');
-  return ready;
+  return { ready, ad };
 }

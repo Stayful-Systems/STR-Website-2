@@ -23,6 +23,11 @@
  *   failed             anything else (also invalid input, network error, 5xx twice)
  * A 5xx is retried once.
  *
+ * COST OF A FAILURE. A call that reached ElevenLabs and was not plainly refused may still have been billed (a 200
+ * whose body we cannot use, a timeout, a 5xx). A failed result therefore carries `billedCalls`: how many calls were
+ * made that way (a 5xx then a retry is two). The caller prices each with estimateVoicePence. A refusal (400, 401,
+ * 402, 404, 429), a network error before any reply and a bad request of ours are not counted.
+ *
  * Pure: no database, no server-only, no process.env.
  */
 import { UNIT_COST_SEED } from '../credit/costs.ts';
@@ -43,7 +48,7 @@ export type VoiceCode = (typeof VOICE_CODES)[number];
 
 export type SynthesiseResult =
   | { ok: true; audio: Uint8Array; mimeType: string; script: BriefScript; costPence: number; characters: number }
-  | { ok: false; code: VoiceCode };
+  | { ok: false; code: VoiceCode; /** calls that reached ElevenLabs and may have been billed; omitted when none */ billedCalls?: number };
 
 /** Pence per character: the unit_costs seed row for ElevenLabs speech (the live row, when the server has one, is passed in). */
 export const SEED_CHARACTER_PENCE: number = UNIT_COST_SEED.find((r) => r.provider === 'elevenlabs' && r.unit === 'character')?.unitCostPence ?? 0.02;
@@ -82,7 +87,8 @@ export type SynthesiseCoreInput = {
   log?: (event: string, fields: { voiceKey: string; code: string }) => void;
 };
 
-type Attempt = { ok: true; body: unknown } | { ok: false; code: VoiceCode; retry?: boolean };
+/** `billable`: the call reached ElevenLabs and was not refused, so it may have been billed. */
+type Attempt = ({ ok: true; body: unknown } | { ok: false; code: VoiceCode; retry?: boolean }) & { billable?: boolean };
 
 function classify(status: number, body: string): VoiceCode {
   const b = body.toLowerCase();
@@ -105,9 +111,10 @@ async function attempt(fetchImpl: typeof fetch, url: string, apiKey: string, pay
     });
   } catch (e) {
     const name = (e as { name?: string } | null)?.name;
-    return { ok: false, code: name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'failed' };
+    // A timeout may have been billed (the request was sent); a network error before any reply is not counted.
+    return name === 'TimeoutError' || name === 'AbortError' ? { ok: false, code: 'timeout', billable: true } : { ok: false, code: 'failed' };
   }
-  if (res.status >= 500) return { ok: false, code: 'failed', retry: true };
+  if (res.status >= 500) return { ok: false, code: 'failed', retry: true, billable: true };
   if (!res.ok) {
     let text = '';
     try {
@@ -118,11 +125,11 @@ async function attempt(fetchImpl: typeof fetch, url: string, apiKey: string, pay
     return { ok: false, code: classify(res.status, text) };
   }
   try {
-    return { ok: true, body: await res.json() };
+    return { ok: true, body: await res.json(), billable: true };
   } catch (e) {
     const name = (e as { name?: string } | null)?.name;
     // The body may have been cut by the timeout; either way we got no usable reply.
-    return name === 'TimeoutError' || name === 'AbortError' ? { ok: false, code: 'timeout' } : { ok: true, body: undefined };
+    return name === 'TimeoutError' || name === 'AbortError' ? { ok: false, code: 'timeout', billable: true } : { ok: true, body: undefined, billable: true };
   }
 }
 
@@ -134,9 +141,10 @@ function decodeBase64(b64: string): Uint8Array {
 export async function synthesiseCore(input: SynthesiseCoreInput): Promise<SynthesiseResult> {
   const voice = voiceByKey(input.voiceKey);
   const lines = Array.isArray(input.lines) ? cleanLines(input.lines) : [];
+  let billedCalls = 0;
   const fail = (code: VoiceCode): SynthesiseResult => {
     input.log?.('voice_failed', { voiceKey: String(input.voiceKey), code });
-    return { ok: false, code };
+    return billedCalls > 0 ? { ok: false, code, billedCalls } : { ok: false, code };
   };
   if (!voice) return fail('voice_unavailable');
   const text = joinScriptLines(lines);
@@ -151,7 +159,11 @@ export async function synthesiseCore(input: SynthesiseCoreInput): Promise<Synthe
 
   const run = async (): Promise<Attempt> => {
     let last = await attempt(input.fetchImpl, url, apiKey, payload, timeoutMs);
-    if (!last.ok && last.retry) last = await attempt(input.fetchImpl, url, apiKey, payload, timeoutMs);
+    if (last.billable) billedCalls++;
+    if (!last.ok && last.retry) {
+      last = await attempt(input.fetchImpl, url, apiKey, payload, timeoutMs);
+      if (last.billable) billedCalls++;
+    }
     return last;
   };
 

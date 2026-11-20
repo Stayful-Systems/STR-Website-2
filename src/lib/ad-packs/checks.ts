@@ -162,7 +162,8 @@ export const CHECK_LABELS: Record<CheckId, string> = {
 
 export type CheckFailure = { check: CheckId; rule: string; where: string; detail: string };
 export type CheckWarning = { check: CheckId; where: string; detail: string };
-export type CheckResult = { check: CheckId; label: string; ok: boolean; failures: number; warnings: number };
+/** `ran` is on the `video` entry only, and only when the video check was really run on rendered files (38b): its absence means "not checked yet". */
+export type CheckResult = { check: CheckId; label: string; ok: boolean; failures: number; warnings: number; ran?: true };
 
 export type ChecksOutput = {
   ok: boolean;
@@ -253,10 +254,10 @@ export function videoChecks(videos: readonly CheckVideo[]): { failures: CheckFai
   return { failures, warnings: [] };
 }
 
-function resultsOf(failures: readonly CheckFailure[], warnings: readonly CheckWarning[]): CheckResult[] {
+function resultsOf(failures: readonly CheckFailure[], warnings: readonly CheckWarning[], videoRan = false): CheckResult[] {
   return CHECK_IDS.map((check) => {
     const fs = failures.filter((f) => f.check === check).length;
-    return { check, label: CHECK_LABELS[check], ok: fs === 0, failures: fs, warnings: warnings.filter((w) => w.check === check).length };
+    return { check, label: CHECK_LABELS[check], ok: fs === 0, failures: fs, warnings: warnings.filter((w) => w.check === check).length, ...(check === 'video' && videoRan ? { ran: true as const } : {}) };
   });
 }
 
@@ -268,7 +269,7 @@ export function mergeVideoChecks(prev: ChecksOutput | null | undefined, videos: 
   const v = videoChecks(videos);
   const failures = [...(prev?.failures ?? []).filter((f) => f.check !== 'video'), ...v.failures];
   const warnings = [...(prev?.warnings ?? []).filter((w) => w.check !== 'video'), ...v.warnings];
-  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings) };
+  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings, true) };
 }
 
 // ── The checks ──
@@ -467,5 +468,5 @@ export function runChecks(input: CheckInput): ChecksOutput {
     warnings.push(...v.warnings);
   }
 
-  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings) };
+  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings, Array.isArray(input.videos)) };
 }

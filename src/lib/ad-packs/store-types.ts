@@ -66,8 +66,32 @@ export type AdFileRef = { name: string; path: string; width: number; height: num
 /** `video` is the 5b ad's video slot (queued, making, ready, failed, or coming for a pack from before 38b); null for the image ads. */
 export type AdFiles = { images: AdFileRef[]; video: AdVideo | null };
 
-/** Everything an operator copies. `script` is the 5b voiceover; `cardsText` is one string per image card. */
-export type AdTexts = { primary: string[]; headlines: string[]; descriptions: string[]; script?: string; cardsText?: string[] };
+/**
+ * Batch 38b: everything the notice video needs, pinned on the 5b ad when its version is made (ad_pack_ads.texts.brand,
+ * written once, never rewritten). The render worker reads ONLY this, never the live website settings, so a retry or a
+ * voice change after a brand edit still makes the video the script and the images were written for. Nothing here is
+ * personal data beyond what the pack already stores (the company name, the operator's own photo and logo references,
+ * the area label, the figure the script quotes).
+ */
+export type VideoBrand = {
+  company: string;
+  colour: string | null;
+  /** The logo's address (https) or a stored upload reference; null for a name in type only. */
+  logoRef: string | null;
+  /** The website's own photo: used when the pack has no photo of its own. */
+  sitePhotoRef: string | null;
+  /** The operator's own photos (bucket paths or addresses), at most 4, in order. */
+  photos: string[];
+  areaLabel: string;
+  bedrooms: number | null;
+  /** The operator's own fee line ("Our management fee is 12%.") or null when they set no fee. */
+  feeSentence: string | null;
+  /** The figure the script quotes (generate-core's figureEntry), or null. */
+  figure: Record<string, unknown> | null;
+};
+
+/** Everything an operator copies. `script` is the 5b voiceover; `cardsText` is one string per image card; `brand` is the video's pinned look (never shown or copied). */
+export type AdTexts = { primary: string[]; headlines: string[]; descriptions: string[]; script?: string; cardsText?: string[]; brand?: VideoBrand };
 
 export type PackAdRow = {
   id: string;

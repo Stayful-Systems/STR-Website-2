@@ -17,6 +17,7 @@ import {
 } from './generate-core.ts';
 import type { AdVideo, AdVideoReady } from './render-store.ts';
 import { enqueueRender } from './render-core.ts';
+import { mergeVideoChecks, VIDEO_SIZES } from './checks.ts';
 import { MemoryRenderStore } from './render-test-store.ts';
 import { PackConflict, StoreError, type AdPackStore, type NewAd, type NewPack, type NewRun, type PackAdRow, type PackPatch, type PackRow, type PackStatus, type RunRow } from './store-types.ts';
 
@@ -328,6 +329,11 @@ export function harness(opts: { pricing?: Pricing; now?: Date } = {}): Harness {
     live.files = ready;
     const ad = (await h.store.listAds(ownerId, pack.id)).find((a) => a.angle === '5b' && a.version === version);
     if (ad) await h.store.setAdVideo(ownerId, ad.id, ready);
+    // What the worker records with the render: the video check, run and passed (approve needs it).
+    if (version === pack.version && pack.status === 'preview') {
+      const videos = Object.entries(VIDEO_SIZES).map(([name, size]) => ({ name, ...size, durationSeconds: 38, hasAudio: true, captionCount: 17 }));
+      await h.store.updatePack(ownerId, pack.id, { checks: mergeVideoChecks(pack.checks, videos) });
+    }
   };
   h.setRender = async (ownerId, patch, o = {}) => {
     const pack = await h.store.getPack(ownerId);

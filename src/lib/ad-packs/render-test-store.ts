@@ -149,7 +149,7 @@ export class MemoryRenderStore implements RenderStore {
     if (r.state === 'running') return null;
     this.writes.push('requeue');
     r.state = 'queued';
-    r.attempts = 0;
+    if (i.keepAttempts !== true) r.attempts = 0;
     r.errorCode = null;
     r.files = null;
     r.voiceKey = i.voiceKey;

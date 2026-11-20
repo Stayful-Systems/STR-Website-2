@@ -143,8 +143,35 @@ test('a 5xx is retried once: 500 then 200 succeeds; 500 twice fails', async () =
   assert.equal(s.calls.length, 2);
 
   const s2 = stub([jsonRes('boom', 503), jsonRes('boom', 502), jsonRes(okBody())]);
-  assert.deepEqual(await synthesiseCore(base(s2.fetchImpl)), { ok: false, code: 'failed' });
+  assert.deepEqual(await synthesiseCore(base(s2.fetchImpl)), { ok: false, code: 'failed', billedCalls: 2 }, 'both calls reached ElevenLabs and may have been billed');
   assert.equal(s2.calls.length, 2, 'one retry only');
+});
+
+test('billedCalls: only a call that reached ElevenLabs and was not refused counts (a 5xx then a timeout is two; refusals, network errors and bad requests are none)', async () => {
+  let n = 0;
+  const fetchImpl = ((_url: string, init: RequestInit) => {
+    if (n++ === 0) return Promise.resolve(jsonRes('boom', 500));
+    return new Promise<Response>((_, reject) => {
+      init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    });
+  }) as unknown as typeof fetch;
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    assert.deepEqual(await synthesiseCore(base(fetchImpl, { timeoutMs: 25 })), { ok: false, code: 'timeout', billedCalls: 2 });
+  } finally {
+    clearInterval(keepAlive);
+  }
+  for (const status of [400, 401, 402, 404, 429]) {
+    const r = await synthesiseCore(base(stub([jsonRes({ detail: { status: 'x' } }, status)]).fetchImpl));
+    assert.ok(!r.ok && (r as { billedCalls?: number }).billedCalls === undefined, String(status));
+  }
+  const net = (async () => {
+    throw new TypeError('fetch failed');
+  }) as unknown as typeof fetch;
+  assert.deepEqual(await synthesiseCore(base(net)), { ok: false, code: 'failed' });
+  // A good reply carries no billedCalls (its cost is in costPence).
+  const good = await synthesiseCore(base(stub([jsonRes(okBody())]).fetchImpl));
+  assert.ok(good.ok && !('billedCalls' in good));
 });
 
 test('bad responses', async () => {
@@ -164,7 +191,7 @@ test('bad responses', async () => {
   ];
   for (const [name, res] of cases) {
     const s = stub([res]);
-    assert.deepEqual(await synthesiseCore(base(s.fetchImpl)), { ok: false, code: 'bad_response' }, name);
+    assert.deepEqual(await synthesiseCore(base(s.fetchImpl)), { ok: false, code: 'bad_response', billedCalls: 1 }, name);
   }
   // normalized_alignment is used only when alignment is missing.
   const ok = okBody();
@@ -184,7 +211,7 @@ test('timeout: an attempt that does not answer in time gives timeout', async () 
   const keepAlive = setInterval(() => {}, 1000);
   try {
     const r = await synthesiseCore(base(fetchImpl, { timeoutMs: 25 }));
-    assert.deepEqual(r, { ok: false, code: 'timeout' });
+    assert.deepEqual(r, { ok: false, code: 'timeout', billedCalls: 1 });
   } finally {
     clearInterval(keepAlive);
   }
@@ -194,7 +221,7 @@ test('timeout: an attempt that does not answer in time gives timeout', async () 
   const dom = (async () => {
     throw new DOMException('The operation was aborted', 'AbortError');
   }) as unknown as typeof fetch;
-  assert.deepEqual(await synthesiseCore(base(dom)), { ok: false, code: 'timeout' });
+  assert.deepEqual(await synthesiseCore(base(dom)), { ok: false, code: 'timeout', billedCalls: 1 });
   const net = (async () => {
     throw new TypeError('fetch failed');
   }) as unknown as typeof fetch;
@@ -235,7 +262,7 @@ test('the key and the script never appear in a result, a thrown error or a log l
   assert.ok(!dump.includes(KEY));
   assert.ok(!dump.includes('Brightstone'));
   assert.ok(!dump.includes('tenant'));
-  for (const o of outcomes) assert.deepEqual(Object.keys(o as object).sort(), ['code', 'ok']);
+  for (const o of outcomes) assert.ok(Object.keys(o as object).every((k) => ['billedCalls', 'code', 'ok'].includes(k)));
   assert.ok(logs.length >= 5);
   for (const l of logs) assert.match(l, /^\["voice_failed",\{"voiceKey":"jane","code":"[a-z_]+"\}\]$/);
 });

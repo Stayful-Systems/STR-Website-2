@@ -336,7 +336,10 @@ test('a dry run names the cost guard that would stop it, and its plan matches th
     for (const ad of dry.plan.ads) {
       const s = stored.find((x) => x.code === ad.code);
       assert.deepEqual(ad.files.map((f) => f.name), (s?.files.images ?? []).map((f) => f.name), 'planned file names are the real ones');
-      assert.deepEqual(ad.texts, s?.texts);
+      // The 5b ad also stores the video's pinned brand (never part of the plan's copyable texts).
+      const { brand: pinned, ...copyable } = s!.texts;
+      assert.equal(pinned !== undefined, ad.angle === '5b');
+      assert.deepEqual(ad.texts, copyable);
     }
   }
 });

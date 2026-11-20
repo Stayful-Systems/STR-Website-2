@@ -14,8 +14,10 @@
  * queued (attempts stay counted) or fails it with `timeout` once attempts has
  * reached the limit.
  *
- * A voice change is a NEW pack version (made by the generator), so it gets its
- * own render row: a row is never reused for another voice.
+ * A voice change does NOT make a new pack version: the same version's row is reset in place
+ * (requeueRender: queued again, new voice, error and files cleared, cost kept, attempts back to 0). An operator's
+ * retry resets it the same way but keeps `attempts`, so the tries add up. A row never outlives its version: the worker
+ * fails a row whose version is no longer the pack's current one with `superseded`.
  *
  * Codes only: nothing here carries a text, an address, stderr or a body.
  *
@@ -83,6 +85,7 @@ export const RENDER_CODES = [
   'timeout',
   'upload_failed',
   'store_failed',
+  'superseded',
   'monthly_cap',
   'spend_unknown',
   'voice_unavailable',
@@ -107,14 +110,18 @@ export type RenderDone = { costPence: number; sandboxId: string | null; files: A
 
 export type RenderCounts = Record<RenderState, number>;
 
-/** A voice change and a retry write this (a row is reset in place: same pack, same version, no new version). */
-export type RenderRequeue = { packId: string; version: number; voiceKey: string };
+/**
+ * A voice change and a retry write this (a row is reset in place: same pack, same version, no new version).
+ * `keepAttempts` (an operator's retry) leaves `attempts` as it is, so the tries of the row add up and
+ * retryVideo can stop them; without it (a voice change) attempts start again at 0.
+ */
+export type RenderRequeue = { packId: string; version: number; voiceKey: string; keepAttempts?: boolean };
 
 /**
- * Codes a retry cannot fix: the voice is not in the account (change the voice instead) and a brief the
- * renderer refuses. Every other failure (a sandbox hiccup, a cap, a voice quota) may be tried again.
+ * Codes a retry cannot fix: the voice is not in the account (change the voice instead), a brief the
+ * renderer refuses, and a render whose pack moved on (superseded). Every other failure (a sandbox hiccup, a cap, a voice quota) may be tried again.
  */
-export const NO_RETRY_RENDER_CODES: ReadonlySet<string> = new Set(['voice_unavailable', 'bad_brief']);
+export const NO_RETRY_RENDER_CODES: ReadonlySet<string> = new Set(['voice_unavailable', 'bad_brief', 'superseded']);
 export const isRetryableRenderCode = (code: string | null | undefined): boolean => typeof code === 'string' && code !== '' && !NO_RETRY_RENDER_CODES.has(code);
 
 export interface RenderStore {
@@ -154,7 +161,7 @@ export interface RenderStore {
   getRender(packId: string, version: number): Promise<RenderRow | null>;
   /**
    * Reset the version's render to start again (a voice change, or a retry of a failed render): state queued,
-   * attempts 0, error, files, lease and finish time cleared, voice_key = the given one, cost kept. Creates the row
+   * attempts 0 (kept when `keepAttempts`), error, files, lease and finish time cleared, voice_key = the given one, cost kept. Creates the row
    * when there is none. Conditional: null when the row is `running` (a worker has it), and nothing is changed.
    */
   requeueRender(i: RenderRequeue): Promise<RenderRow | null>;

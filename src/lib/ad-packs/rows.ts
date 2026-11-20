@@ -6,7 +6,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { isAngle } from './codes.ts';
-import type { AdFileRef, AdFiles, AdTexts, NewAd, PackAdRow, PackPatch, PackRow, PackStatus, RunBy, RunResult, RunRow } from './store-types.ts';
+import type { AdFileRef, AdFiles, AdTexts, NewAd, PackAdRow, PackPatch, PackRow, PackStatus, RunBy, RunResult, RunRow, VideoBrand } from './store-types.ts';
 import { PACK_STATUSES } from './store-types.ts';
 import type { LeadFormQuestion } from './angles.ts';
 import type { ChecksOutput } from './checks.ts';
@@ -73,11 +73,31 @@ export function toPackRow(r: Record<string, unknown>): PackRow {
   };
 }
 
+function parseVideoBrand(raw: unknown): VideoBrand | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.company !== 'string' || typeof o.areaLabel !== 'string') return null;
+  const bedrooms = typeof o.bedrooms === 'number' && Number.isFinite(o.bedrooms) ? Math.trunc(o.bedrooms) : null;
+  return {
+    company: o.company,
+    colour: typeof o.colour === 'string' && o.colour !== '' ? o.colour : null,
+    logoRef: typeof o.logoRef === 'string' && o.logoRef !== '' ? o.logoRef : null,
+    sitePhotoRef: typeof o.sitePhotoRef === 'string' && o.sitePhotoRef !== '' ? o.sitePhotoRef : null,
+    photos: strings(o.photos).slice(0, 4),
+    areaLabel: o.areaLabel,
+    bedrooms,
+    feeSentence: typeof o.feeSentence === 'string' && o.feeSentence !== '' ? o.feeSentence : null,
+    figure: o.figure && typeof o.figure === 'object' && !Array.isArray(o.figure) ? (o.figure as Record<string, unknown>) : null,
+  };
+}
+
 export function parseTexts(raw: unknown): AdTexts {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const out: AdTexts = { primary: strings(o.primary), headlines: strings(o.headlines), descriptions: strings(o.descriptions) };
   if (typeof o.script === 'string') out.script = o.script;
   if (Array.isArray(o.cardsText)) out.cardsText = strings(o.cardsText);
+  const brand = parseVideoBrand(o.brand);
+  if (brand) out.brand = brand;
   return out;
 }
 

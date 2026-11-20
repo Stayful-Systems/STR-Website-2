@@ -49,7 +49,7 @@
 import { createHash } from 'node:crypto';
 import { UNIT_COST_SEED } from '../credit/costs.ts';
 import { monthStartIso } from './month.ts';
-import { angleDef, renderCards, renderScript, renderTexts, type Card } from './angles.ts';
+import { angleDef, feeSentence, renderCards, renderScript, renderTexts, type Card } from './angles.ts';
 import { NET_INCLUDES_MANAGEMENT_FEE } from './area.ts';
 import { runChecks, type CheckInput, type ChecksOutput } from './checks.ts';
 import { ANGLES, operatorCode as allocateOperatorCode, packCode, type Angle } from './codes.ts';
@@ -73,6 +73,7 @@ import {
   type PackRow,
   type PackStatus,
   type RunBy,
+  type VideoBrand,
   type RunResult,
 } from './store-types.ts';
 
@@ -150,6 +151,8 @@ export const VIDEO_MESSAGES = {
   voice_limit_used: 'You have already used your voice change.',
   video_running: 'Your video is being made right now. Wait until it is finished, then change the voice.',
   not_retryable: 'There is nothing to try again right now.',
+  retries_used: 'We couldn’t make your video after several tries. Please contact support.',
+  still_checking: 'We’re still checking your video.',
   stale: 'Your ads changed while you were looking. Please look at them again first.',
 } as const;
 
@@ -350,8 +353,19 @@ export function regenerateBlock(pack: PackRow | null, currentHash: string, setti
 
 const NOT_PREVIEW_MESSAGE = 'Only a pack that is ready to look at can be approved.';
 
+/** The worker's own default (render-store DEFAULT_RENDER_SETTINGS.maxAttempts; a test pins them together). */
+const DEFAULT_RENDER_MAX_ATTEMPTS = 3;
+
+/**
+ * Whether a failed render has used up its tries for good: its cumulative attempts (an operator's retry does not reset
+ * them) reached twice ad_pack_render_max_attempts. After that only an admin can help (support), or a voice change.
+ */
+export function retriesUsed(render: RenderRow | null, maxAttempts: number): boolean {
+  return render !== null && render.state === 'failed' && render.attempts >= 2 * Math.max(1, maxAttempts);
+}
+
 /** The 5b video's live state from the ad's slot and the version's render row (see VideoView). */
-export function videoViewOf(slot: AdVideo | null | undefined, render: RenderRow | null, packStatus: PackStatus): VideoView {
+export function videoViewOf(slot: AdVideo | null | undefined, render: RenderRow | null, packStatus: PackStatus, maxAttempts: number = DEFAULT_RENDER_MAX_ATTEMPTS): VideoView {
   let status: VideoView['status'];
   let code: string | null = null;
   if (render) {
@@ -370,14 +384,20 @@ export function videoViewOf(slot: AdVideo | null | undefined, render: RenderRow 
   }
   const pending = status === 'queued' || status === 'making';
   const retryable = packStatus === 'preview' || packStatus === 'checks_failed';
-  const canRetry = retryable && status === 'failed' && isRetryableRenderCode(code) && (render === null || render.state === 'failed');
+  const spent = retriesUsed(render, maxAttempts);
+  const canRetry = retryable && status === 'failed' && isRetryableRenderCode(code) && (render === null || render.state === 'failed') && !spent;
   return {
     status,
     code,
-    message: status === 'failed' ? videoFailedMessage(code) : pending ? VIDEO_MESSAGES.video_pending : null,
+    message: status === 'failed' ? (spent && isRetryableRenderCode(code) ? VIDEO_MESSAGES.retries_used : videoFailedMessage(code)) : pending ? VIDEO_MESSAGES.video_pending : null,
     poll: pending,
     canRetry,
   };
+}
+
+/** The stored checks hold a video result that ran and passed (checks.ts mergeVideoChecks records `ran`). */
+function videoCheckPassed(checks: ChecksOutput | null | undefined): boolean {
+  return Array.isArray(checks?.results) && checks.results.some((r) => r.check === 'video' && r.ran === true && r.ok === true);
 }
 
 /**
@@ -390,6 +410,9 @@ export function approvalBlock(pack: PackRow, slot: AdVideo | null | undefined, r
   const v = videoViewOf(slot, render, pack.status);
   if (v.status === 'failed') return { code: 'video_failed', message: videoFailedMessage(v.code) };
   if (v.status !== 'ready') return { code: 'video_pending', message: VIDEO_MESSAGES.video_pending };
+  // Fail closed: "ok" alone is not enough. The video check must have actually RUN on this video (the worker records
+  // it with the render) and passed; a pack that was never video-checked is not approvable.
+  if (!videoCheckPassed(pack.checks)) return { code: 'video_pending', message: VIDEO_MESSAGES.still_checking };
   return null;
 }
 
@@ -506,6 +529,22 @@ function checkInputOf(a: { input: GenerateInput; source: AreaSource; figure: Fig
     figures: a.figure ? [{ areaKey: a.source.areaKey, label: a.figure.label, sentence: a.figure.sentence }] : [],
     operatorCode: a.operator,
     domain: a.input.domain.trim().toLowerCase(),
+  };
+}
+
+/** The notice video's pinned look for one stored version (see store-types VideoBrand). */
+function videoBrandOf(input: GenerateInput, source: AreaSource, figure: Figure | null): VideoBrand {
+  const feePct = input.brand.feePct ?? null;
+  return {
+    company: input.brand.company.replace(/\s+/g, ' ').trim(),
+    colour: input.brand.brandColour ?? null,
+    logoRef: input.typeOnly === true ? null : input.brand.logoUrl ?? null,
+    sitePhotoRef: input.brand.photoUrl ?? null,
+    photos: [...input.photos].slice(0, 4),
+    areaLabel: source.areaLabel,
+    bedrooms: source.bedrooms,
+    feeSentence: feeSentence(feePct) || null,
+    figure: figure ? figureEntry(figure, source) : null,
   };
 }
 
@@ -877,7 +916,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
         code: p.code,
         adName: p.adName,
         link: p.link,
-        texts: p.texts,
+        // 5b only: the video's pinned look, stored with the ad so the worker never reads the live website settings.
+        texts: p.angle === '5b' ? { ...p.texts, brand: videoBrandOf(input, source, figure) } : p.texts,
         leadForm: p.leadForm,
         // The 5b slot is 'queued' once the pack is good enough to render ('preview'), else 'coming' (no video is made for a failed pack).
         files: { images: imagesByAngle.get(p.angle) ?? [], video: p.video === 'coming' ? (status === 'preview' ? { status: 'queued' } : { status: 'coming' }) : null } satisfies AdFiles,
@@ -1028,7 +1068,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
       olderCodes: all.filter((a) => a.version !== pack.version).map((a) => a.code),
       freeRegensLeft: Math.max(0, settings.freeRegens - pack.regenCount),
       render: renderViewOf(renderRow),
-      video: videoViewOf(slot, renderRow, pack.status),
+      video: videoViewOf(slot, renderRow, pack.status, settings.renderMaxAttempts),
       voice: {
         key: isVoiceKey(pack.voiceKey) ? pack.voiceKey : null,
         changesLeft: state.changesLeft,
@@ -1108,7 +1148,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
    * Try a failed video render again: the SAME version and voice, no new version, no voice change counted. Only for
    * the owner's pack in 'preview' or 'checks_failed', only when the render failed with a retryable code (not
    * voice_unavailable, which is changeVoice's job, and not bad_brief), or when it could not be queued at all
-   * (slot failed, no render row). Same cost caps as generatePack, BEFORE anything is paid. Attempts start again at 0.
+   * (slot failed, no render row). Same cost caps as generatePack, BEFORE anything is paid. Attempts are NOT reset (the row keeps counting, so each retry is
+   * one more try); once they reach twice ad_pack_render_max_attempts the retry is refused (not_retryable, "contact support").
    */
   async function retryVideo(req: { ownerId: string; expectedVersion?: number }): Promise<RetryVideoResult> {
     const no = (code: VideoActionCode, message: string): RetryVideoResult => ({ ok: false, code, message });
@@ -1121,7 +1162,9 @@ export function createAdPackEngine(deps: GenerateDeps) {
       const ad = ads.find((a) => a.angle === '5b' && a.version === pack.version) ?? null;
       if (pack.status === 'approved') return no('after_approval', VIDEO_MESSAGES.not_retryable);
       if (render && render.state === 'running') return no('video_running', VIDEO_MESSAGES.video_running);
-      if (!videoViewOf(ad?.files.video ?? null, render, pack.status).canRetry) return no('not_retryable', VIDEO_MESSAGES.not_retryable);
+      // Bounded: an operator's retry keeps the row's attempts, so after twice the worker's limit in all there is no more "Try again".
+      if (retriesUsed(render, settings.renderMaxAttempts)) return no('not_retryable', VIDEO_MESSAGES.retries_used);
+      if (!videoViewOf(ad?.files.video ?? null, render, pack.status, settings.renderMaxAttempts).canRetry) return no('not_retryable', VIDEO_MESSAGES.not_retryable);
 
       const voiceKey: VoiceKey = isVoiceKey(render?.voiceKey) ? render.voiceKey : isVoiceKey(pack.voiceKey) ? pack.voiceKey : DEFAULT_VOICE_KEY;
       const lines = cleanLines(String(ad?.texts.script ?? '').split(/\n\s*\n/));
@@ -1130,7 +1173,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
         log('video_retry_refused', { packId: pack.id, code: cap });
         return no(cap, GENERATE_MESSAGES[cap]);
       }
-      const row = await deps.renders.requeue({ packId: pack.id, version: pack.version, voiceKey });
+      const row = await deps.renders.requeue({ packId: pack.id, version: pack.version, voiceKey, keepAttempts: true });
       if (!row) return no('video_running', VIDEO_MESSAGES.video_running);
       await setSlot(req.ownerId, ad?.id ?? null, pack.id, { status: 'queued' });
       log('video_retried', { packId: pack.id, code: 'queued' });

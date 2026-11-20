@@ -22,14 +22,13 @@ import {
   scriptLinesOf,
   wholePence,
   type Brief,
-  type RenderBrand,
   type RenderDeps,
   type RenderReport,
 } from './render-core.ts';
 import { DEFAULT_RENDER_SETTINGS, parseAdVideo, parseRenderSettings, type RenderSettings } from './render-store.ts';
 import { FakeSandboxes, FakeStorage, type MemoryRenderStore } from './render-test-store.ts';
-import type { AdPackStore, PackAdRow } from './store-types.ts';
-import type { SynthesiseResult } from './voice-core.ts';
+import type { AdPackStore, PackAdRow, VideoBrand } from './store-types.ts';
+import { estimateVoicePence, type SynthesiseResult } from './voice-core.ts';
 
 /**
  * Batch 38b (B4): the render worker on in-memory fakes. No network, no real
@@ -70,7 +69,7 @@ function healthy(r: { advance: (ms: number) => void }, over: Parameters<typeof p
 }
 
 const SECRET_TEXT = 'Brightstone Stays';
-const BRAND: RenderBrand = { company: SECRET_TEXT, colour: '#1F6F5C', logoRef: 'https://cdn.example.test/logo.png', sitePhotoRef: null, feePct: 12 };
+const LOGO = 'https://cdn.example.test/logo.png';
 
 type Rig = {
   h: Harness;
@@ -80,7 +79,8 @@ type Rig = {
   synthCalls: { voiceKey: string; lines: readonly string[]; packId: string }[];
   logs: { event: string; fields: Record<string, unknown> }[];
   settings: RenderSettings;
-  brand: { value: RenderBrand | null };
+  /** Edit the 5b ad's pinned brand snapshot (what the worker reads); the live website settings are not read at all. */
+  snap: (patch: Partial<VideoBrand>) => void;
   synthResult: { value: (lines: readonly string[]) => SynthesiseResult };
   deps: RenderDeps;
   packId: string;
@@ -110,7 +110,7 @@ async function rig(opts: { fee?: number | null; settings?: Partial<RenderSetting
     input: {
       areaKey: 'NG7',
       photos: ['https://cdn.example.test/photo-1.jpg'],
-      brand: { company: SECRET_TEXT, logoUrl: BRAND.logoRef, brandColour: '#1F6F5C', feePct: opts.fee === undefined ? 12 : opts.fee, areas: ['Nottingham'], photoUrl: null },
+      brand: { company: SECRET_TEXT, logoUrl: LOGO, brandColour: '#1F6F5C', feePct: opts.fee === undefined ? 12 : opts.fee, areas: ['Nottingham'], photoUrl: null },
       domain: 'brightstone.co.uk',
       websiteId: '00000000-0000-4000-8000-0000000000aa',
     },
@@ -129,7 +129,6 @@ async function rig(opts: { fee?: number | null; settings?: Partial<RenderSetting
   const storage = new FakeStorage();
   const synthCalls: Rig['synthCalls'] = [];
   const logs: Rig['logs'] = [];
-  const brand = { value: BRAND as RenderBrand | null };
   const synthResult = { value: okSynth as (lines: readonly string[]) => SynthesiseResult };
   const settings: RenderSettings = { ...DEFAULT_RENDER_SETTINGS, ...(opts.settings ?? {}) };
 
@@ -143,7 +142,6 @@ async function rig(opts: { fee?: number | null; settings?: Partial<RenderSetting
     },
     storage,
     fetchImage: async (ref) => ({ bytes: ref.includes('logo') ? PNG : JPG, contentType: null }),
-    loadBrand: async () => brand.value,
     rendererFiles: async () => [
       { path: 'ad-render/notice.py', content: new TextEncoder().encode('# notice') },
       { path: 'ad-render/requirements.txt', content: new TextEncoder().encode('Pillow') },
@@ -164,7 +162,10 @@ async function rig(opts: { fee?: number | null; settings?: Partial<RenderSetting
     synthCalls,
     logs,
     settings,
-    brand,
+    snap: (patch) => {
+      const ad = [...h.store.ads.values()].find((a) => a.angle === '5b' && a.version === 1)!;
+      ad.texts = { ...ad.texts, brand: { ...ad.texts.brand!, ...patch } };
+    },
     synthResult,
     deps,
     packId,
@@ -257,16 +258,15 @@ test('brief.json matches the contract: version, brand, photos, script validated,
 
 test('no fee set: no fee line in the brief, and the voice never says one', async () => {
   const r = await rig({ fee: null });
-  r.brand.value = { ...BRAND, feePct: null };
   await r.run();
   const brief = JSON.parse(new TextDecoder().decode(r.sandboxes.created[0].sandbox.files.get(BRIEF_PATH))) as Brief;
   assert.equal(brief.fee_sentence, null);
   assert.ok(!/management fee/i.test(brief.script.lines.map((l) => l.text).join(' ')));
 });
 
-test('a fee line only when the voice says it too (a fee set after the pack was made is left out)', async () => {
+test('a fee line only when the voice says it too (a snapshot fee line the script never says is left out)', async () => {
   const r = await rig({ fee: null });
-  r.brand.value = { ...BRAND, feePct: 15 };
+  r.snap({ feeSentence: 'Our management fee is 15%.' });
   await r.run();
   const brief = JSON.parse(new TextDecoder().decode(r.sandboxes.created[0].sandbox.files.get(BRIEF_PATH))) as Brief;
   assert.equal(brief.fee_sentence, null);
@@ -649,30 +649,41 @@ test('a claim someone else already took is skipped', async () => {
   assert.equal(r.sandboxes.created.length, 0);
 });
 
-test('a render whose pack or ad is gone is failed as bad_brief, not retried', async () => {
+test('a render whose pack is gone or on another version is superseded (no retry, no cost); a pack without its 5b ad is a bad_brief', async () => {
   const a = await rig({ queue: false });
   await a.renders.enqueue('no-such-pack', 1, 'jane');
-  assert.equal((await a.run()).results[0].code, 'bad_brief');
+  assert.equal((await a.run()).results[0].code, 'superseded');
   assert.equal([...a.renders.rows.values()][0].state, 'failed');
 
   const b = await rig({ queue: false });
-  await b.renders.enqueue(b.packId, 7, 'jane'); // no 5b ad of version 7
+  await b.renders.enqueue(b.packId, 7, 'jane'); // the pack is on version 1
   const rep = await b.run();
-  assert.equal(rep.results[0].code, 'bad_brief');
+  assert.equal(rep.results[0].code, 'superseded');
   assert.equal(rep.results[0].outcome, 'failed');
+
+  const c = await rig();
+  c.h.store.ads.delete(c.ad5b().id);
+  const rc = await c.run();
+  assert.equal(rc.results[0].code, 'bad_brief');
+  assert.equal(rc.results[0].outcome, 'failed');
 });
 
-test('no company name is a bad_brief; no brand row is a retryable store_failed', async () => {
+test('no company name is a bad_brief; no pinned brand is a bad_brief too (never a fall-back to the live settings)', async () => {
   const a = await rig();
-  a.brand.value = { ...BRAND, company: '   ' };
+  a.snap({ company: '   ' });
   const ra = await a.run();
   assert.equal(ra.results[0].code, 'bad_brief');
   assert.equal(ra.results[0].outcome, 'failed');
   const b = await rig();
-  b.brand.value = null;
+  const ad = b.ad5b();
+  const { brand: _gone, ...rest } = ad.texts;
+  void _gone;
+  ad.texts = rest;
   const rb = await b.run();
-  assert.equal(rb.results[0].code, 'store_failed');
-  assert.equal(rb.results[0].outcome, 'queued');
+  assert.equal(rb.results[0].code, 'bad_brief');
+  assert.equal(rb.results[0].outcome, 'failed');
+  assert.equal(b.sandboxes.created.length, 0);
+  assert.equal(b.synthCalls.length, 0);
 });
 
 // ── Dry run ──
@@ -774,21 +785,20 @@ test('buildBrief and briefProblems: a bad colour falls back, an escaping path is
 
 test('photos: at most four, jpg or png only (a webp is skipped), the site photo only when the pack has none', async () => {
   const r = await rig();
-  r.h.store.packs.get(r.packId)!.photos = ['u/1.jpg', 'u/2.jpg', 'u/3.jpg', 'u/4.jpg', 'u/5.jpg'];
+  r.snap({ photos: ['u/1.jpg', 'u/2.jpg', 'u/3.jpg', 'u/4.jpg', 'u/5.jpg'] });
   r.deps.fetchImage = async (ref) => ({ bytes: ref === 'u/2.jpg' ? new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]) : ref.includes('logo') ? PNG : JPG, contentType: null });
   await r.run();
   const brief = JSON.parse(new TextDecoder().decode(r.sandboxes.created[0].sandbox.files.get(BRIEF_PATH))) as Brief;
   assert.equal(brief.photos.length, 3, 'five asked, four read, one of those a webp');
 
   const s = await rig();
-  s.h.store.packs.get(s.packId)!.photos = [];
-  s.brand.value = { ...BRAND, sitePhotoRef: 'https://cdn.example.test/site.jpg' };
+  s.snap({ photos: [], sitePhotoRef: 'https://cdn.example.test/site.jpg' });
   await s.run();
   const briefS = JSON.parse(new TextDecoder().decode(s.sandboxes.created[0].sandbox.files.get(BRIEF_PATH))) as Brief;
   assert.deepEqual(briefS.photos, ['assets/photo1.jpg']);
 
   const t = await rig();
-  t.h.store.packs.get(t.packId)!.photos = [];
+  t.snap({ photos: [] });
   t.deps.fetchImage = async () => {
     throw new Error('offline');
   };
@@ -862,7 +872,7 @@ test('after a good render the video check passes: the checks hold a passing vide
   const pack = (await r.h.store.getPack(OWNER))!;
   assert.equal(pack.status, 'preview');
   assert.equal(pack.checks?.ok, true);
-  assert.deepEqual(pack.checks?.results.find((c) => c.check === 'video'), { check: 'video', label: 'The video is made properly', ok: true, failures: 0, warnings: 0 });
+  assert.deepEqual(pack.checks?.results.find((c) => c.check === 'video'), { check: 'video', label: 'The video is made properly', ok: true, failures: 0, warnings: 0, ran: true });
   assert.equal((r.ad5b().files.video as { status: string }).status, 'ready');
   // And the operator may approve all three ads.
   assert.ok((await r.h.engine.approvePack({ ownerId: OWNER })).ok);
@@ -923,16 +933,195 @@ test('the video check leaves the other stored checks as they were, and a newer v
   assert.deepEqual(after.checks?.warnings, before.checks?.warnings);
   assert.deepEqual(after.checks?.results.filter((c) => c.check !== 'video'), before.checks?.results.filter((c) => c.check !== 'video'));
 
+  // Already moved on at the claim: superseded before anything is spent.
   for (const patch of [{ version: 2 }, { status: 'generating' as const }]) {
     const x = await rig();
     await x.h.store.updatePack(OWNER, x.packId, patch);
     x.sandboxes.opts.onRun = healthy(x, { audio: false });
-    await x.run();
+    const rep = await x.run();
+    assert.equal(rep.results[0].code, 'superseded');
+    assert.equal(x.sandboxes.created.length, 0);
     const pack = (await x.h.store.getPack(OWNER))!;
     assert.equal(pack.status, patch.status ?? 'preview');
     assert.deepEqual(pack.checks, before.checks, 'untouched');
   }
+  // Moved on DURING the render: the checks are not merged, the slot is not made ready and the row does not end done.
+  for (const patch of [{ version: 2 }, { status: 'approved' as const }]) {
+    const x = await rig();
+    const ok = healthy(x, { audio: false });
+    x.sandboxes.opts.onRun = (cmd) => {
+      if (cmd.args[0] === 'ad-render/notice.py') void x.h.store.updatePack(OWNER, x.packId, patch);
+      return ok(cmd);
+    };
+    const rep = await x.run();
+    assert.equal(rep.results[0].code, 'superseded');
+    assert.equal(rep.results[0].outcome, 'failed');
+    assert.equal(x.row()!.state, 'failed');
+    assert.notEqual((x.ad5b().files.video as { status: string }).status, 'ready');
+    assert.deepEqual((await x.h.store.getPack(OWNER))!.checks, before.checks, 'untouched');
+  }
 });
+
+test('the video check is merged BEFORE the row is done and the slot ready; if merging throws the row does not end done and the slot is not ready', async () => {
+  const r = await rig();
+  const order: string[] = [];
+  const realUpdate = r.h.store.updatePack.bind(r.h.store);
+  r.h.store.updatePack = async (...a: Parameters<typeof realUpdate>) => {
+    if ((a[2] as { checks?: unknown }).checks) order.push('checks');
+    return realUpdate(...a);
+  };
+  const realComplete = r.renders.complete.bind(r.renders);
+  r.renders.complete = async (...a) => (order.push('complete'), realComplete(...a));
+  const realSet = r.renders.setAdFiles.bind(r.renders);
+  r.renders.setAdFiles = async (...a) => (order.push('slot'), realSet(...a));
+  await r.run();
+  assert.deepEqual(order, ['checks', 'slot', 'complete']);
+
+  const t = await rig();
+  t.h.store.updatePack = async () => {
+    throw new Error('db down');
+  };
+  const rep = await t.run();
+  assert.notEqual(rep.results[0].outcome, 'done');
+  assert.equal(rep.results[0].code, 'store_failed');
+  assert.notEqual(t.row()!.state, 'done');
+  assert.equal(t.row()!.state, 'queued', 'tried again');
+  assert.notEqual((t.ad5b().files.video as { status: string }).status, 'ready');
+});
+
+test('a row whose pack moved on is superseded before any spend: no voice, no sandbox, no cost, no retry', async () => {
+  for (const patch of [{ version: 2 }, { status: 'failed' as const }, { status: 'generating' as const }]) {
+    const r = await rig();
+    await r.h.store.updatePack(OWNER, r.packId, patch);
+    const rep = await r.run();
+    assert.equal(rep.results[0].outcome, 'failed');
+    assert.equal(rep.results[0].code, 'superseded');
+    assert.equal(rep.results[0].costPence, 0);
+    assert.equal(r.synthCalls.length, 0);
+    assert.equal(r.sandboxes.created.length, 0);
+    assert.equal(r.storage.puts.length, 0);
+    assert.equal(r.row()!.state, 'failed');
+    assert.equal(r.row()!.errorCode, 'superseded');
+    assert.equal(r.h.store.runs.length, 1, 'no render run row: only the generator run');
+    assert.equal((await r.run()).claimed, 0, 'not retried');
+    assert.notEqual((r.ad5b().files.video as { status: string }).status, 'failed', 'the ad slot is left alone');
+  }
+  for (const status of ['preview', 'approved'] as const) {
+    const r = await rig();
+    await r.h.store.updatePack(OWNER, r.packId, { status });
+    assert.equal((await r.run()).results[0].outcome, status === 'approved' ? 'failed' : 'done', 'preview and approved are rendered (approved fails only at the late check)');
+  }
+});
+
+test('brand pinning: a retry and a voice change use the snapshot taken at generate, whatever the site or the pack columns say now', async () => {
+  const r = await rig();
+  failRender(r, 'ERR render_failed\n');
+  await r.run(); // first try fails: queued for a retry
+  assert.equal(r.row()!.state, 'queued');
+  // The operator edits the site brand and the pack's own columns drift. The worker does not read the live settings at all (no
+  // loadBrand dependency exists); the pack columns it used to read are changed here to prove they are not read either.
+  const pack = r.h.store.packs.get(r.packId)!;
+  pack.photos = ['u/new-photo.jpg'];
+  pack.areaLabel = 'Somewhere else';
+  pack.bedrooms = 9;
+  pack.figures = [];
+  const fetched: string[] = [];
+  r.deps.fetchImage = async (ref) => (fetched.push(ref), { bytes: ref.includes('logo') ? PNG : JPG, contentType: null });
+  r.sandboxes.opts.onRun = healthy(r);
+  await r.run();
+  const read = () => JSON.parse(new TextDecoder().decode(r.sandboxes.created.at(-1)!.sandbox.files.get(BRIEF_PATH))) as Brief;
+  let brief = read();
+  assert.equal(brief.area, 'Lenton, Nottingham');
+  assert.equal(brief.bedrooms, 3);
+  assert.ok(brief.figure, 'the pinned figure, not the pack column that is now empty');
+  assert.deepEqual(brief.photos, ['assets/photo1.jpg']);
+  assert.ok(!fetched.includes('u/new-photo.jpg'));
+  assert.ok(fetched.includes('https://cdn.example.test/photo-1.jpg') && fetched.includes(LOGO));
+  assert.equal(brief.brand.company, SECRET_TEXT);
+  // The script and the brief agree: the lines the voice says are the lines on screen and name the same company and area.
+  assert.deepEqual(brief.script.lines.map((l) => l.text), scriptLinesOf(r.ad5b()));
+  assert.ok(brief.script.lines.map((l) => l.text).join(' ').includes(SECRET_TEXT));
+
+  // A voice change after the same drift: the version is the same, the row starts again, the brief is still the pinned one.
+  const changed = await r.h.engine.changeVoice({ ownerId: OWNER, voiceKey: 'olivia' });
+  assert.ok(changed.ok, JSON.stringify(changed));
+  r.storage.files.clear(); // the engine's deleteFiles removes the version's cached voice (the harness's fake does not touch this storage)
+  const created = r.sandboxes.created.length;
+  await r.run();
+  assert.equal(r.sandboxes.created.length, created + 1);
+  brief = read();
+  assert.equal(brief.brand.company, SECRET_TEXT);
+  assert.equal(brief.area, 'Lenton, Nottingham');
+  assert.deepEqual(brief.script.lines.map((l) => l.text), scriptLinesOf(r.ad5b()));
+  assert.equal(r.synthCalls.at(-1)!.voiceKey, 'olivia');
+});
+
+test('the pinned brand is stored with the 5b ad only, holds no more than the pack already stores, and is not part of the copyable texts', async () => {
+  const r = await rig();
+  const b = r.ad5b().texts.brand!;
+  assert.deepEqual(Object.keys(b).sort(), ['areaLabel', 'bedrooms', 'colour', 'company', 'feeSentence', 'figure', 'logoRef', 'photos', 'sitePhotoRef']);
+  assert.equal(b.company, SECRET_TEXT);
+  assert.equal(b.logoRef, LOGO);
+  assert.equal(b.feeSentence, 'Our management fee is 12%.');
+  for (const a of r.h.store.ads.values()) if (a.angle !== '5b') assert.equal(a.texts.brand, undefined);
+});
+
+test('a failed voice call that reached ElevenLabs still costs its estimate once per call made; a refusal costs nothing', async () => {
+  const est = estimateVoicePence(scriptLinesOf((await rig()).ad5b()), 'jane');
+  assert.ok(est >= 1);
+  for (const [billedCalls, expected] of [[1, 1], [2, 2], [undefined, 0]] as const) {
+    const r = await rig();
+    r.synthResult.value = () => ({ ok: false, code: 'timeout', ...(billedCalls ? { billedCalls } : {}) });
+    const rep = await r.run();
+    assert.equal(rep.results[0].code, 'voice_timeout');
+    assert.equal(rep.results[0].outcome, 'queued');
+    assert.equal(rep.results[0].costPence, expected * est);
+    assert.equal(r.row()!.costPence, expected * est);
+    assert.equal(r.h.store.packs.get(r.packId)!.costPence, expected * est);
+    assert.equal(r.h.store.runs.length, expected === 0 ? 1 : 2, 'a non-dry run row lands in the month spend');
+    assert.equal(await r.h.store.monthSpendPence('2000-01-01T00:00:00Z'), expected * est);
+  }
+});
+
+test('every retry of a voice that fails after being billed counts again (the row cost and the month spend add up)', async () => {
+  const r = await rig({ settings: { maxAttempts: 3 } });
+  const est = estimateVoicePence(scriptLinesOf(r.ad5b()), 'jane');
+  r.synthResult.value = () => ({ ok: false, code: 'bad_response', billedCalls: 1 });
+  await r.run();
+  await r.run();
+  assert.equal(r.row()!.attempts, 2);
+  assert.equal(r.row()!.costPence, 2 * est);
+  assert.equal(await r.h.store.monthSpendPence('2000-01-01T00:00:00Z'), 2 * est);
+  await r.run();
+  assert.equal(r.row()!.state, 'failed');
+  assert.equal(r.row()!.costPence, 3 * est);
+});
+
+test('a lease is at least the route limit plus a minute, even with a very low render time limit', async () => {
+  const r = await rig({ settings: { maxSeconds: 60 } });
+  r.sandboxes.opts.failCreate = true;
+  const start = r.h.now.getTime();
+  let seen: string | null = null;
+  const real = r.renders.claim.bind(r.renders);
+  r.renders.claim = async (id, now, lease) => {
+    seen = lease;
+    return real(id, now, lease);
+  };
+  await r.run();
+  assert.equal(Date.parse(seen!) - start, (300 + 60) * 1000, 'not 60 + 60');
+  const big = await rig({ settings: { maxSeconds: 600 } });
+  big.sandboxes.opts.failCreate = true;
+  let seenBig: string | null = null;
+  const realBig = big.renders.claim.bind(big.renders);
+  big.renders.claim = async (id, now, lease) => {
+    seenBig = lease;
+    return realBig(id, now, lease);
+  };
+  const t0 = big.h.now.getTime();
+  await big.run();
+  assert.equal(Date.parse(seenBig!) - t0, (600 + 60) * 1000, 'a longer render time limit lengthens the lease');
+});
+
 
 test('the 5b slot follows the worker: ready when done, queued for a retry, failed with the code once left failed', async () => {
   const r = await rig({ settings: { maxAttempts: 2 } });

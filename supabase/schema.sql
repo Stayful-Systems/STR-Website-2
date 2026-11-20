@@ -9313,16 +9313,21 @@ notify pgrst, 'reload schema';
 --
 --   ad_pack_renders  one row per render of a pack version: the queue the worker
 --                    drains, its lease, attempts, cost and the files it made.
---                    (pack_id, version) is unique, so a version is rendered once.
---                    A voice change is a NEW version (version + 1, made by the
---                    generator), never a reused row.
+--                    (pack_id, version) is unique: one row per version. A voice
+--                    change does NOT make a new version: the same row is reset
+--                    in place (queued again, new voice, error and files cleared,
+--                    cost kept, attempts back to 0). An operator's "Try again"
+--                    resets it the same way but keeps attempts, so the tries add
+--                    up. The worker fails a row whose version is no longer the
+--                    pack's current one with the code 'superseded'.
 --
 -- Service role only (RLS on, no policy); not in ACCESS_COLUMNS; never writes
 -- leads.status or leads.crm_pushed_at.
 --
 -- Settings (billing_settings, edited by the admin):
 --   ad_pack_render_max_seconds   hard time limit for one render (sandbox timeout)
---   ad_pack_render_max_attempts  tries before a render is left failed
+--   ad_pack_render_max_attempts  tries before a render is left failed (an operator's
+--                                "Try again" stops at twice this, in all)
 --   ad_pack_sandbox_vcpus        vCPUs asked for per sandbox
 -- The sandbox price is the unit_costs row ('vercel', 'sandbox_cpu_second'):
 -- cost = seconds x vcpus x that row. It is the one source of the price.

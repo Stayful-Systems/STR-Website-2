@@ -1,7 +1,6 @@
 import 'server-only';
 
 import { Sandbox } from '@vercel/sandbox';
-import { ownSite } from '../websites/store-server';
 import { adPackFetchImage } from './files-server';
 import { enqueueRender as enqueueCore, loadRendererFiles, runRenderQueue as runCore, type EnqueueResult, type RenderDeps, type RenderReport, type SandboxFactory, type SandboxLike } from './render-core.ts';
 import { createLiveRenderStore, createLiveStorage, readRenderSettings, readSandboxCpuSecondPence } from './render-store-server.ts';
@@ -104,18 +103,6 @@ function realDeps(): RenderDeps {
     synth: (i) => synthesise({ voiceKey: i.voiceKey, lines: i.lines, packId: i.packId }),
     storage: createLiveStorage(),
     fetchImage: adPackFetchImage,
-    async loadBrand(ownerId) {
-      const site = await ownSite(ownerId);
-      if (!site) return null;
-      const s = site.settings;
-      return {
-        company: s.companyName,
-        colour: s.brandColour,
-        logoRef: s.logoUrl,
-        sitePhotoRef: s.photoUrl,
-        feePct: s.managementFeePct,
-      };
-    },
     rendererFiles: () => loadRendererFiles(),
     sandboxCpuSecondPence: readSandboxCpuSecondPence,
     renderSettings: readRenderSettings,

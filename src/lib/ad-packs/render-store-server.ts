@@ -188,13 +188,13 @@ export function createLiveRenderStore(): RenderStore {
       return data ? toRenderRow(data as Record<string, unknown>) : null;
     },
 
-    async requeueRender({ packId, version, voiceKey }) {
+    async requeueRender({ packId, version, voiceKey, keepAttempts }) {
       if (!UUID.test(packId)) throw new StoreError('invalid_pack');
       const nowIso = new Date().toISOString();
       // An existing row is reset in place, but only while no worker has it (conditional on state <> running).
       const { data, error } = await admin()
         .from('ad_pack_renders')
-        .update({ state: 'queued', attempts: 0, error_code: null, files: null, voice_key: voiceKey, lease_until: null, started_at: null, finished_at: null, updated_at: nowIso })
+        .update({ state: 'queued', ...(keepAttempts === true ? {} : { attempts: 0 }), error_code: null, files: null, voice_key: voiceKey, lease_until: null, started_at: null, finished_at: null, updated_at: nowIso })
         .eq('pack_id', packId)
         .eq('version', version)
         .neq('state', 'running')

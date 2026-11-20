@@ -302,7 +302,7 @@ test('video: every failure is plain words with the file it is about, and the res
     assert.equal(f.where, 'ad 5b notice-9x16.mp4');
     assert.ok(f.detail.length > 10 && !/video_/.test(f.detail));
   }
-  assert.deepEqual(r.results.find((x) => x.check === 'video'), { check: 'video', label: 'The video is made properly', ok: false, failures: 2, warnings: 0 });
+  assert.deepEqual(r.results.find((x) => x.check === 'video'), { check: 'video', label: 'The video is made properly', ok: false, failures: 2, warnings: 0, ran: true });
 });
 
 test('mergeVideoChecks: replaces earlier video failures, keeps every other failure, recomputes ok and results', () => {
@@ -321,4 +321,15 @@ test('mergeVideoChecks: replaces earlier video failures, keeps every other failu
   assert.equal(mergeVideoChecks(null, GOOD_VIDEOS).ok, true);
   assert.equal(mergeVideoChecks(null, GOOD_VIDEOS).results.length, CHECK_IDS.length);
   assert.deepEqual(videoChecks(GOOD_VIDEOS), { failures: [], warnings: [] });
+});
+
+test('the video result says it RAN only when the video check really ran (approve fails closed on this)', () => {
+  const notRun = runChecks(pack());
+  assert.deepEqual(notRun.results.find((x) => x.check === 'video'), { check: 'video', label: 'The video is made properly', ok: true, failures: 0, warnings: 0 });
+  assert.ok(notRun.results.every((x) => x.ran === undefined));
+  const ran = runChecks({ ...pack(), videos: GOOD_VIDEOS });
+  assert.equal(ran.results.find((x) => x.check === 'video')?.ran, true);
+  assert.ok(ran.results.filter((x) => x.check !== 'video').every((x) => x.ran === undefined));
+  assert.equal(mergeVideoChecks(notRun, GOOD_VIDEOS).results.find((x) => x.check === 'video')?.ran, true);
+  assert.equal(mergeVideoChecks(null, []).results.find((x) => x.check === 'video')?.ran, true, 'an empty list is a run that fails (missing files)');
 });
