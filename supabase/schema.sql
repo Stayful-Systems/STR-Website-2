@@ -9117,6 +9117,76 @@ grant execute on function public.website_report_charge(jsonb) to service_role;
 notify pgrst, 'reload schema';
 
 -- =========================
+-- Batch 32: website leads go into the operator's lead database account.
+--
+-- A landlord who fills in an operator's website form is also pushed, signed,
+-- to the operator's own lead database account (never charged, never given or
+-- sold on there; see PLAN-batch-32.md). The lead database's state lives in
+-- THESE tables: leads.status and leads.crm_pushed_at keep meaning "went to your
+-- CRM" and are never written by this.
+--
+-- Both tables are reached by the service role only: RLS on with no policy, and
+-- nothing here is added to ACCESS_COLUMNS. The member id sent to the lead
+-- database is the owner's profile id; the link code itself is never stored here
+-- (the lead database emails and checks it).
+-- =========================
+
+-- leaddb_links: one row per owner: the confirmed (or pending) link to their lead database account.
+create table if not exists public.leaddb_links (
+  owner_id uuid primary key references public.profiles(id) on delete cascade,
+  link_id uuid,
+  -- The login email they gave the lead database. Never shown to a team member.
+  email text not null,
+  lead_type text,
+  status text not null default 'code_sent',
+  connected_at timestamptz,
+  last_ok_at timestamptz,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.leaddb_links drop constraint if exists leaddb_links_status_check;
+alter table public.leaddb_links add constraint leaddb_links_status_check
+  check (status in ('code_sent', 'active', 'revoked', 'error'));
+alter table public.leaddb_links drop constraint if exists leaddb_links_lead_type_check;
+alter table public.leaddb_links add constraint leaddb_links_lead_type_check
+  check (lead_type is null or lead_type in ('management', 'guaranteed_rent'));
+alter table public.leaddb_links enable row level security;
+revoke all on public.leaddb_links from anon, authenticated;
+
+-- leaddb_deliveries: the retry queue behind every push of a website lead to the lead database.
+-- One row per lead. The lead is sent first (step 1, "report coming"); the report follows when it is done.
+create table if not exists public.leaddb_deliveries (
+  lead_id uuid primary key references public.leads(id) on delete cascade,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  status text not null default 'pending',
+  attempts integer not null default 0,
+  next_attempt_at timestamptz not null default now(),
+  -- A running push holds this lease; the sweep takes it over once it is past.
+  lease_until timestamptz,
+  lead_sent_at timestamptz,
+  report_sent_at timestamptz,
+  -- The lead database's own id for the lead, kept so a retry never makes a second one.
+  leaddb_lead_id uuid,
+  outcome text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.leaddb_deliveries drop constraint if exists leaddb_deliveries_status_check;
+alter table public.leaddb_deliveries add constraint leaddb_deliveries_status_check
+  check (status in ('pending', 'sent', 'failed'));
+alter table public.leaddb_deliveries drop constraint if exists leaddb_deliveries_attempts_check;
+alter table public.leaddb_deliveries add constraint leaddb_deliveries_attempts_check check (attempts >= 0);
+create index if not exists leaddb_deliveries_due_idx
+  on public.leaddb_deliveries (next_attempt_at) where status = 'pending';
+create index if not exists leaddb_deliveries_owner_idx on public.leaddb_deliveries (owner_id, updated_at desc);
+alter table public.leaddb_deliveries enable row level security;
+revoke all on public.leaddb_deliveries from anon, authenticated;
+
+notify pgrst, 'reload schema';
+
+-- =========================
 -- Batch 33: customer website domains (Phase 1: schema and settings)
 -- =========================
 -- When a member approves their website, Stayful buys <company>management.co.uk

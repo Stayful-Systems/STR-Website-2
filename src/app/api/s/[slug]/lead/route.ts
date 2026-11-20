@@ -11,6 +11,7 @@ import { parseSources } from '@/lib/websites/sources';
 import { issueStepToken } from '@/lib/websites/step-token';
 import { liveSiteBySlug, type WebsiteRow } from '@/lib/websites/store-server';
 import { notifyOperatorOfWebsiteLead } from '@/lib/websites/notify-server';
+import { enqueueLeadDbPush } from '@/lib/leaddb/deliver';
 import { domainIsLiveFor } from '@/lib/domains/store-server';
 import { siteDomain } from '@/lib/websites/urls';
 
@@ -181,6 +182,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     .from('website_reports')
     .upsert({ lead_id: leadId, website_id: site.id, state: 'awaiting_address', self_submit: selfSubmit }, { onConflict: 'lead_id', ignoreDuplicates: true });
   if (reportError) console.error(`[website-lead] report row not saved for lead ${leadId}:`, reportError.code ?? 'error');
+
+  void enqueueLeadDbPush(leadId).catch(() => {}); // Batch 32: the operator's lead database gets it too (never throws, never waits)
 
   // ── 7. The operator hears of the lead now, not only when a report finishes. Once per lead. ──
   await notifyOperatorOfWebsiteLead({ leadId, websiteId: site.id });

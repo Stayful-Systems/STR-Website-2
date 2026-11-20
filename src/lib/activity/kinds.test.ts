@@ -155,6 +155,13 @@ test("Batch 31's website approval is registered and record only", () => {
   assert.equal(isCounted('website_approved'), false);
 });
 
+test('Batch 32: connecting the lead database is recorded, and is record only', () => {
+  assert.equal(isActivityKind('leaddb_connected'), true);
+  assert.equal(kindLabel('leaddb_connected'), 'Connected the lead database');
+  assert.equal(isQualifying('leaddb_connected'), false);
+  assert.equal(isCounted('leaddb_connected'), false);
+});
+
 test("Batch 33's web address choice is registered and record only", () => {
   assert.equal(isActivityKind('website_domain_chosen'), true);
   assert.equal(isQualifying('website_domain_chosen'), false);

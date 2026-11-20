@@ -9,6 +9,7 @@ import { money } from "@/lib/funnels/tiers";
 import { mcReport, type McAccount, type McCharge } from "@/lib/management/report";
 import { FunnelNoticePanel, TestMonthPanel } from "./Panels";
 import { WebsitesPanel } from "./WebsitesPanel";
+import { LeadDbFailuresPanel } from "./LeadDbFailuresPanel";
 import { loadWebsitesAdmin } from "@/lib/websites/admin-server";
 import { DomainsPanel } from "./DomainsPanel";
 import { loadDomainsAdmin } from "@/lib/domains/admin-server";
@@ -130,6 +131,7 @@ export default async function AdminManagement() {
       </div>
 
       <WebsitesPanel data={websites} />
+      <LeadDbFailuresPanel />
       <DomainsPanel data={domains} />
     </main>
   );
