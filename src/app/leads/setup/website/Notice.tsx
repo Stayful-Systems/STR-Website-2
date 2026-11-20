@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { siteUrl } from "@/lib/url";
-import { siteHref } from "@/lib/websites/urls";
+import { siteAbsoluteUrl } from "@/lib/websites/urls";
 import { SetupFrame } from "../SetupFrame";
 import type { SetupContext } from "./context";
 import { WEBSITE_STEPS } from "./steps";
@@ -17,7 +16,7 @@ export function Notice({ ctx }: { ctx: Exclude<SetupContext, { kind: "ready" }> 
     );
   }
   const { site } = ctx.actor;
-  const address = siteUrl(siteHref(site, ""));
+  const address = siteAbsoluteUrl(site, "");
   const paused = site.status === "paused";
   return (
     <SetupFrame

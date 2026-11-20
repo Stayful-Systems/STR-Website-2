@@ -8,18 +8,24 @@
  *
  * Pure: no network, no database, no server-only.
  */
+import { siteUrl } from '../url.ts';
+import { CO_UK_NAME } from '../domains/name.ts';
 import type { SiteRef } from './types.ts';
 
 export const SITE_PREFIX = '/s';
 
-/** Batch 33 flips this. While false a site's `domain` is ignored and every address is /s/<slug>. */
-export const CUSTOM_DOMAINS_ON = false;
+/**
+ * Batch 33 turned this on. It is safe because websites.domain is set only when
+ * a domain goes live (src/lib/domains/purchase-server.ts): a site with no
+ * domain, or one still connecting, keeps the /s/<slug> address.
+ */
+export const CUSTOM_DOMAINS_ON = true;
 
-/** The custom domain in use, or null (always null until Batch 33). */
+/** The custom domain in use, or null. Only a plain <label>.co.uk counts: a stored value that is anything else is ignored. */
 export function siteDomain(site: SiteRef): string | null {
   if (!CUSTOM_DOMAINS_ON) return null;
   const d = (site.domain ?? '').trim().toLowerCase();
-  return d || null;
+  return CO_UK_NAME.test(d) ? d : null;
 }
 
 /** The site's own root: "/s/acme" today, "" on a custom domain. */
@@ -42,4 +48,17 @@ export function siteHref(site: SiteRef, path = ''): string {
   if (!rest) return base || '/';
   // "?x=1" or "#a" straight after the base keeps the home page.
   return rest.startsWith('?') || rest.startsWith('#') ? `${base || '/'}${rest}` : `${base}/${rest}`;
+}
+
+/**
+ * The full address of a page, for emails, notices and canonical links: on the
+ * site's own domain when it has one ("https://harbourmanagement.co.uk/fees"),
+ * else on the app's address ("https://stayful.co.uk/s/harbour/fees"). Pass
+ * `{ slug }` only to get the temporary address whatever the site has (go-live's
+ * check does, so approval always tests the /s/<slug> pages).
+ */
+export function siteAbsoluteUrl(site: SiteRef, path = ''): string {
+  const domain = siteDomain(site);
+  const rel = siteHref(site, path);
+  return domain ? `https://${domain}${rel}` : siteUrl(rel);
 }

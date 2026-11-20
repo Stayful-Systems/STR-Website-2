@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AttributionProvider } from "@/lib/websites/LeadForm";
 import { siteThemeVars } from "@/lib/websites/templates/SiteShell";
+import { siteDomain } from "@/lib/websites/urls";
 import { loadLiveSite } from "./site-data";
 
 /**
@@ -16,7 +17,9 @@ import { loadLiveSite } from "./site-data";
  * mention is the footer line the shell draws.
  *
  * noindex, nofollow: while a site lives on the temporary /s/<slug> address it
- * must not compete with the operator's own site in search results.
+ * must not compete with the operator's own site in search results. Batch 33:
+ * once it has its own domain it is indexable (index, follow); each page then
+ * names its own canonical address (canonicalFor, site-data.ts).
  *
  * Paused, preview and unknown sites are a 404. The page behind a live address
  * differs from the one behind a paused one at the very same URL, so nothing
@@ -38,6 +41,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     title: name || "Property income estimate",
     description: name ? `Find out what your property could earn as a short-term let, from ${name}.` : "Find out what your property could earn as a short-term let.",
     robots: { index: false, follow: false },
+    // Batch 33: a site on its own domain is indexable.
+    ...(live && siteDomain(live.row) ? { robots: { index: true, follow: true } } : {}),
     icons: logo ? { icon: logo } : { icon: "/icon-neutral.svg" },
   };
 }
