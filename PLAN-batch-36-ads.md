@@ -144,7 +144,7 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   exported (guide reuses copy button + `ad_text_copied` logging); next.config.ts `/leads/ads` trace also includes
   `public/ad-packs/guide/*.png`. 13 steps (page picked in its own step from the upload step: one action per screen); README
   lists the 13 PNG names Zac must supply. Missing screenshots show a plain-text placeholder (no broken images). Switch stays OFF
-  until the screenshots are in.
+  until the screenshots are in. UPDATE 20 Nov: Zac supplied all 13 screenshots (checked: cropped, account/Page names blurred, no payment data); they are in `public/ad-packs/guide/`. The switch still waits for 36b.
 - [x] **Phase 10 — Admin.** `/admin/ad-packs`.
   Notes: 27 admin tests (202 ad-packs tests pass), tsc/eslint clean. Files: src/app/admin/ad-packs/{page,actions,
   AdPacksPanel}, src/lib/ad-packs/{admin-view,admin-run,admin-server}.ts, next.config.ts one line. Regenerate Run needs the dry
