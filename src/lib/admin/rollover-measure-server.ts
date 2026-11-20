@@ -8,7 +8,7 @@ import { computeWeeklyActive, type WeeklyFacts } from '../activity/metrics';
 import { rolloverMeasure, type MeasureGrantRow, type MeasureMember, type RolloverMeasure } from './rollover-measure';
 
 /**
- * Batch 32, Phase 7: the reads behind "Plan credit rollover" on
+ * Batch 34, Phase 7: the reads behind "Plan credit rollover" on
  * /admin/weekly-active. The maths is rollover-measure.ts; this only fetches:
  *
  *   - the launch date (billing_settings plan_credit_rollover_from)
@@ -62,7 +62,7 @@ async function planGrants(): Promise<{ grants: MeasureGrantRow[] | null; note: s
       .eq('kind', 'plan')
       .order('created_at', { ascending: true })
       .range(from, from + PAGE - 1);
-    if (error) return { grants: null, note: `plan grants unreadable (schema.sql Batch 32 section not run?): ${error.message}` };
+    if (error) return { grants: null, note: `plan grants unreadable (schema.sql Batch 34 section not run?): ${error.message}` };
     const rows = (data ?? []) as MeasureGrantRow[];
     out.push(...rows);
     if (rows.length < PAGE) break;
@@ -76,7 +76,7 @@ export async function loadRolloverMeasure(now: Date = new Date()): Promise<Rollo
     const launch = await launchAt(createAdminClient());
     const [events, weekly, grants] = await Promise.all([loadSubscriptionEvents(), weeklyMembers(now, weeksToRead(launch, now)), planGrants()]);
     const notes = [weekly.note, grants.note].filter((n): n is string => n !== null);
-    if (!launch) notes.unshift('No launch date yet (billing_settings plan_credit_rollover_from is set when schema.sql’s Batch 32 section runs): everything counts as before.');
+    if (!launch) notes.unshift('No launch date yet (billing_settings plan_credit_rollover_from is set when schema.sql’s Batch 34 section runs): everything counts as before.');
     return { ok: true, measure: rolloverMeasure({ launchAt: launch, now, events, members: weekly.members, grants: grants.grants }), notes };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

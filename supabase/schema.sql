@@ -577,9 +577,9 @@ begin
   alter table public.credit_grants add constraint credit_grants_scope_check check (scope is null or scope in ('pack_bonus'));
 end $$;
 create index if not exists credit_grants_scope_idx on public.credit_grants (user_id) where scope is not null;
--- Batch 32 (plan credit rollover): true on a plan grant made by a plan
+-- Batch 34 (plan credit rollover): true on a plan grant made by a plan
 -- renewal (credit_plan_cycle; and, by the one-off below, every plan grant made
--- before Batch 32). The newest such grant marks the start of the current
+-- before Batch 34). The newest such grant marks the start of the current
 -- cycle: the Usage page measures from it, and the 12-month no-spend rule never
 -- expires it or anything added after it.
 alter table public.credit_grants add column if not exists plan_cycle boolean not null default false;
@@ -5817,7 +5817,7 @@ alter table public.leads add column if not exists input jsonb;
 -- the same invoice could pass the check and grant twice. Returns
 -- {grant_id, created, expired}: a replay returns the existing grant and
 -- creates nothing.
--- Batch 32 (plan credit rollover): a renewal no longer expires the open plan
+-- Batch 34 (plan credit rollover): a renewal no longer expires the open plan
 -- grants (credit_expire_plan_grants is no longer called): unused plan credit
 -- rolls over. The new grant never expires (p_expires_at is IGNORED, so app
 -- code that still passes a period end is safe) and is marked plan_cycle.
@@ -8812,13 +8812,13 @@ end $$;
 alter table public.academy_purchases enable row level security;  -- no policies: service role only
 revoke all on public.academy_purchases from anon, authenticated;
 -- =========================
--- Batch 32: plan credit rollover
+-- Batch 34: plan credit rollover
 -- =========================
--- Unused plan credit rolls over with no cap (PLAN.md, Batch 32a). A renewal no
+-- Unused plan credit rolls over with no cap (PLAN.md, Batch 34a). A renewal no
 -- longer wipes it (credit_plan_cycle, edited in place above, and the
 -- credit_grants.plan_cycle flag next to the table). Plan credit can lapse
 -- only after 12 months with no spend at all, and never the newest month's;
--- the reminders and the live expiry come in Batch 32b. Here: the settings, the
+-- the reminders and the live expiry come in Batch 34b. Here: the settings, the
 -- one-off that stops existing plan credit lapsing, a read-only report of idle
 -- members, and the targeted removal used for refunded plan payments and
 -- cancelled Academy trials. Checked by supabase/tests/rollover-smoke.sql.
@@ -8835,25 +8835,25 @@ insert into public.billing_settings (key, value) values
   ('plan_credit_final_notice_days', '30')
 on conflict (key) do nothing;
 
--- credit_batch32_cycle_candidate(kind, plan_cycle, description): whether the
+-- credit_batch34_cycle_candidate(kind, plan_cycle, description): whether the
 -- one-off below marks an existing grant as a cycle grant: a plan grant not yet
 -- marked, except an upgrade's top-up (grantUpgradeDifference in
 -- src/lib/stripe/grants.ts, described 'Upgrade to <plan>: extra plan
 -- credit'). A top-up marked as a cycle start would make the newest renewal's
 -- credit look like an older month's (expirable) and over-grant a later
 -- upgrade's top-up. Its own function so rollover-smoke.sql can check it.
-create or replace function public.credit_batch32_cycle_candidate(p_kind text, p_plan_cycle boolean, p_description text)
+create or replace function public.credit_batch34_cycle_candidate(p_kind text, p_plan_cycle boolean, p_description text)
 returns boolean language sql immutable set search_path = public as $$
   select p_kind = 'plan' and not coalesce(p_plan_cycle, false)
      and coalesce(p_description, '') not like 'Upgrade to %: extra plan credit';
 $$;
-revoke all on function public.credit_batch32_cycle_candidate(text, boolean, text) from public, anon, authenticated;
-grant execute on function public.credit_batch32_cycle_candidate(text, boolean, text) to service_role;
+revoke all on function public.credit_batch34_cycle_candidate(text, boolean, text) from public, anon, authenticated;
+grant execute on function public.credit_batch34_cycle_candidate(text, boolean, text) to service_role;
 
--- One-off, marked by billing_settings 'batch32_rollover_from' (it also holds
+-- One-off, marked by billing_settings 'batch34_rollover_from' (it also holds
 -- the counts): stamps the launch date, stops every open plan grant lapsing at
 -- its period end, and marks the existing plan grants (not upgrade top-ups:
--- credit_batch32_cycle_candidate) as cycle grants. Credit
+-- credit_batch34_cycle_candidate) as cycle grants. Credit
 -- that lapsed before launch is not restored. Rollback: re-set expires_at to
 -- the period end on the grants the 'unexpired' count names.
 do $$
@@ -8862,17 +8862,17 @@ declare
   v_unexpired int;
   v_flagged int;
 begin
-  if not exists (select 1 from public.billing_settings where key = 'batch32_rollover_from') then
+  if not exists (select 1 from public.billing_settings where key = 'batch34_rollover_from') then
     insert into public.billing_settings (key, value) values ('plan_credit_rollover_from', to_jsonb(v_now))
     on conflict (key) do nothing;
     update public.credit_grants set expires_at = null
      where kind = 'plan' and remaining_pence > 0 and expires_at > v_now;
     get diagnostics v_unexpired = row_count;
     update public.credit_grants set plan_cycle = true
-     where public.credit_batch32_cycle_candidate(kind, plan_cycle, description);
+     where public.credit_batch34_cycle_candidate(kind, plan_cycle, description);
     get diagnostics v_flagged = row_count;
     insert into public.billing_settings (key, value)
-    values ('batch32_rollover_from', jsonb_build_object('at', v_now, 'unexpired', v_unexpired, 'flagged', v_flagged));
+    values ('batch34_rollover_from', jsonb_build_object('at', v_now, 'unexpired', v_unexpired, 'flagged', v_flagged));
   end if;
 end $$;
 
@@ -8886,7 +8886,7 @@ end $$;
 --   plan_remaining_pence  all their unexpired plan credit
 --   expirable_pence       the part of it in grants created BEFORE their newest
 --                         plan_cycle grant: the newest month never lapses
--- Batch 32b's reminders and expiry read it; nothing here changes credit.
+-- Batch 34b's reminders and expiry read it; nothing here changes credit.
 create or replace function public.credit_idle_plan_report(p_now timestamptz default now())
 returns table (user_id uuid, last_spent_at timestamptz, idle_since timestamptz, plan_remaining_pence numeric, expirable_pence numeric)
 language sql stable security definer set search_path = public as $$

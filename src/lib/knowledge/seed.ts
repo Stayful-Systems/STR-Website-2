@@ -118,10 +118,10 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['How do I add credit?', 'How do I buy more credit?', 'How do I top up?'],
     answer: 'Top up {topup_amounts} in Account → Billing; auto top-up adds your chosen amount when you drop below your limit and needs a saved card.',
   },
-  // ── Batch 32a: plan credit rolls over (drafts for Zac to approve; the lapse months and days are settings) ──
+  // ── Batch 34a: plan credit rolls over (drafts for Zac to approve; the lapse months and days are settings) ──
   {
     slug: 'plan_credit_rollover',
-    from: 'Batch 32a, plan credit rollover (PLAN.md Rules; terms section 2)',
+    from: 'Batch 34a, plan credit rollover (PLAN.md Rules; terms section 2)',
     category: 'credit_billing',
     channels: ['view', 'call', 'chat'],
     showWhen: null,
@@ -131,7 +131,7 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'plan_credit_cancel',
-    from: 'Batch 32a, plan credit rollover (PLAN.md Rules; terms section 2)',
+    from: 'Batch 34a, plan credit rollover (PLAN.md Rules; terms section 2)',
     category: 'credit_billing',
     channels: ['view', 'call', 'chat'],
     showWhen: null,
@@ -141,7 +141,7 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'credit_spend_order',
-    from: 'Batch 32a, plan credit rollover (PLAN.md Rules)',
+    from: 'Batch 34a, plan credit rollover (PLAN.md Rules)',
     category: 'credit_billing',
     channels: ['view', 'call', 'chat'],
     showWhen: null,
@@ -151,7 +151,7 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'credit_idle_expiry',
-    from: 'Batch 32a, plan credit rollover (PLAN.md Rules; terms section 2)',
+    from: 'Batch 34a, plan credit rollover (PLAN.md Rules; terms section 2)',
     category: 'credit_billing',
     channels: ['view', 'call', 'chat'],
     showWhen: null,

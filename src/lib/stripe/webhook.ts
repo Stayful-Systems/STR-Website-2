@@ -21,7 +21,7 @@ import { disputeWonRef, planInvoiceScope, refundedShare, trialEndedUnpaid, type 
 
 import type { PlanSourceMatch, PlanSourceOptions } from '../credit/ledger.ts';
 
-/** Batch 32: the reasons plan credit is removed under (credit_expire_plan_source's ledger rows carry them). */
+/** Batch 34: the reasons plan credit is removed under (credit_expire_plan_source's ledger rows carry them). */
 export type PlanClawbackReason = 'plan_refunded' | 'plan_disputed';
 
 export interface WebhookUser {
@@ -53,7 +53,7 @@ export interface WebhookDeps {
   grantUpgradeDifference(userId: string, fromPlanCode: string | null, toPlanCode: string, sourceRef: string, periodEnd: Date | null): Promise<void>;
   grantTopup(userId: string, amountPence: number, sourceRef: string, email: string | null): Promise<boolean>;
   /**
-   * Batch 32 (plan credit rollover): removes up to `maxPence` (null = all) of
+   * Batch 34 (plan credit rollover): removes up to `maxPence` (null = all) of
    * the member's plan credit in grants whose source_ref matches, never below
    * zero, no other credit touched (credit_expire_plan_source). Optional:
    * without it no plan credit is ever removed here. Plan credit is no longer
@@ -61,7 +61,7 @@ export interface WebhookDeps {
    */
   expirePlanSource?(userId: string, match: PlanSourceMatch, maxPence: number | null, reason: string, opts?: PlanSourceOptions): Promise<{ expiredPence: number; grants: number }>;
   /**
-   * Batch 32: the plan invoice a payment paid (member_payments, else Stripe's
+   * Batch 34: the plan invoice a payment paid (member_payments, else Stripe's
    * invoice payments), or null when it paid no plan invoice. `paidPence` is
    * what the invoice charged. `annual` is set when it paid an annual plan's
    * year (its credit is that year's `annual:<sub>:` slot grants, not an
@@ -69,15 +69,15 @@ export interface WebhookDeps {
    */
   planInvoiceForPayment?(paymentIntentId: string): Promise<{ userId: string; invoiceId: string; paidPence: number; annual?: AnnualInvoiceYear | null } | null>;
   /**
-   * Batch 32: the plan credit granted for the invoice (its `inv:<id>` grant,
+   * Batch 34: the plan credit granted for the invoice (its `inv:<id>` grant,
    * or with `annual` the subscription's slot grants made in that year) and
    * what has already been removed from it under `reason`.
    */
   planInvoiceCredit?(userId: string, invoiceId: string, reason: PlanClawbackReason, annual?: AnnualInvoiceYear | null): Promise<{ grantedPence: number; removedPence: number }>;
-  /** Batch 32: a won dispute's credit back, as a plan grant under `sourceRef` (idempotent on it); true when this call granted it. */
+  /** Batch 34: a won dispute's credit back, as a plan grant under `sourceRef` (idempotent on it); true when this call granted it. */
   restorePlanCredit?(userId: string, sourceRef: string, amountPence: number, description: string): Promise<boolean>;
   /**
-   * Batch 32: whether the subscription has a paid plan invoice (money taken,
+   * Batch 34: whether the subscription has a paid plan invoice (money taken,
    * not a £0 trial invoice). Null when it cannot be told. Used to tell an
    * Academy trial that ended unpaid from one that went on to a paid month.
    */
@@ -198,7 +198,7 @@ export interface AcademyWebhookDeps {
   /** A refund of the Academy payment (cancelTrialForRefund); a note for the log. */
   cancelTrialForRefund(paymentIntentId: string, fullyRefunded: boolean): Promise<string>;
   /**
-   * Batch 32: the member and trial subscription of the Academy purchase paid
+   * Batch 34: the member and trial subscription of the Academy purchase paid
    * with this payment, so a full refund removes that trial's credit
    * (`trial:<sub>:` grants) and nothing else. Null when there is none.
    */
@@ -551,7 +551,7 @@ async function academyRefund(charge: Stripe.Charge, deps: WebhookDeps): Promise<
   if (pi?.metadata?.kind !== 'academy') return null;
   const fully = charge.refunded === true || (Number(charge.amount_refunded) || 0) >= (Number(charge.amount) || 0);
   const note = await deps.academy.cancelTrialForRefund(piId, fully);
-  // Batch 32: cancelling no longer wipes plan credit, so a full refund removes the trial's own credit here
+  // Batch 34: cancelling no longer wipes plan credit, so a full refund removes the trial's own credit here
   // (only its trial:<sub>: grants; anything the member paid for is untouched). A redelivery removes nothing more.
   let removed = '';
   if (fully && deps.academy.trialFor && deps.expirePlanSource) {
@@ -565,7 +565,7 @@ async function academyRefund(charge: Stripe.Charge, deps: WebhookDeps): Promise<
 }
 
 /**
- * Batch 32: an Academy trial that ended before any paid month forfeits its
+ * Batch 34: an Academy trial that ended before any paid month forfeits its
  * trial credit (its trial:<sub>: grants only). A trial that went on to a paid
  * month keeps it: it rolls over like any plan credit. Returns a note, or ''.
  */
@@ -582,7 +582,7 @@ async function forfeitUnpaidAcademyTrial(sub: Stripe.Subscription, userId: strin
 }
 
 /**
- * Batch 32: a refund or a dispute of a plan invoice's payment removes that
+ * Batch 34: a refund or a dispute of a plan invoice's payment removes that
  * invoice's unspent credit (its `inv:<id>` grant; for an annual plan, its
  * subscription's slot grants made in that invoice's year), in the share
  * refunded or disputed, never below zero, no other credit touched.
@@ -617,7 +617,7 @@ async function clawbackPlanInvoice(event: Stripe.Event, deps: WebhookDeps): Prom
   return { handled: true, note: `plan invoice ${invoice.invoiceId} ${charge ? 'refunded' : 'disputed'}: ${r.expiredPence}p of its credit removed` };
 }
 
-/** Batch 32: a won dispute on a plan invoice puts back what charge.dispute.created removed, once (its own source_ref). Null when not a plan invoice. */
+/** Batch 34: a won dispute on a plan invoice puts back what charge.dispute.created removed, once (its own source_ref). Null when not a plan invoice. */
 async function restorePlanDispute(piId: string, pi: Stripe.PaymentIntent | null, deps: WebhookDeps): Promise<HandleResult | null> {
   if (pi?.metadata?.kind || !deps.planInvoiceForPayment || !deps.planInvoiceCredit || !deps.restorePlanCredit) return null;
   const invoice = await deps.planInvoiceForPayment(piId);
@@ -904,7 +904,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         if (!manual) Object.assign(patch, { plan: 'free', plan_code: null, stripe_price_id: null, plan_source: 'stripe' });
         patch.subscription_ended_at = new Date().toISOString();
         await deps.updateProfile(user.id, patch);
-        // Batch 32 (plan credit rollover): ending a subscription no longer wipes its plan credit; it stays
+        // Batch 34 (plan credit rollover): ending a subscription no longer wipes its plan credit; it stays
         // on the account. Only an Academy trial that never reached a paid month forfeits its trial credit.
         const forfeited = await forfeitUnpaidAcademyTrial(sub, user.id, deps);
         if (user.email) await deps.onSubscriptionCancelled(user.email);
@@ -1020,7 +1020,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       // Batch 20: a starter pack's credit comes back in the same share as its payment.
       const packClawback = await clawbackPackIfPack(event, deps);
       if (packClawback) return packClawback;
-      // Batch 32: a plan invoice's payment refunded or disputed removes that invoice's unspent credit.
+      // Batch 34: a plan invoice's payment refunded or disputed removes that invoice's unspent credit.
       const planClawback = await clawbackPlanInvoice(event, deps);
       if (planClawback) return planClawback;
       if (!deps.refundTopup) return { handled: false, note: 'no clawback configured' };
@@ -1051,7 +1051,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       const piId = id(dispute.payment_intent);
       if (!piId) return { handled: false, note: 'no payment intent' };
       const pi = deps.retrievePaymentIntentStrict ? await deps.retrievePaymentIntentStrict(piId) : await deps.retrievePaymentIntent(piId);
-      // Batch 32: a plan invoice's dispute won puts back the credit its opening removed.
+      // Batch 34: a plan invoice's dispute won puts back the credit its opening removed.
       const planRestore = await restorePlanDispute(piId, pi, deps);
       if (planRestore) return planRestore;
       if (!deps.restoreDisputedCredit) return { handled: false, note: 'no restore configured' };

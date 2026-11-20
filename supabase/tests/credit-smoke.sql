@@ -149,8 +149,8 @@ begin
   select * into r from credit_available(w);
   if abs(r.plan_pence - 1800) > 0.01 then raise exception 'a replay must not zero the plan credit, got %', r.plan_pence; end if;
   j := credit_plan_cycle(w, 1900, now() + interval '60 days', 'inv:cycle2_' || w::text, 'Starter plan credit');
-  -- Batch 32: the next cycle no longer expires the old grant; the unused 1800 rolls over.
-  if not (j->>'created')::boolean or (j->>'expired')::int <> 0 then raise exception 'the next cycle should create and expire nothing (Batch 32): %', j; end if;
+  -- Batch 34: the next cycle no longer expires the old grant; the unused 1800 rolls over.
+  if not (j->>'created')::boolean or (j->>'expired')::int <> 0 then raise exception 'the next cycle should create and expire nothing (Batch 34): %', j; end if;
   select * into r from credit_available(w);
   if abs(r.plan_pence - 3700) > 0.01 then raise exception 'w should have 1800 rolled over + a fresh 1900, got %', r.plan_pence; end if;
   raise notice 'plan cycle ok';

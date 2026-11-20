@@ -324,7 +324,7 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const d = whole(g, 'pack_picks_pause_days', 1);
     return d === null ? null : String(d);
   }),
-  // Batch 32a: plan credit rolls over; the no-spend lapse is read strictly from its billing_settings rows (seeded in schema.sql).
+  // Batch 34a: plan credit rolls over; the no-spend lapse is read strictly from its billing_settings rows (seeded in schema.sql).
   plan_credit_idle_months: g_('Months with no spending before earlier months’ plan credit can lapse', 'billing_settings.plan_credit_idle_months', (g) => {
     const n = whole(g, 'plan_credit_idle_months', 1);
     return n === null ? null : String(n);

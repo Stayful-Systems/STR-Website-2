@@ -21,7 +21,7 @@ const LAST_UPDATED = "28 September 2026";
 
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 
-// Batch 32: wording for Zac to approve (legal OK needed) — revert Phase 6 only if not approved
+// Batch 34: wording approved by Zac, 20 Nov 2026 (the terms' "last updated" date is separate)
 /** The no-spend rule's figures, from billing_settings; null when unreadable (the clause then names no figure). */
 type IdleSettings = { idleMonths: number; finalNoticeDays: number; reminderMonths: number[] } | null;
 
@@ -112,7 +112,7 @@ export default async function TermsPage() {
             </li>
           )}
           <li>
-            {/* Batch 32: wording for Zac to approve (legal OK needed) — revert Phase 6 only if not approved */}
+            {/* Batch 34: wording approved by Zac, 20 Nov 2026 (the terms' "last updated" date is separate) */}
             <strong>Plan credit</strong> is added at the start of each billing period of a subscription. Unused plan credit rolls over every month with no cap, and stays on your account if you pause, downgrade or cancel. {idleClause(idle)} If a plan payment is refunded or charged back, that payment&apos;s unspent credit is removed (credit already spent is not).
             {fromDate ? `${fromDate} each plan's monthly credit equals what you pay for it, £1 of credit for every £1, from your first renewal on or after that date (an annual plan: its first annual renewal on or after it).` : " Each plan's monthly credit equals what you pay for it: £1 of credit for every £1."}
           </li>
@@ -128,7 +128,7 @@ export default async function TermsPage() {
         </p>
 
         <h2 id="subscriptions">3. Subscriptions</h2>
-        {/* Batch 32: wording for Zac to approve (legal OK needed) — revert Phase 6 only if not approved */}
+        {/* Batch 34: wording approved by Zac, 20 Nov 2026 (the terms' "last updated" date is separate) */}
         <p>Subscriptions renew automatically each month or year until cancelled. You can cancel any time from your billing page; access continues until the end of the period already paid for, and unused plan credit stays on your account (see section 2). Upgrades take effect immediately and are prorated; downgrades take effect at the next renewal.</p>
 
         <h2 id="acceptable-use">4. Acceptable use</h2>

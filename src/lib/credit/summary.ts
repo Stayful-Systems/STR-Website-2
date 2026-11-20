@@ -34,7 +34,7 @@ export interface CreditSummary {
   /** One day of daily deals in base pence (billing_settings.todays_5_daily_pence), for the Usage chip. */
   dailyDealsPence: number;
   /**
-   * Batch 32: plan credit left from earlier cycles (grants older than the
+   * Batch 34: plan credit left from earlier cycles (grants older than the
    * newest renewal grant; rollover.ts). Part of buckets.planPence, not of
    * cycle.allowancePence. 0 with no plan.
    */
@@ -59,7 +59,7 @@ async function welcomeGrantedPence(userId: string): Promise<number> {
 }
 
 /**
- * Batch 32: every plan grant this account has had (rollover.ts reads this
+ * Batch 34: every plan grant this account has had (rollover.ts reads this
  * cycle's, the banked credit and when the next credit arrives from them).
  * Null when it cannot be read (e.g. before schema.sql adds plan_cycle): the
  * plan's monthly credit then stands in for the allowance.
@@ -118,7 +118,7 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
   let cycle: CreditSummary['cycle'] = null;
   let rolledOver = 0;
   if (plan) {
-    // Batch 32: the allowance is this cycle's grants; banked plan credit shows
+    // Batch 34: the allowance is this cycle's grants; banked plan credit shows
     // as rolledOverPence; endsAt is when the next plan credit arrives (about a
     // month away for an annual member, not the year end).
     const view = planCycleView(await planGrantRows(userId), {

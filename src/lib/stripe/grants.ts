@@ -40,7 +40,7 @@ function missingPlanCycle(err: unknown): boolean {
 /**
  * credit_plan_cycle (Batch 21a): the replay check and the new grant in one
  * transaction under the member's row lock. Returns whether the grant was
- * created (false: a replay). Batch 32: nothing is expired (unused plan credit
+ * created (false: a replay). Batch 34: nothing is expired (unused plan credit
  * rolls over), the grant has no expiry and is marked plan_cycle.
  */
 async function planCycleRpc(userId: string, amountPence: number, sourceRef: string, description: string): Promise<boolean> {
@@ -59,7 +59,7 @@ async function planCycleRpc(userId: string, amountPence: number, sourceRef: stri
  * A new billing cycle: grant the new plan credit. `periodStart` defaults to
  * now (the renewal being paid). Batch 21 (B1): the replay check and the grant
  * are one database transaction (credit_plan_cycle), so a second, concurrent
- * delivery of the same invoice can no longer grant twice. Batch 32: the old
+ * delivery of the same invoice can no longer grant twice. Batch 34: the old
  * plan credit rolls over, and the grant never expires (`periodEnd` is only
  * the renewal email's date); it is marked plan_cycle, the newest month's
  * credit. Monthly, annual-slot and Academy-trial grants all come through here.
@@ -79,7 +79,7 @@ export async function grantPlanCycle(userId: string, planCode: string, sourceRef
   } catch (err) {
     if (!missingPlanCycle(err)) throw err;
     // The old two steps, with the race the review found: run supabase/schema.sql (Batch 21a).
-    // Batch 32: nothing is expired (the credit rolls over); the grant has no expiry and is marked as the cycle's.
+    // Batch 34: nothing is expired (the credit rolls over); the grant has no expiry and is marked as the cycle's.
     console.error('[stripe] credit_plan_cycle is not in the database: run supabase/schema.sql (Batch 21a); granting the old way');
     const { data: existing } = await admin.from('credit_grants').select('id').eq('source_ref', sourceRef).maybeSingle();
     if (existing) return; // replay
@@ -103,7 +103,7 @@ export async function grantPlanCycle(userId: string, planCode: string, sourceRef
  * A mid-cycle upgrade: tops this cycle's plan credit up to the new plan's.
  * The cycle is the newest plan_cycle grant and what came after it, so its
  * credit follows the same rule as the renewal that began it; what was already
- * granted this cycle (the old plan, earlier upgrades) comes off. Batch 32:
+ * granted this cycle (the old plan, earlier upgrades) comes off. Batch 34:
  * credit banked from earlier months does NOT come off (it rolled over and was
  * paid for), and the top-up never expires (so the period end is not needed).
  */
@@ -164,7 +164,7 @@ export async function grantTopup(userId: string, amountPence: number, sourceRef:
 
 /**
  * Annual plans are paid once but credit monthly: one grant per calendar
- * slot of the subscription year. Batch 32: through grantPlanCycle, so each
+ * slot of the subscription year. Batch 34: through grantPlanCycle, so each
  * slot's grant never expires and is marked plan_cycle. Safe to call often;
  * idempotent per slot.
  */
@@ -223,7 +223,7 @@ export function academyTrialSlotDue(purchase: AcademyTrialPurchase, now: Date = 
  * webhook grants month 1 on the £0 trial invoice and the daily sweep grants
  * whichever month is due, only while the member's subscription is still that
  * trial and `trialing` and the purchase is not refunded. Idempotent per month
- * (the source_ref); true when it granted. Batch 32: through grantPlanCycle,
+ * (the source_ref); true when it granted. Batch 34: through grantPlanCycle,
  * so it never expires and is marked plan_cycle; a refund or a trial that ends
  * unpaid removes it by its trial:<sub>: refs (src/lib/stripe/webhook.ts).
  */

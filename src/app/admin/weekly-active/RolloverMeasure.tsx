@@ -2,7 +2,7 @@ import { loadRolloverMeasure } from "@/lib/admin/rollover-measure-server";
 import { SMALL_NUMBERS, type ActiveShare, type PeriodRate } from "@/lib/admin/rollover-measure";
 
 /**
- * Batch 32, Phase 7: "Plan credit rollover", the success measure. Did plan
+ * Batch 34, Phase 7: "Plan credit rollover", the success measure. Did plan
  * cancellations fall after unused plan credit started rolling over, without
  * plan members using the app less? The maths is
  * src/lib/admin/rollover-measure.ts; counts and pence only, nobody is named.

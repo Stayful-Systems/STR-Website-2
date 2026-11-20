@@ -1,4 +1,4 @@
--- Batch 32 checks: plan credit rollover. A renewal adds to unused plan credit
+-- Batch 34 checks: plan credit rollover. A renewal adds to unused plan credit
 -- instead of wiping it, the spend order, refunds, the idle-member report and
 -- the targeted removal of a refunded payment's or a trial's plan credit. Run
 -- AFTER schema.sql: by hand in the Supabase SQL editor, or by CI
@@ -37,7 +37,7 @@ begin
   if credit_setting_num('plan_credit_idle_months', 0) <> 12 then raise exception 'plan_credit_idle_months should be seeded at 12'; end if;
   if credit_setting_num('plan_credit_final_notice_days', 0) <> 30 then raise exception 'plan_credit_final_notice_days should be seeded at 30'; end if;
   if (select value from billing_settings where key = 'plan_credit_idle_reminder_months') <> '[3,6,12]'::jsonb then raise exception 'plan_credit_idle_reminder_months should be [3,6,12]'; end if;
-  if not exists (select 1 from billing_settings where key = 'batch32_rollover_from') then raise exception 'the Batch 32 one-off should be marked'; end if;
+  if not exists (select 1 from billing_settings where key = 'batch34_rollover_from') then raise exception 'the Batch 34 one-off should be marked'; end if;
   if not exists (select 1 from billing_settings where key = 'plan_credit_rollover_from' and jsonb_typeof(value) = 'string') then
     raise exception 'plan_credit_rollover_from should hold the launch date';
   end if;
@@ -166,14 +166,14 @@ begin
   update credit_grants set plan_cycle = false, created_at = now() - interval '2 months' where id = d1;
   update credit_grants set plan_cycle = false, created_at = now() - interval '1 month' where id = d2;
   update credit_grants set plan_cycle = false, created_at = now() - interval '10 days' where id = d_up;
-  if credit_batch32_cycle_candidate('plan', false, 'Upgrade to Scale: extra plan credit')
-     or not credit_batch32_cycle_candidate('plan', false, 'Pro plan credit')
-     or not credit_batch32_cycle_candidate('plan', false, null)
-     or credit_batch32_cycle_candidate('plan', true, 'Pro plan credit')
-     or credit_batch32_cycle_candidate('topup', false, 'Top-up') then
-    raise exception 'credit_batch32_cycle_candidate: only unmarked plan grants that are not upgrade top-ups';
+  if credit_batch34_cycle_candidate('plan', false, 'Upgrade to Scale: extra plan credit')
+     or not credit_batch34_cycle_candidate('plan', false, 'Pro plan credit')
+     or not credit_batch34_cycle_candidate('plan', false, null)
+     or credit_batch34_cycle_candidate('plan', true, 'Pro plan credit')
+     or credit_batch34_cycle_candidate('topup', false, 'Top-up') then
+    raise exception 'credit_batch34_cycle_candidate: only unmarked plan grants that are not upgrade top-ups';
   end if;
-  update credit_grants set plan_cycle = true where user_id = d and credit_batch32_cycle_candidate(kind, plan_cycle, description);
+  update credit_grants set plan_cycle = true where user_id = d and credit_batch34_cycle_candidate(kind, plan_cycle, description);
   if not (select plan_cycle from credit_grants where id = d1) or not (select plan_cycle from credit_grants where id = d2) then
     raise exception 'the one-off should mark the renewals as cycle grants';
   end if;

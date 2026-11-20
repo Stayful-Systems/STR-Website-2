@@ -102,7 +102,7 @@ function liveAcademyWebhookDeps(): AcademyWebhookDeps {
       const r = await cancelTrialForRefund(paymentIntentId, fullyRefunded);
       return `academy refund ${r.outcome}${r.purchaseId ? ` (purchase ${r.purchaseId})` : ''}`;
     },
-    // Batch 32: whose trial a refunded Academy payment started, so only that trial's credit is removed.
+    // Batch 34: whose trial a refunded Academy payment started, so only that trial's credit is removed.
     trialFor: async (paymentIntentId) => {
       const { data, error } = await admin.from('academy_purchases').select('user_id, trial_subscription_id').eq('stripe_payment_intent_id', paymentIntentId).maybeSingle();
       if (error) throw new Error(`academy purchase read failed: ${error.message}`);
@@ -145,7 +145,7 @@ export function liveWebhookDeps(): WebhookDeps {
     grantPlanCycle: (userId, planCode, sourceRef, periodEnd, email) => grantPlanCycle(userId, planCode, sourceRef, periodEnd, { email }),
     grantUpgradeDifference,
     grantTopup: (userId, amountPence, sourceRef, email) => grantTopup(userId, amountPence, sourceRef, { email }),
-    // Batch 32 (plan credit rollover): plan credit is removed only by source (a refunded or disputed plan
+    // Batch 34 (plan credit rollover): plan credit is removed only by source (a refunded or disputed plan
     // invoice, a forfeited Academy trial); ending, pausing or downgrading a plan keeps it.
     expirePlanSource: (userId, match, maxPence, reason, opts) => expirePlanSource(userId, match, maxPence, reason, opts),
     planInvoiceForPayment: async (paymentIntentId) => {

@@ -23,10 +23,10 @@ import { academyTrialSlotDue, ensureAnnualMonthlyGrant, ensureAcademyTrialMonthl
 // (months 2 and 3; the webhook grants month 1), keyed `trial:<sub>:<YYYY-MM>`.
 // The dry run lists the trial months it would grant (academyTrialDue).
 //
-// Batch 32a: both the dry and the live run report idlePlanCandidates, the
+// Batch 34a: both the dry and the live run report idlePlanCandidates, the
 // members credit_idle_plan_report finds with plan credit and no spend for
 // plan_credit_idle_months (user id, dates and pence; no emails). Report only:
-// nothing expires because of it until 32b. If the SQL function is not there
+// nothing expires because of it until 34b. If the SQL function is not there
 // yet (schema.sql not run), it is null with idlePlanError and the rest of the
 // sweep runs as before.
 
@@ -127,7 +127,7 @@ export async function GET(request: Request) {
     summary.errors.push(`seed: ${(err as Error).message}`);
   }
 
-  // Batch 32a: report only. Nothing below expires anything.
+  // Batch 34a: report only. Nothing below expires anything.
   const idle = await idlePlanSweepReport(() => idlePlanReport());
   console.log(idlePlanLogLine(idle, false));
 

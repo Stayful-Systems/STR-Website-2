@@ -1,5 +1,5 @@
 /**
- * Batch 32 (plan credit rollover): the pure rules behind "this month's plan
+ * Batch 34 (plan credit rollover): the pure rules behind "this month's plan
  * credit" and "what rolled over". No network, no database, no server-only, so
  * they run under node --test (rollover.test.ts); summary.ts and
  * usage-server.ts use them.
@@ -17,7 +17,7 @@ export type { PlanGrantRow } from '../stripe/plan-credit.ts';
 /** One plan grant as the rollover sums read it (credit_grants, kind 'plan'). */
 export interface RolloverGrantRow extends PlanGrantRow {
   remaining_pence: number | string;
-  /** Null after Batch 32; a past date means the grant lapsed (pre-launch credit). */
+  /** Null after Batch 34; a past date means the grant lapsed (pre-launch credit). */
   expires_at?: string | null;
 }
 

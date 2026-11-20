@@ -1,5 +1,5 @@
 /**
- * Batch 32 (plan credit rollover): the pure sums behind plan credit that
+ * Batch 34 (plan credit rollover): the pure sums behind plan credit that
  * follows Stripe money. No network, no database, no server-only, so they run
  * under node --test (plan-credit.test.ts); grants.ts and webhook.ts use them.
  */

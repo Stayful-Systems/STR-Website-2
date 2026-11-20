@@ -205,7 +205,7 @@ export async function refund(transactionId: number, basePence?: number, reason?:
 }
 
 /**
- * Batch 32 (plan credit rollover): plan credit never expires by date, so a
+ * Batch 34 (plan credit rollover): plan credit never expires by date, so a
  * plan grant is always made without an expiry, whatever the caller passes.
  */
 export async function grant(userId: string, kind: GrantKind, amountPence: number, opts: { expiresAt?: string | Date | null; sourceRef?: string | null; description?: string | null } = {}): Promise<string | null> {
@@ -234,7 +234,7 @@ export async function expirePlanGrants(userId: string, reason: string): Promise<
  * A new plan cycle in one transaction (Batch 21, B1): under the member's row
  * lock the source_ref is checked and the new grant is made, so a second,
  * concurrent delivery of the same invoice can never grant twice. A replay
- * returns the existing grant with `created: false`. Batch 32: the old plan
+ * returns the existing grant with `created: false`. Batch 34: the old plan
  * credit rolls over (nothing is expired, `expired` is always 0) and the new
  * grant has no expiry and is marked plan_cycle (the newest month's credit).
  */
@@ -257,7 +257,7 @@ export async function planCycle(
 }
 
 /**
- * Batch 32: a LIKE pattern matching `literal` exactly: the LIKE wildcards
+ * Batch 34: a LIKE pattern matching `literal` exactly: the LIKE wildcards
  * ('%', '_') and the escape character ('\\') are escaped, so an id with an
  * underscore (every Stripe id) matches only itself.
  */
@@ -293,7 +293,7 @@ export interface PlanSourceOptions {
 }
 
 /**
- * Batch 32: removes up to `maxPence` (null = all) of the member's unexpired
+ * Batch 34: removes up to `maxPence` (null = all) of the member's unexpired
  * PLAN credit in grants whose source_ref matches, oldest first, never below
  * zero and no other credit touched (credit_expire_plan_source). For a
  * refunded or charged-back plan payment ({ exact: 'inv:<invoice>' }, or an
@@ -327,7 +327,7 @@ export interface IdlePlanRow {
   expirablePence: number;
 }
 
-/** Batch 32: members holding plan credit with no spend for plan_credit_idle_months (credit_idle_plan_report; read only). */
+/** Batch 34: members holding plan credit with no spend for plan_credit_idle_months (credit_idle_plan_report; read only). */
 export async function idlePlanReport(now: Date = new Date()): Promise<IdlePlanRow[]> {
   if (!hasServiceRole()) return [];
   const { data, error } = await (await adminClient()).rpc('credit_idle_plan_report', { p_now: now.toISOString() });

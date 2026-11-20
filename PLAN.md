@@ -1,18 +1,18 @@
-# PLAN — Batch 32: Plan credit rollover
+# PLAN — Batch 34: Plan credit rollover
 
-Planned against origin/main cf6935e (Batch 31 merged). RE-CHECK 20 Nov 09:15: main HAD MOVED to 60c2bfd (PR #175, a different "Batch 32": the lead database push, PLAN-batch-32.md) -> merged into this branch (not rebased: a rebase needs a force-push). Only .github/workflows/ci.yml conflicted (both batches add a smoke step; kept both). After the merge: schema twice + all smoke files incl. leaddb-smoke and rollover-smoke pass, npm test 3757 pass, tsc 0, lint 0 errors, build OK. NOTE: the batch number 32 is now used twice (this plan credit rollover vs the lead database push).
+Planned against origin/main cf6935e (Batch 31 merged). This plan was first numbered "Batch 32"; main then took 32 (the lead database push, PR #175, PLAN-batch-32.md) and 33 (customer website domains, PR #176), so on 20 Nov this batch was RENUMBERED to **Batch 34** (renumber script only touched lines this branch added; commit history and PR #174's earlier commits still say 32). Main was merged into this branch twice (60c2bfd, then 3b94ee0; merged, not rebased, because a rebase needs a force-push). The first merge's only conflict was .github/workflows/ci.yml (both batches add a smoke step; kept both); the second was clean. After the merges: schema twice + all smoke files incl. leaddb-smoke and rollover-smoke pass, build OK.
 Branch: claude/dazzling-babbage-5j0m9x (the plan named claude/epic-ramanujan-rcv4gz; this session is bound to the former).
 
-- **32a** = Zac's Phase 1: rollover, display, dry-run sweep, measure. One PR.
-- **32b** = Zac's Phase 2: reminders and live expiry. Built ONLY after 32a is merged, `schema.sql` is run and Zac has checked it.
+- **34a** = Zac's Phase 1: rollover, display, dry-run sweep, measure. One PR.
+- **34b** = Zac's Phase 2: reminders and live expiry. Built ONLY after 34a is merged, `schema.sql` is run and Zac has checked it.
 
 Coordinator rules: one subagent per phase, each replies in 150 words or fewer. After each phase: `git diff --stat`, re-run that phase's check, tick it below, commit "Phase N: <name>". Stop and ask if anything breaks the plan. Never redo ticked phases.
 
-## Progress (32a)
+## Progress (34a)
 - [x] Phase 0 — Setup
   Notes: main still cf6935e. Baseline: npm test 3661/3661 pass; lint 0 errors, 79 warnings; typecheck 0 errors; build OK, no warnings. Schema check: `bash /tmp/claude-0/-home-user-STR-Website-2/1a23043a-0f19-5f4a-8fe2-b4631334ee33/scratchpad/schema-check.sh` (fresh PG16 cluster as user pgcheck in /var/tmp/str-schema-check; schema twice + index/dump diff + every supabase/tests/*-smoke.sql, new ones picked up automatically; passes on baseline).
 - [x] Phase 1 — Database
-  Notes: schema-check passes (twice, no index rebuild, no dump diff, all smoke incl. rollover-smoke); npm test 3661 unchanged. Batch 32 section sits BEFORE the Batch 31 section (websites/schema.test.ts needs 31 last). credit_smoke.sql edited: renewal now expires 0 and 1800 rolls over. SQL: credit_plan_cycle ignores p_expires_at, sets plan_cycle; credit_idle_plan_report(p_now) -> user_id,last_spent_at,idle_since,plan_remaining_pence,expirable_pence (no cycle grant => nothing expirable); credit_expire_plan_source(p_user,p_source_like,p_max_pence,p_reason) -> {expired_pence,grants}; p_max_pence null = all; source_like is a LIKE pattern so '_' and '%' must be escaped by the caller ('\\_'); only plan-kind grants match. Phase 2 MUST: escape LIKE chars in the ledger.ts wrapper; flag annual + Academy-trial plan grants plan_cycle=true too (they are monthly plan credit, and the newest one must be protected) -- credit_plan_cycle sets it, plain credit_grant does not.
+  Notes: schema-check passes (twice, no index rebuild, no dump diff, all smoke incl. rollover-smoke); npm test 3661 unchanged. Batch 34 section sits BEFORE the Batch 31 section (websites/schema.test.ts needs 31 last). credit_smoke.sql edited: renewal now expires 0 and 1800 rolls over. SQL: credit_plan_cycle ignores p_expires_at, sets plan_cycle; credit_idle_plan_report(p_now) -> user_id,last_spent_at,idle_since,plan_remaining_pence,expirable_pence (no cycle grant => nothing expirable); credit_expire_plan_source(p_user,p_source_like,p_max_pence,p_reason) -> {expired_pence,grants}; p_max_pence null = all; source_like is a LIKE pattern so '_' and '%' must be escaped by the caller ('\\_'); only plan-kind grants match. Phase 2 MUST: escape LIKE chars in the ledger.ts wrapper; flag annual + Academy-trial plan grants plan_cycle=true too (they are monthly plan credit, and the newest one must be protected) -- credit_plan_cycle sets it, plain credit_grant does not.
 - [x] Phase 2 — Grant and Stripe paths
   Notes: npm test 3676 pass (15 new), tsc 0, lint 0 errors/79 warnings. ledger.ts: idlePlanReport, expirePlanSource(userId, {exact}|{prefix}, maxPence|null, reason) (wrapper escapes LIKE chars). New pure src/lib/stripe/plan-credit.ts (thisCycleGrants, upgradeTopUpPence, refundedShare, clawbackDue, trialEndedUnpaid, disputeWonRef). Monthly/annual/trial grants all go through credit_plan_cycle (plan_cycle=true, no expiry). Webhook reasons: plan_refunded, plan_disputed, academy_refunded, academy_trial_unpaid. KNOWN GAPS to put in the PR: (1) an upgrade's grant read selects plan_cycle, so an upgrade errors (Stripe retries) until schema.sql is run; (2) [FIXED in the Phase 9 review fix: an annual invoice's refund now removes that invoice's year of annual:<sub>: slot grants] (3) unpaid-trial check asks Stripe for paid invoices (member_payments has no subscription id).
 - [x] Phase 3 — Pure rollover rules and summary
@@ -22,15 +22,15 @@ Coordinator rules: one subagent per phase, each replies in 150 words or fewer. A
 - [x] Phase 5 — Account and billing screens
   Notes: npm test 3693 pass, tsc 0, lint 0 errors/79 warnings, build OK (agent). BillingClient: "Plan credit · rolls over"; bar replaced by rolledOverBillingLine ("£Y rolled over from earlier months · next £X arrives {date}", renewal part only on an active/trialing, non-cancelling plan). ManagePlan cancel line + cancel dialog: "Your credit stays on your account if you cancel". upgrade: "of {plan} credit left". choose: "Unused plan credit rolls over." KNOWN LIMITATION for the PR: the billing page has no pause state, so a PAUSED plan can still show "next £X arrives" (the existing "Renews {date}" line has the same limitation). Stale wording left for Phase 6: terms/page.tsx:83, Pricing.tsx:67 and :124.
 - [x] Phase 6 — Public wording
-  Notes: npm test 3693 pass, tsc 0, lint 0 errors/79 warnings, build OK (agent). Terms s2 + s3 rewritten (rolls over, no cap, stays on pause/downgrade/cancel, 12-month no-spend rule with figures read from billing_settings via a local loader in terms/page.tsx, falls back to figure-free wording; refund/chargeback removes that payment's unspent credit); each block carries "Batch 32: wording for Zac to approve (legal OK needed)". Pricing 67/124, FAQ, renewal + payment-failed emails updated. FOR THE PR: (1) terms LAST_UPDATED (28 September 2026) NOT bumped - Zac/legal to decide; (2) the terms describe reminders/expiry that only go live in 32b: 32b must ship before the first possible 3-month reminder (about 20 Feb 2027) and nothing can expire before 12 months from launch; (3) service-facts.ts:38 still says "resets each month" (Phase 8).
+  Notes: npm test 3693 pass, tsc 0, lint 0 errors/79 warnings, build OK (agent). Terms s2 + s3 rewritten (rolls over, no cap, stays on pause/downgrade/cancel, 12-month no-spend rule with figures read from billing_settings via a local loader in terms/page.tsx, falls back to figure-free wording; refund/chargeback removes that payment's unspent credit); each block carries "Batch 34: wording for Zac to approve (legal OK needed)". Pricing 67/124, FAQ, renewal + payment-failed emails updated. FOR THE PR: (1) terms LAST_UPDATED (28 September 2026) NOT bumped - Zac/legal to decide; (2) the terms describe reminders/expiry that only go live in 34b: 34b must ship before the first possible 3-month reminder (about 20 Feb 2027) and nothing can expire before 12 months from launch; (3) service-facts.ts:38 still says "resets each month" (Phase 8).
 - [x] Phase 7 — Dry-run sweep and success measure
-  Notes: npm test 3701 pass (8 new), tsc 0, lint 0 errors/79 warnings, build OK. credit-sweep route: dry AND live runs return idlePlanCandidates (user id, dates, pence; no emails) + log a line; missing SQL function => null + idlePlanError, sweep carries on; report only, nothing expires in 32a. New pure src/lib/admin/rollover-measure.ts (cancellation rate = average of churn.ts monthlyTrend churnRatePct before vs after plan_credit_rollover_from; launch month/week counted in neither; "too early" below 50 live cycles (SMALL_NUMBERS); weekly-active guardrail from computeWeeklyActive, metrics.ts unchanged; banked + rolled-over via rolledOverPence), server loader rollover-measure-server.ts, RolloverMeasure.tsx rendered on /admin/weekly-active (existing admin gate covers it). Uncertain/for the PR: "monthly plan cancellation" reads as all plans incl. annual; the route itself has no test (helper tested, route read).
+  Notes: npm test 3701 pass (8 new), tsc 0, lint 0 errors/79 warnings, build OK. credit-sweep route: dry AND live runs return idlePlanCandidates (user id, dates, pence; no emails) + log a line; missing SQL function => null + idlePlanError, sweep carries on; report only, nothing expires in 34a. New pure src/lib/admin/rollover-measure.ts (cancellation rate = average of churn.ts monthlyTrend churnRatePct before vs after plan_credit_rollover_from; launch month/week counted in neither; "too early" below 50 live cycles (SMALL_NUMBERS); weekly-active guardrail from computeWeeklyActive, metrics.ts unchanged; banked + rolled-over via rolledOverPence), server loader rollover-measure-server.ts, RolloverMeasure.tsx rendered on /admin/weekly-active (existing admin gate covers it). Uncertain/for the PR: "monthly plan cancellation" reads as all plans incl. annual; the route itself has no test (helper tested, route read).
 - [x] Phase 8 — Stayful Intelligence knowledge
   Notes: npm test 3701 pass, tsc 0, lint 0 errors/79 warnings. placeholders.ts: plan_credit_idle_months, plan_credit_final_notice_days, plan_credit_idle_reminder_months (prose "3, 6 and 12"), read strictly from billing_settings. seed.ts: draft entries plan_credit_rollover, plan_credit_cancel, credit_spend_order, credit_idle_expiry (all figures are placeholders; no existing entry contradicted the rule). service-facts.ts:38 now "unused plan credit rolls over every month, with no cap" + three bullets (cancel/refund, spend order, idle expiry). Minor: the placeholder lists every reminder month incl. the 12-month final warning, while the terms page lists only months below the idle months (both read from the same setting; wording differs slightly). Entries were reworded to avoid "credit" in variants so the paraphrase-match test still picks the right entry.
 - [x] Phase 9 — Final checks and review, push, draft PR (draft PR #174 open; CI green on the final merge commit aa0b5ce: checks + schema)
-  Review fixes (independent review, all verified in code, committed "Phase 9: Review fixes"): (1) the run-once migration no longer flags old upgrade top-ups as cycle grants (credit_batch32_cycle_candidate); (2) credit_expire_plan_source is now (p_user, p_source_like, p_max_pence, p_reason, p_total, p_created_from, p_created_to) and with p_total computes what is still due INSIDE the member lock, so concurrent cumulative refunds can't over-remove (old 4-arg overload dropped); (3) annual-invoice refunds/chargebacks remove that invoice's year of annual:<sub>: slots (window = invoice line period). npm test 3707, schema-check passes, tsc 0, lint 0 errors, build OK.
+  Review fixes (independent review, all verified in code, committed "Phase 9: Review fixes"): (1) the run-once migration no longer flags old upgrade top-ups as cycle grants (credit_batch34_cycle_candidate); (2) credit_expire_plan_source is now (p_user, p_source_like, p_max_pence, p_reason, p_total, p_created_from, p_created_to) and with p_total computes what is still due INSIDE the member lock, so concurrent cumulative refunds can't over-remove (old 4-arg overload dropped); (3) annual-invoice refunds/chargebacks remove that invoice's year of annual:<sub>: slots (window = invoice line period). npm test 3707, schema-check passes, tsc 0, lint 0 errors, build OK.
 
-## Progress (32b) — NOT STARTED, waits for 32a to be merged + schema.sql run + Zac's check
+## Progress (34b) — NOT STARTED, waits for 34a to be merged + schema.sql run + Zac's check
 - [ ] Phase 10 — Database
 - [ ] Phase 11 — Rules, cap, emails, activity
 - [ ] Phase 12 — Reminder cron
@@ -101,7 +101,7 @@ ACCESS_COLUMNS: no change. Nothing treats plan credit as proof of being on a pla
 
 ---
 
-# Batch 32a — Rollover and display
+# Batch 34a — Rollover and display
 
 ## Phase 0 — Setup (no dependencies)
 - Re-check origin/main against cf6935e and rebase if it has moved.
@@ -116,7 +116,7 @@ Files: `supabase/schema.sql`, new `supabase/tests/rollover-smoke.sql`, `.github/
 
 - Settings (`insert … on conflict do nothing`): `plan_credit_idle_months` 12, `plan_credit_idle_reminder_months` [3,6,12], `plan_credit_final_notice_days` 30.
 - Flag column: `alter table credit_grants add column if not exists plan_cycle boolean not null default false`.
-- Run-once migration guarded by the `batch32_rollover_from` key in `billing_settings`. It:
+- Run-once migration guarded by the `batch34_rollover_from` key in `billing_settings`. It:
   - stores `plan_credit_rollover_from = now()`;
   - sets `expires_at = null` on plan grants where `remaining_pence > 0 and expires_at > now()`;
   - sets `plan_cycle = true` on existing plan grants.
@@ -212,7 +212,7 @@ Files: `src/app/(marketing)/terms/page.tsx`, `src/components/marketing-v3/Pricin
 ## Phase 7 — Dry-run sweep and success measure (depends on 2, 3)
 Files: `src/app/api/internal/credit-sweep/route.ts`, new `src/lib/admin/rollover-measure.ts` and its test, new `src/lib/admin/rollover-measure-server.ts`, new `src/app/admin/weekly-active/RolloverMeasure.tsx`, `src/app/admin/weekly-active/page.tsx` (+2 lines).
 
-- Sweep: on both the dry run and the live run, report `idlePlanCandidates` (from `credit_idle_plan_report`) and log it. Nothing expires in 32a.
+- Sweep: on both the dry run and the live run, report `idlePlanCandidates` (from `credit_idle_plan_report`) and log it. Nothing expires in 34a.
 - Measure (pure + test):
   - Monthly plan cancellation rate before vs after `plan_credit_rollover_from`, with counts. Reuse `src/lib/billing/churn.ts` / `subscription_events`.
   - "Too early" while there are fewer than 50 plan members (the same pattern as `src/lib/admin/pack-paying.ts:98`).
@@ -240,10 +240,10 @@ Files: `src/lib/knowledge/seed.ts`, `src/lib/knowledge/placeholders.ts`, `src/li
 
 ---
 
-# Batch 32b — Reminders and live expiry
-Start only after 32a is merged, schema.sql is run and Zac has checked it.
+# Batch 34b — Reminders and live expiry
+Start only after 34a is merged, schema.sql is run and Zac has checked it.
 
-## Phase 10 — Database (depends on 32a)
+## Phase 10 — Database (depends on 34a)
 Files: `schema.sql`, `rollover-smoke.sql`.
 - New table `credit_idle_notices(user_id, idle_since, stage, status sent|skipped, sent_at)`, primary key `(user_id, idle_since, stage)`. Service-role only. A spend changes `idle_since`, which starts a fresh run of reminders.
 - New `credit_expire_idle_plan(p_user, p_now)`. Under the profile lock it re-checks that the member is still idle and that the stage-12 notice was sent at least `final_notice_days` ago. It then expires only plan grants created before that notice and not the newest cycle grant. It writes expire rows with reason `no_spend`.
@@ -297,10 +297,10 @@ Same as Phase 9. Open a new draft PR.
 | The new terms wording needs Zac's legal OK. | Revert Phase 6 only. |
 | Rolled-over credit makes cancelling members slightly cheaper to keep using the site (they spend leftover credit at 1×). | Change the rate in one place, the grant `spend_rate`. |
 | The success measure is noise with 3 members. | It is labelled "too early" until there are 50. |
-| 32b emails reach the wrong people. | Turn the cron off in `vercel.json`. The expiry path also refuses without a notice. |
+| 34b emails reach the wrong people. | Turn the cron off in `vercel.json`. The expiry path also refuses without a notice. |
 
 ## Click-through checklist (for Zac)
-32a:
+34a:
 - Test plan member: grant £19, spend £6, advance a month: £13 + new £19.
 - Spend: bonus first, then the oldest plan credit, then top-ups.
 - Cancel: the balance stays.
@@ -308,7 +308,7 @@ Same as Phase 9. Open a new draft PR.
 - The chip shows the balance and days left, plus the rolled-over line.
 - After merging, run `supabase/schema.sql` and check the site loads.
 
-32b:
+34b:
 - Fake 3 / 6 / 12 months of no spend: one email each, once.
 - Spend 1p: the clock resets.
 - Expiry happens only 30 or more days after the final warning.

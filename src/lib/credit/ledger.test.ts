@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { escapeLike, expirePlanSource, idlePlanReport, planSourcePattern } from './ledger.ts';
 
-/** Batch 32: credit_expire_plan_source takes a LIKE pattern; the wrapper builds it so ids match only themselves. */
+/** Batch 34: credit_expire_plan_source takes a LIKE pattern; the wrapper builds it so ids match only themselves. */
 
 test('escapeLike escapes the LIKE wildcards and the escape character', () => {
   assert.equal(escapeLike('inv:in_1'), 'inv:in\\_1');

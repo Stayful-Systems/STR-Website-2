@@ -1,5 +1,5 @@
 /**
- * Batch 32 (plan credit rollover), Phase 7: the success measure on
+ * Batch 34 (plan credit rollover), Phase 7: the success measure on
  * /admin/weekly-active, and the credit sweep's idle-plan report. Pure: no
  * network, no database, no server-only (rollover-measure.test.ts);
  * rollover-measure-server.ts does the reading.
@@ -47,7 +47,7 @@ export interface MeasureGrantRow extends RolloverGrantRow {
 }
 
 export interface RolloverMeasureInput {
-  /** plan_credit_rollover_from; null before schema.sql's Batch 32 section is run. */
+  /** plan_credit_rollover_from; null before schema.sql's Batch 34 section is run. */
   launchAt: string | null;
   now: Date;
   events: readonly SubEvent[];
@@ -248,7 +248,7 @@ export interface IdlePlanSweepReport {
 
 /**
  * The credit sweep's idlePlanCandidates (dry and live): reads the report and
- * keeps only ids, dates and pence. Report-only in 32a: it never expires
+ * keeps only ids, dates and pence. Report-only in 34a: it never expires
  * anything, and a failed read is reported, never thrown.
  */
 export async function idlePlanSweepReport(load: () => Promise<readonly IdlePlanRowLike[]>): Promise<IdlePlanSweepReport> {
@@ -263,7 +263,7 @@ export async function idlePlanSweepReport(load: () => Promise<readonly IdlePlanR
     }));
     return { idlePlanCandidates, idlePlanExpirablePence: round4(idlePlanCandidates.reduce((n, r) => n + (Number(r.expirablePence) || 0), 0)) };
   } catch (err) {
-    return { idlePlanCandidates: null, idlePlanExpirablePence: 0, idlePlanError: `idle plan report unreadable (schema.sql Batch 32 section not run?): ${err instanceof Error ? err.message : String(err)}` };
+    return { idlePlanCandidates: null, idlePlanExpirablePence: 0, idlePlanError: `idle plan report unreadable (schema.sql Batch 34 section not run?): ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -271,5 +271,5 @@ export async function idlePlanSweepReport(load: () => Promise<readonly IdlePlanR
 export function idlePlanLogLine(r: IdlePlanSweepReport, dry: boolean): string {
   const tag = dry ? '[credit-sweep dry]' : '[credit-sweep]';
   if (r.idlePlanCandidates === null) return `${tag} idle plan candidates: unavailable (${r.idlePlanError ?? 'unknown'})`;
-  return `${tag} idle plan candidates: ${r.idlePlanCandidates.length} member(s), ${r.idlePlanExpirablePence}p expirable; report only, nothing expires (Batch 32a)`;
+  return `${tag} idle plan candidates: ${r.idlePlanCandidates.length} member(s), ${r.idlePlanExpirablePence}p expirable; report only, nothing expires (Batch 34a)`;
 }

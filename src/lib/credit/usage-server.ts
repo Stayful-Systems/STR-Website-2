@@ -33,7 +33,7 @@ export function ukMonthStart(now: Date = new Date()): Date {
 /**
  * When the current plan cycle began: the newest plan_cycle grant. Until
  * schema.sql adds plan_cycle (the read errors) or when no grant is marked,
- * the oldest open plan grant stands in, as before Batch 32 (renewals then
+ * the oldest open plan grant stands in, as before Batch 34 (renewals then
  * still expired the previous grant, so that was the cycle's start).
  */
 async function newestCycleGrantAt(payerId: string, now: Date): Promise<string | undefined> {
@@ -61,7 +61,7 @@ async function newestCycleGrantAt(payerId: string, now: Date): Promise<string | 
 }
 
 /**
- * The period the page covers: a plan member's current plan cycle (Batch 32:
+ * The period the page covers: a plan member's current plan cycle (Batch 34:
  * from the newest renewal grant, credit_grants.plan_cycle, so banked credit
  * from earlier months does not stretch it), else the UK calendar month.
  */

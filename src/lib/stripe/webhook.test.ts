@@ -128,7 +128,7 @@ test('invoice.paid for an unknown price is ignored', async () => {
   assert.equal(deps.calls.grantPlanCycle, undefined);
 });
 
-test('subscription deleted drops the plan but keeps its plan credit (Batch 32)', async () => {
+test('subscription deleted drops the plan but keeps its plan credit (Batch 34)', async () => {
   const deps = fakeDeps();
   const r = await handleStripeEvent(ev('customer.subscription.deleted', { id: 'sub_1', status: 'canceled', customer: 'cus_1', cancel_at_period_end: false, items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1 }] } }), deps);
   assert.equal(r.handled, true);
@@ -1237,7 +1237,7 @@ test('Batch 31a: an Academy checkout asks Stripe strictly: an outage throws (Str
   assert.equal(records.length, 0);
 });
 
-// ── Batch 32: plan credit rollover ──
+// ── Batch 34: plan credit rollover ──
 // A small in-memory plan ledger behind the plan deps: grants keyed by source_ref (unique, as in the
 // database), credit_expire_plan_source's LIKE match on the ledger's escaped pattern, and expire rows
 // carrying their reason, so redeliveries and cumulative refunds are checked against real sums.
@@ -1354,7 +1354,7 @@ const planInvoice = (id: string, reason = 'subscription_cycle', price = 'price_s
   lines: { data: [{ period: { end: 1_800_000_000 }, pricing: { price_details: { price } } }] },
 });
 
-test('Batch 32: a redelivered plan invoice grants its credit once, and the next month adds on top of what is left', async () => {
+test('Batch 34: a redelivered plan invoice grants its credit once, and the next month adds on top of what is left', async () => {
   const { deps, grants, spend, balance } = planLedgerDeps();
   await handleStripeEvent(ev('invoice.paid', planInvoice('in_1', 'subscription_create')), deps);
   await handleStripeEvent(ev('invoice.paid', planInvoice('in_1', 'subscription_create')), deps);
@@ -1368,7 +1368,7 @@ test('Batch 32: a redelivered plan invoice grants its credit once, and the next 
   assert.equal(deps.calls.expirePlanSource, undefined);
 });
 
-test('Batch 32: cancelling (scheduled, then ended) keeps the plan credit', async () => {
+test('Batch 34: cancelling (scheduled, then ended) keeps the plan credit', async () => {
   const { deps, add, balance } = planLedgerDeps();
   add('inv:in_1', 1900, true);
   add('inv:in_2', 1900, true);
@@ -1381,7 +1381,7 @@ test('Batch 32: cancelling (scheduled, then ended) keeps the plan credit', async
   assert.equal((deps.calls.updateProfile!.at(-1)![1] as Record<string, unknown>).plan, 'free');
 });
 
-test('Batch 32: a pause and a downgrade keep the plan credit', async () => {
+test('Batch 34: a pause and a downgrade keep the plan credit', async () => {
   const { deps, add, balance } = planLedgerDeps();
   deps.user.plan_code = 'pro';
   add('inv:in_1', 3900, true);
@@ -1392,7 +1392,7 @@ test('Batch 32: a pause and a downgrade keep the plan credit', async () => {
   assert.equal(deps.calls.expirePlanSource, undefined);
 });
 
-test('Batch 32: an upgrade with banked credit still gets its top-up (only this cycle’s grants come off)', async () => {
+test('Batch 34: an upgrade with banked credit still gets its top-up (only this cycle’s grants come off)', async () => {
   const { deps, add, spend, remainingOf, balance } = planLedgerDeps();
   add('inv:in_old', 1900, true);
   spend('inv:in_old', 600); // £13 banked from last month
@@ -1406,7 +1406,7 @@ test('Batch 32: an upgrade with banked credit still gets its top-up (only this c
   assert.equal(balance(), 1300 + 1900 + 2000);
 });
 
-test('Batch 32: this cycle’s grants and the upgrade top-up (pure)', () => {
+test('Batch 34: this cycle’s grants and the upgrade top-up (pure)', () => {
   const rows = [
     { amount_pence: 1900, created_at: '2027-01-01T00:00:00Z', plan_cycle: true, source_ref: 'inv:a' },
     { amount_pence: 2000, created_at: '2027-01-10T00:00:00Z', plan_cycle: false, source_ref: 'inv:up' },
@@ -1421,7 +1421,7 @@ test('Batch 32: this cycle’s grants and the upgrade top-up (pure)', () => {
   assert.equal(upgradeTopUpPence(3900, [], 1900), 2000, 'no cycle grant: the old plan’s credit stands in');
 });
 
-test('Batch 32: a refunded plan invoice removes only its own leftover credit, once', async () => {
+test('Batch 34: a refunded plan invoice removes only its own leftover credit, once', async () => {
   const { deps, add, spend, invoices, remainingOf, expires } = planLedgerDeps();
   add('inv:in_A', 1900, true);
   spend('inv:in_A', 600);
@@ -1440,7 +1440,7 @@ test('Batch 32: a refunded plan invoice removes only its own leftover credit, on
   assert.deepEqual(deps.calls.expirePlanSource![0][1], { exact: 'inv:in_A' });
 });
 
-test('Batch 32: a partial plan refund removes the refunded share; a later refund of the rest removes the rest', async () => {
+test('Batch 34: a partial plan refund removes the refunded share; a later refund of the rest removes the rest', async () => {
   const { deps, add, invoices, remainingOf } = planLedgerDeps();
   add('inv:in_A', 1900, true);
   invoices.set('pi_A', { userId: 'u1', invoiceId: 'in_A', paidPence: 2280 });
@@ -1456,7 +1456,7 @@ test('Batch 32: a partial plan refund removes the refunded share; a later refund
   assert.equal(clawbackDue(950, 1200), 0);
 });
 
-test('Batch 32: two cumulative partial refunds racing remove the latest total, not the sum (what was removed is read under the lock)', async () => {
+test('Batch 34: two cumulative partial refunds racing remove the latest total, not the sum (what was removed is read under the lock)', async () => {
   const { deps, add, invoices, remainingOf, expires } = planLedgerDeps();
   add('inv:in_A', 1000, true);
   add('inv:in_B', 1900, true);
@@ -1492,7 +1492,7 @@ function annualLedger() {
   return l;
 }
 
-test('Batch 32: a refunded annual invoice removes the unspent credit of that year’s slots only; a redelivery removes nothing more', async () => {
+test('Batch 34: a refunded annual invoice removes the unspent credit of that year’s slots only; a redelivery removes nothing more', async () => {
   const { deps, spend, remainingOf, expires } = annualLedger();
   spend('annual:sub_1:2027-01', 1000);
   const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y1', payment_intent: 'pi_Y1', captured: true, amount: 46800, amount_refunded: 46800, refunded: true }), deps);
@@ -1512,7 +1512,7 @@ test('Batch 32: a refunded annual invoice removes the unspent credit of that yea
   assert.equal(expires.reduce((s, e) => s + e.amount, 0), 6800, 'a redelivery removes nothing more');
 });
 
-test('Batch 32: a year-2 annual refund leaves year 1’s slots alone', async () => {
+test('Batch 34: a year-2 annual refund leaves year 1’s slots alone', async () => {
   const { deps, invoices, remainingOf } = annualLedger();
   invoices.set('pi_Y2', { userId: 'u1', invoiceId: 'in_Y2', paidPence: 46800, annual: { subscriptionId: 'sub_1', from: '2028-01-01T00:00:00.000Z', to: '2029-01-01T00:00:00.000Z' } });
   await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y2', payment_intent: 'pi_Y2', captured: true, amount: 46800, amount_refunded: 46800, refunded: true }), deps);
@@ -1521,7 +1521,7 @@ test('Batch 32: a year-2 annual refund leaves year 1’s slots alone', async () 
   assert.equal(remainingOf('annual:sub_1:2027-02'), 3900);
 });
 
-test('Batch 32: a partial annual refund removes its share of the year’s slots, cumulatively', async () => {
+test('Batch 34: a partial annual refund removes its share of the year’s slots, cumulatively', async () => {
   const { deps, remainingOf } = annualLedger();
   // Half refunded: half of the 7800 granted so far, oldest slot first.
   await handleStripeEvent(ev('charge.refunded', { id: 'ch_Y1', payment_intent: 'pi_Y1', captured: true, amount: 46800, amount_refunded: 23400, refunded: false }), deps);
@@ -1535,7 +1535,7 @@ test('Batch 32: a partial annual refund removes its share of the year’s slots,
   assert.equal(remainingOf('annual:sub_1:2028-01'), 3900);
 });
 
-test('Batch 32: a disputed annual invoice removes that year’s unspent slots; a won dispute restores it once', async () => {
+test('Batch 34: a disputed annual invoice removes that year’s unspent slots; a won dispute restores it once', async () => {
   const { deps, spend, remainingOf, balance } = annualLedger();
   deps.retrievePaymentIntentStrict = deps.retrievePaymentIntent;
   spend('annual:sub_1:2027-01', 900);
@@ -1551,7 +1551,7 @@ test('Batch 32: a disputed annual invoice removes that year’s unspent slots; a
   assert.equal(balance(), before + 6900, 'restored once');
 });
 
-test('Batch 32: which invoices pay an annual year (pure)', () => {
+test('Batch 34: which invoices pay an annual year (pure)', () => {
   const inv = (billing_reason: string | null, sub: string | null = 'sub_1', period: { start: number; end: number } | null = { start: 1_798_761_600, end: 1_830_297_600 }) => ({
     billing_reason,
     parent: { subscription_details: { subscription: sub } },
@@ -1566,7 +1566,7 @@ test('Batch 32: which invoices pay an annual year (pure)', () => {
   assert.equal(annualInvoiceYear(inv('subscription_cycle', 'sub_1', null), 'pro_annual'), null);
 });
 
-test('Batch 32: a chargeback removes the invoice’s leftover credit; a won dispute restores it once; a lost one restores nothing', async () => {
+test('Batch 34: a chargeback removes the invoice’s leftover credit; a won dispute restores it once; a lost one restores nothing', async () => {
   const { deps, add, spend, invoices, remainingOf, balance } = planLedgerDeps();
   add('inv:in_A', 1900, true);
   spend('inv:in_A', 400);
@@ -1588,7 +1588,7 @@ test('Batch 32: a chargeback removes the invoice’s leftover credit; a won disp
   assert.equal(deps.calls.restoreDisputedCredit, undefined);
 });
 
-test('Batch 32: a won dispute on a plan invoice whose credit was all spent gives nothing back', async () => {
+test('Batch 34: a won dispute on a plan invoice whose credit was all spent gives nothing back', async () => {
   const { deps, add, spend, invoices } = planLedgerDeps();
   add('inv:in_A', 1900, true);
   spend('inv:in_A', 1900);
@@ -1599,7 +1599,7 @@ test('Batch 32: a won dispute on a plan invoice whose credit was all spent gives
   assert.equal(deps.calls.restorePlanCredit, undefined);
 });
 
-test('Batch 32: a top-up refund still takes the top-up path when the plan path is wired', async () => {
+test('Batch 34: a top-up refund still takes the top-up path when the plan path is wired', async () => {
   const { deps } = planLedgerDeps();
   deps.retrievePaymentIntent = async (id) => ({ id, amount: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } }) as unknown as Stripe.PaymentIntent;
   const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_t', payment_intent: 'pi_t', captured: true, amount: 2500, amount_refunded: 2500 }), deps);
@@ -1607,7 +1607,7 @@ test('Batch 32: a top-up refund still takes the top-up path when the plan path i
   assert.equal(deps.calls.expirePlanSource, undefined);
 });
 
-test('Batch 32: a full Academy refund removes only that trial’s credit; a partial one removes nothing', async () => {
+test('Batch 34: a full Academy refund removes only that trial’s credit; a partial one removes nothing', async () => {
   const { deps: academy } = academyDeps();
   const { deps, add, remainingOf } = planLedgerDeps();
   deps.academy = { ...academy.academy!, trialFor: async () => ({ userId: 'u1', subscriptionId: 'sub_x' }) };
@@ -1626,7 +1626,7 @@ test('Batch 32: a full Academy refund removes only that trial’s credit; a part
   assert.equal(remainingOf('inv:in_B'), 1900);
 });
 
-test('Batch 32: an Academy trial cancelled before any paid month forfeits only its trial credit; after a paid month it keeps it', async () => {
+test('Batch 34: an Academy trial cancelled before any paid month forfeits only its trial credit; after a paid month it keeps it', async () => {
   const start = Date.UTC(2027, 0, 10) / 1000;
   const end = start + 90 * 86400;
   const academySub = (over: Record<string, unknown>) => ({ ...academyTrialSub(start, end), id: 'sub_1', ...over }) as unknown as Stripe.Subscription;

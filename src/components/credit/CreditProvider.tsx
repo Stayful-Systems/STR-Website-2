@@ -23,7 +23,7 @@ export interface CreditSnapshot {
   welcomeWithheldReason: string | null;
   /** One day of daily deals, base pence (Batch 10's Usage chip). */
   dailyDealsPence?: number;
-  /** Batch 32: plan credit rolled over from earlier cycles (part of buckets.planPence, not of cycle.allowancePence). */
+  /** Batch 34: plan credit rolled over from earlier cycles (part of buckets.planPence, not of cycle.allowancePence). */
   rolledOverPence?: number;
   admin?: boolean;
   /**

@@ -1,6 +1,6 @@
 /**
  * The words the usage chip, the low-credit banner and the Usage page use for
- * the balance (Batch 32a, Phase 4). Pure: the caller passes the money
+ * the balance (Batch 34a, Phase 4). Pure: the caller passes the money
  * formatter, so each surface keeps the one it already used.
  */
 
@@ -50,7 +50,7 @@ export function planCreditLine(allowancePence: number, rolledOverPence: number |
 }
 
 /**
- * The billing card's plan-credit line (Batch 32a, Phase 5): "£Y rolled over
+ * The billing card's plan-credit line (Batch 34a, Phase 5): "£Y rolled over
  * from earlier months · next £X arrives {date}". Either part is left out when
  * it does not apply: Y is 0, or the plan is not renewing (cancelling, ended,
  * no date), so nothing is promised that will not arrive. Null when both are.
