@@ -136,6 +136,54 @@ export type AreaFigureResult = AreaFigureSource | { error: 'not_enough_data'; me
 
 const NOT_ENOUGH: AreaFigureResult = { error: 'not_enough_data', message: 'There is not enough data in your area yet.' };
 
+type Resolved = {
+  area: MarketArea;
+  district: NonNullable<MarketArea['districts']>[number] | null;
+  chosen: NonNullable<ReturnType<typeof chooseSource>>;
+  useDistrict: boolean;
+  name: string;
+};
+
+/** District first, the postcode area when the district is too thin; null when neither has enough. Reads no paid data. */
+async function resolveSource(input: { areaKey: string; minSamples?: number }): Promise<Resolved | null> {
+  const parsed = parseAreaKey(input.areaKey);
+  if (!parsed) return null;
+  const minSamples = input.minSamples && input.minSamples > 0 ? input.minSamples : await readMinAreaSamples();
+  const snap = await snapshot();
+  if (!snap) return null;
+  const area = snap.areas.find((a) => a.postcode_area.toUpperCase() === parsed.areaCode) ?? null;
+  if (!area) return null;
+  const district = parsed.level === 'district' ? ((area.districts ?? []).find((d) => d.district.toUpperCase() === parsed.key) ?? null) : null;
+  const chosen = chooseSource({ district, area, minSamples });
+  if (!chosen) return null;
+  return { area, district, chosen, useDistrict: chosen.level === 'district' && district !== null, name: areaMetaForCode(area.postcode_area).name };
+}
+
+/** What the operator screen tells someone choosing an area: where the figure will rest and the bedroom size it will use. */
+export type AreaPreview = { areaKey: string; areaLabel: string; level: 'district' | 'area'; fellBack: boolean; bedrooms: number; samples: number };
+export type AreaPreviewResult = AreaPreview | { error: 'not_enough_data'; message: string };
+
+/**
+ * The same choice areaFigureSource makes, without the long-let rent lookup
+ * (which is house-paid PropertyData): safe to call on every change of the pick
+ * list. Phase 8's confirm-your-area step shows it.
+ */
+export async function areaPreview(input: { areaKey: string; minSamples?: number }): Promise<AreaPreviewResult> {
+  const r = await resolveSource(input);
+  if (!r) return NOT_ENOUGH;
+  const { area, district, chosen, useDistrict, name } = r;
+  const lead = useDistrict && district ? (districtLocalities(district.district)[0] ?? null) : null;
+  const rentArea: MarketArea = useDistrict && district ? { ...district, postcode_area: area.postcode_area } : area;
+  return {
+    areaKey: useDistrict && district ? district.district : area.postcode_area,
+    areaLabel: useDistrict && district ? (lead ? `${lead}, ${name}` : `${name} ${district.district}`) : name,
+    level: useDistrict ? 'district' : 'area',
+    fellBack: chosen.fellBack,
+    bedrooms: modalBedrooms(rentArea) ?? chosen.group.bedrooms,
+    samples: chosen.group.sample_count,
+  };
+}
+
 /**
  * The market data a pack's example figure rests on. `areaKey` is a district
  * ("NG7") or a postcode area ("NG"). A district is used when its most common
@@ -143,22 +191,12 @@ const NOT_ENOUGH: AreaFigureResult = { error: 'not_enough_data', message: 'There
  * area; if that is too thin as well, `{ error: 'not_enough_data' }`.
  */
 export async function areaFigureSource(input: { areaKey: string; minSamples?: number }): Promise<AreaFigureResult> {
-  const parsed = parseAreaKey(input.areaKey);
-  if (!parsed) return NOT_ENOUGH;
-  const minSamples = input.minSamples && input.minSamples > 0 ? input.minSamples : await readMinAreaSamples();
-  const snap = await snapshot();
-  if (!snap) return NOT_ENOUGH;
-  const area = snap.areas.find((a) => a.postcode_area.toUpperCase() === parsed.areaCode) ?? null;
-  if (!area) return NOT_ENOUGH;
-  const district = parsed.level === 'district' ? ((area.districts ?? []).find((d) => d.district.toUpperCase() === parsed.key) ?? null) : null;
+  const r = await resolveSource(input);
+  if (!r) return NOT_ENOUGH;
+  const { area, district, chosen, useDistrict, name } = r;
 
-  const chosen = chooseSource({ district, area, minSamples });
-  if (!chosen) return NOT_ENOUGH;
-
-  const name = areaMetaForCode(area.postcode_area).name;
-  const useDistrict = chosen.level === 'district' && district !== null;
-  const lead = useDistrict ? (districtLocalities(district.district)[0] ?? null) : null;
-  const rentArea: MarketArea = useDistrict ? { ...district, postcode_area: area.postcode_area } : area;
+  const lead = useDistrict && district ? (districtLocalities(district.district)[0] ?? null) : null;
+  const rentArea: MarketArea = useDistrict && district ? { ...district, postcode_area: area.postcode_area } : area;
   const bedrooms = modalBedrooms(rentArea) ?? chosen.group.bedrooms;
   let longLetRent: number | null = null;
   try {
@@ -167,8 +205,8 @@ export async function areaFigureSource(input: { areaKey: string; minSamples?: nu
     console.error('[ad-packs] long-let rent failed:', err instanceof Error ? err.name : 'error');
   }
   return {
-    areaKey: useDistrict ? district.district : area.postcode_area,
-    areaLabel: useDistrict ? (lead ? `${lead}, ${name}` : `${name} ${district.district}`) : name,
+    areaKey: useDistrict && district ? district.district : area.postcode_area,
+    areaLabel: useDistrict && district ? (lead ? `${lead}, ${name}` : `${name} ${district.district}`) : name,
     level: useDistrict ? 'district' : 'area',
     fellBack: chosen.fellBack,
     bedrooms,

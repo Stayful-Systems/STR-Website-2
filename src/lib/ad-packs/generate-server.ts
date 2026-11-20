@@ -4,6 +4,7 @@ import { createAdPackEngine, type AdPackEngine, type ApproveResult, type Generat
 import { areaFigureSource } from './area-server.ts';
 import { renderAdImages } from './images';
 import { createLiveStore, uploadFile } from './store-server.ts';
+import { adPackFetchImage } from './files-server.ts';
 
 export type {
   ApproveResult,
@@ -36,7 +37,8 @@ function realDeps(): GenerateDeps {
     store: createLiveStore(),
     now: () => new Date(),
     areaFigureSource,
-    renderImages: (a) => renderAdImages({ angle: a.angle, cards: a.cards, brand: a.brand, photos: a.photos }),
+    // Phase 8: an operator's own photos are stored references (<owner>/uploads/<uuid>.jpg), read from the private bucket.
+    renderImages: (a) => renderAdImages({ angle: a.angle, cards: a.cards, brand: a.brand, photos: a.photos, fetchImage: adPackFetchImage }),
     upload: uploadFile,
     log: (event, fields) => console.error(`[ad-packs] ${event}`, fields.packId ?? '-', fields.code ?? '-'),
   };

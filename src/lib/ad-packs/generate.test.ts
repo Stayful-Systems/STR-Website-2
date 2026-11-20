@@ -441,6 +441,17 @@ test('a district too thin falls back to the area the source returns, and THAT ke
   assert.equal((await h.store.getPack(OWNER_A))?.areaKey, 'NG');
 });
 
+test('after a fall-back, asking for the same district again is not a brand change, and the screen hash matches', async () => {
+  const h = harness();
+  h.area.result = { areaKey: 'NG', areaLabel: 'Nottingham', level: 'area', fellBack: true, bedrooms: 3, agg: { bedrooms: 3, sample_count: 22, avg_gross_revenue: 45_000, avg_net_revenue: 29_000, avg_occupancy: 70 }, samples: 22 };
+  await first(h);
+  const pack = await h.store.getPack(OWNER_A);
+  const i = input();
+  // What the operator screen computes: the brand, the stored photos and the STORED area key.
+  assert.equal(pack?.brandHash, brandHash({ ...i.brand, photos: i.photos, areaKey: 'NG' }));
+  assert.equal(code(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: i })), 'no_brand_change');
+});
+
 test('checks_failed: no logo and no type-only choice stores the ads but does not show them, and does not use the free regenerate', async () => {
   const h = harness();
   const r = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: withBrand({ logoUrl: null }) }));

@@ -176,3 +176,16 @@ test('Batch 34b: the plan credit reminder and expiry are recorded, and are recor
     assert.ok(!QUALIFYING_KINDS.includes(k as never), k);
   }
 });
+
+test("Batch 36's ad pack: approving it counts towards weekly active; copying a text is recorded only", () => {
+  assert.equal(isActivityKind('ad_pack_approved'), true);
+  assert.equal(kindLabel('ad_pack_approved'), 'Approved their ad pack');
+  assert.equal(isQualifying('ad_pack_approved'), true);
+  assert.equal(isCounted('ad_pack_approved'), true);
+  assert.equal(isActivityKind('ad_text_copied'), true);
+  assert.equal(kindLabel('ad_text_copied'), 'Copied an ad text');
+  assert.equal(isQualifying('ad_text_copied'), false);
+  assert.equal(isCounted('ad_text_copied'), false);
+  assert.ok(QUALIFYING_KINDS.includes('ad_pack_approved' as never));
+  assert.ok(!QUALIFYING_KINDS.includes('ad_text_copied' as never));
+});

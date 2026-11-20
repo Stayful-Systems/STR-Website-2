@@ -125,8 +125,16 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   `ad_packs.approved_at is not null` (a regenerate doesn't stop linking). Writes nothing for a lead without a website_reports row.
   Lead page shows `Ad: <code> · <angle label>` (the ad name already ends in the label). Ad code only arrives at step 1:
   lead_sources is written once (ignoreDuplicates), so a repeat enquiry within the hour keeps the first row's code.
-- [ ] **Phase 8 — Operator screen.** `/leads/ads`, entry card, activity kinds.
-  Notes:
+- [x] **Phase 8 — Operator screen.** `/leads/ads`, entry card, activity kinds.
+  Notes: all checks green (npm test 4244/4244, lint 0 errors / 79 warnings = baseline, tsc clean, build OK). Files:
+  src/app/leads/ads/{page,AdPackClient,AdSection,EntryCard,actions,ops,view,state}.ts(x) + 4 test files;
+  src/lib/ad-packs/{photos,files-server,entry-server}.ts; leads/page.tsx entry card (Suspense, owners only); kinds.ts +
+  kinds.test.ts (`ad_pack_approved` inApp, `ad_text_copied` recordOnly). generate-server.ts: one line passing
+  `fetchImage: adPackFetchImage` (photos stored as bucket paths so brandHash stays stable); area-server.ts: `areaPreview()`
+  (skips the paid long-let lookup). Browser shrinks photos over 800 KB (actions cap 1 MB, Vercel 4.5 MB). Bedrooms are shown
+  read-only (modal size), as the generator ignores a requested value. Phase 9: replace `section#guide` in
+  src/app/leads/ads/page.tsx. COORDINATOR FIX: brandHash now uses the area key the pack STORES (area resolved first, it is a
+  free read), so after a district->area fall-back the regenerate button no longer shows spuriously (regression test added).
 - [ ] **Phase 9 — Setup guide.** `guide.ts` + `Guide.tsx`.
   Notes:
 - [x] **Phase 10 — Admin.** `/admin/ad-packs`.

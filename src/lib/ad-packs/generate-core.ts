@@ -449,7 +449,10 @@ export function createAdPackEngine(deps: GenerateDeps) {
     try {
       const pack = await store.getPack(ownerId);
       const settings = await store.readSettings();
-      const hash = brandHash({ ...input.brand, photos: input.photos, areaKey: input.areaKey });
+      // The market data is free to read, so it is resolved first: the brand hash uses the area the pack will STORE (after
+      // a fall-back from a district to its postcode area), so asking for the same district again is not a "brand change".
+      const source = await deps.areaFigureSource({ areaKey: input.areaKey, minSamples: settings.minAreaSamples });
+      const hash = brandHash({ ...input.brand, photos: input.photos, areaKey: 'error' in source ? input.areaKey : source.areaKey });
       regenerate = pack !== null && pack.generatedAt !== null;
       version = regenerate && pack ? pack.version + 1 : 1;
       const estimate = pricing.estimate(ANGLES);
@@ -472,8 +475,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
         return fail(block.code, pack?.id);
       }
 
-      // 5: the market data. Free to read; too thin stops cleanly with nothing written.
-      const source = await deps.areaFigureSource({ areaKey: input.areaKey, minSamples: settings.minAreaSamples });
+      // 5: too little market data stops cleanly with nothing written.
       if ('error' in source) {
         if (dry) return { ok: true, dry: true, wouldBlock: block ?? refusal('not_enough_data'), plan: null };
         log('generate_refused', { packId: pack?.id, code: 'not_enough_data' });
