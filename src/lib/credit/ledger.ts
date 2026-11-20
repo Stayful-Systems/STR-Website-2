@@ -327,10 +327,16 @@ export interface IdlePlanRow {
   expirablePence: number;
 }
 
-/** Batch 34: members holding plan credit with no spend for plan_credit_idle_months (credit_idle_plan_report; read only). */
-export async function idlePlanReport(now: Date = new Date()): Promise<IdlePlanRow[]> {
+/**
+ * Batch 34: members holding plan credit with no spend for plan_credit_idle_months (credit_idle_plan_report; read only).
+ * minMonths (Batch 34b): list members idle at least this many months instead (the reminder cron's smallest stage);
+ * omitted or null keeps plan_credit_idle_months.
+ */
+export async function idlePlanReport(now: Date = new Date(), minMonths: number | null = null): Promise<IdlePlanRow[]> {
   if (!hasServiceRole()) return [];
-  const { data, error } = await (await adminClient()).rpc('credit_idle_plan_report', { p_now: now.toISOString() });
+  const args: Record<string, unknown> = { p_now: now.toISOString() };
+  if (minMonths != null && Number.isFinite(minMonths)) args.p_min_months = Math.max(1, Math.round(minMonths));
+  const { data, error } = await (await adminClient()).rpc('credit_idle_plan_report', args);
   if (error) throwRpc(error, 'credit_idle_plan_report');
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
     userId: String(r.user_id),

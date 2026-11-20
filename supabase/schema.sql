@@ -8911,11 +8911,17 @@ grant execute on function public.credit_plan_idle_since(timestamptz, timestamptz
 --   expirable_pence       the part of it in grants created BEFORE their newest
 --                         plan_cycle grant: the newest month never lapses
 -- Batch 34b's reminders and expiry read it; nothing here changes credit.
-create or replace function public.credit_idle_plan_report(p_now timestamptz default now())
+-- p_min_months (Batch 34b, Phase 12): list members idle at least this many
+-- months instead (the reminder cron passes its smallest stage, 3); null keeps
+-- plan_credit_idle_months, exactly as before. The old one-argument version is
+-- dropped first so a one-argument call is never ambiguous.
+drop function if exists public.credit_idle_plan_report(timestamptz);
+create or replace function public.credit_idle_plan_report(p_now timestamptz default now(), p_min_months int default null)
 returns table (user_id uuid, last_spent_at timestamptz, idle_since timestamptz, plan_remaining_pence numeric, expirable_pence numeric)
 language sql stable security definer set search_path = public as $$
   with s as (
-    select credit_plan_idle_after() as idle_after
+    select case when p_min_months is null then credit_plan_idle_after()
+                else make_interval(months => greatest(1, p_min_months)) end as idle_after
   ), newest as (
     select g.user_id as uid, max(g.created_at) as newest_cycle_at
       from credit_grants g
@@ -8944,8 +8950,8 @@ language sql stable security definer set search_path = public as $$
    where i.since <= p_now - i.idle_after
    order by i.since, i.uid;
 $$;
-revoke all on function public.credit_idle_plan_report(timestamptz) from public, anon, authenticated;
-grant execute on function public.credit_idle_plan_report(timestamptz) to service_role;
+revoke all on function public.credit_idle_plan_report(timestamptz, int) from public, anon, authenticated;
+grant execute on function public.credit_idle_plan_report(timestamptz, int) to service_role;
 
 -- credit_expire_plan_source(p_user, p_source_like, p_max_pence, p_reason,
 --   p_total, p_created_from, p_created_to):

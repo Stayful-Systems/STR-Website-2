@@ -16,6 +16,7 @@ declare
   i12 uuid := gen_random_uuid(); -- idle 12 months and a day
   i11 uuid := gen_random_uuid(); -- idle 11 months
   i0 uuid := gen_random_uuid();  -- never spent: idle since the launch date
+  i4 uuid := gen_random_uuid();  -- idle 4 months (p_min_months)
   c uuid := gen_random_uuid();   -- clawback
   d uuid := gen_random_uuid();   -- the one-off's cycle flag skips an upgrade top-up
   e uuid := gen_random_uuid();   -- cumulative totals and an annual year's window
@@ -37,8 +38,8 @@ declare
 begin
   insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
   select i, 'rollover-smoke-' || i::text || '@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now()
-    from unnest(array[a, b, i12, i11, i0, c, d, e, f, h, s]) as i;
-  insert into profiles (id, email) select i, 'rollover-smoke-' || i::text || '@example.test' from unnest(array[a, b, i12, i11, i0, c, d, e, f, h, s]) as i on conflict (id) do nothing;
+    from unnest(array[a, b, i12, i11, i0, i4, c, d, e, f, h, s]) as i;
+  insert into profiles (id, email) select i, 'rollover-smoke-' || i::text || '@example.test' from unnest(array[a, b, i12, i11, i0, i4, c, d, e, f, h, s]) as i on conflict (id) do nothing;
 
   -- ── Settings and the one-off ──
   if credit_setting_num('plan_credit_idle_months', 0) <> 12 then raise exception 'plan_credit_idle_months should be seeded at 12'; end if;
@@ -156,6 +157,18 @@ begin
   if not found or r.last_spent_at is not null or r.idle_since <> now() - interval '3 years' then raise exception 'a member who never spent is idle since the launch date: %', r; end if;
   if r.expirable_pence <> 0 then raise exception 'a member with one cycle grant has nothing expirable, got %', r.expirable_pence; end if;
   if exists (select 1 from credit_idle_plan_report() where user_id in (a, b, c)) then raise exception 'active members must not be in the report'; end if;
+  -- p_min_months: a member idle about 4 months is listed for the 3-month reminder, not by the default call.
+  j := credit_plan_cycle(i4, 1900, null, 'inv:idle1_' || i4::text, 'Plan credit');
+  perform credit_debit(i4, 400, null, false, '{}'::jsonb);
+  update credit_transactions set at = now() - interval '4 months' where user_id = i4 and kind = 'debit';
+  update credit_grants set created_at = now() - interval '5 months' where id = (j->>'grant_id')::uuid;
+  if exists (select 1 from credit_idle_plan_report() where user_id = i4) then raise exception 'a member idle 4 months must not be in the default report'; end if;
+  if exists (select 1 from credit_idle_plan_report(now(), null) where user_id = i4) then raise exception 'p_min_months null must behave as the default'; end if;
+  select * into r from credit_idle_plan_report(now(), 3) where user_id = i4;
+  if not found or r.idle_since <> now() - interval '4 months' or r.plan_remaining_pence <> 1500 then raise exception 'a member idle 4 months should be listed with p_min_months => 3: %', r; end if;
+  if not exists (select 1 from credit_idle_plan_report(p_min_months => 3) where user_id = i12) then raise exception 'p_min_months => 3 should still list the 12-month member'; end if;
+  if exists (select 1 from credit_idle_plan_report(now(), 6) where user_id = i4) then raise exception 'a member idle 4 months must not be listed with p_min_months => 6'; end if;
+  if exists (select 1 from credit_idle_plan_report(now(), 3) where user_id in (a, b, c)) then raise exception 'active members must not be in the 3-month report'; end if;
 
   perform credit_debit(i12, 1, null, false, '{}'::jsonb);   -- a 1p spend resets the clock
   if exists (select 1 from credit_idle_plan_report() where user_id = i12) then raise exception 'a 1p debit should take the member out of the report'; end if;
@@ -381,15 +394,16 @@ begin
   raise notice 'no-spend expiry after a spend ok';
 
   -- ── Service role only ──
-  if has_function_privilege('authenticated', 'public.credit_idle_plan_report(timestamptz)', 'execute')
-     or has_function_privilege('anon', 'public.credit_idle_plan_report(timestamptz)', 'execute')
+  if has_function_privilege('authenticated', 'public.credit_idle_plan_report(timestamptz, int)', 'execute')
+     or has_function_privilege('anon', 'public.credit_idle_plan_report(timestamptz, int)', 'execute')
      or has_function_privilege('authenticated', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute')
      or has_function_privilege('anon', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute') then
     raise exception 'the rollover functions are service-role only';
   end if;
-  if not has_function_privilege('service_role', 'public.credit_idle_plan_report(timestamptz)', 'execute')
+  if not has_function_privilege('service_role', 'public.credit_idle_plan_report(timestamptz, int)', 'execute')
      or not has_function_privilege('service_role', 'public.credit_expire_plan_source(uuid, text, numeric, text, boolean, timestamptz, timestamptz)', 'execute')
-     or to_regprocedure('public.credit_expire_plan_source(uuid, text, numeric, text)') is not null then
+     or to_regprocedure('public.credit_expire_plan_source(uuid, text, numeric, text)') is not null
+     or to_regprocedure('public.credit_idle_plan_report(timestamptz)') is not null then
     raise exception 'the service role should run the rollover functions';
   end if;
   if has_function_privilege('authenticated', 'public.credit_expire_idle_plan(uuid, timestamptz)', 'execute')
