@@ -27,7 +27,7 @@ export type Slot = 'daily' | 'weekly';
  * and go anyway when it is not, so the day's later capped emails move to the
  * next day (src/lib/voice/cap-server.ts).
  */
-export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call' | 'academy_reminder' | 'credit_idle' | 'credit_idle_final';
+export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call' | 'academy_reminder' | 'credit_idle' | 'credit_idle_final' | 'website_grace';
 
 export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   todays_5: 'daily',
@@ -39,6 +39,7 @@ export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   academy_reminder: 'daily',
   credit_idle: 'daily',
   credit_idle_final: 'daily',
+  website_grace: 'daily',
   your_week: 'weekly',
 };
 
@@ -71,6 +72,9 @@ export const SWITCHES_BEHIND: Readonly<Record<SendKind, readonly NotificationKey
   // a billing notice (src/lib/email/credit-idle.ts): capped, but opt-outs never
   // block it, so there is no switch behind it.
   credit_idle_final: [],
+  // Batch 36: the website warning and switched-off emails are service notices like billing
+  // (src/lib/email/website-grace.ts): capped, but opt-outs never block them.
+  website_grace: [],
 };
 
 /** The day a send counts against: the UTC date, as the picks' "sent today" guard counts it. */

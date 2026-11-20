@@ -107,11 +107,18 @@ export function WebsiteEntryCard({ site }: { site: WebsiteCardInput }) {
         <p className="text-sm font-medium text-foreground">Your website</p>
         <p className="mt-0.5 text-xs text-muted-foreground">Status: {m.statusLabel}</p>
       </div>
-      {m.href && m.linkLabel ? (
-        <Link href={m.href} className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted">
-          {m.linkLabel}
-        </Link>
-      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {m.href && m.linkLabel ? (
+          <Link href={m.href} className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted">
+            {m.linkLabel}
+          </Link>
+        ) : null}
+        {site.status === "live" || site.status === "paused" ? (
+          <Link href="/leads/website" className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted">
+            Manage
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 }

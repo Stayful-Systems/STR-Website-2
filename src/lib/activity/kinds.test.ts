@@ -176,3 +176,14 @@ test('Batch 34b: the plan credit reminder and expiry are recorded, and are recor
     assert.ok(!QUALIFYING_KINDS.includes(k as never), k);
   }
 });
+
+test("Batch 36's website change request and switch-back-on are registered and record only", () => {
+  for (const k of ['website_change_requested', 'website_switched_on']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), false, k);
+    assert.equal(isCounted(k), false, k);
+  }
+  assert.equal(kindLabel('website_change_requested'), 'Asked for a change to their website');
+  // Publishing or restoring an edit reuses funnel_edited, which counts as weekly active.
+  assert.equal(isCounted('funnel_edited'), true);
+});

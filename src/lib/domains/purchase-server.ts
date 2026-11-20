@@ -733,7 +733,17 @@ export function createDomainEngine(deps: DomainDeps) {
     return { ok: Boolean(next), changed: Boolean(next), dryRun: false };
   }
 
-  return { offerNames, chooseName, buy, advance, retry, resendLiveEmail, release, renew, decideRenewal, autoRenewVerdict, blockRenewal };
+  /** Batch 36: the website was switched back on, so its domain may auto-renew again (the one column blockRenewal wrote). */
+  async function allowRenewal(websiteId: string, opts: RunOptions = {}): Promise<{ ok: boolean; changed: boolean; dryRun: boolean }> {
+    const row = await store.domainForSite(websiteId);
+    if (!row) return { ok: true, changed: false, dryRun: Boolean(opts.dryRun) };
+    if (opts.dryRun) return { ok: true, changed: !row.renewAllowed, dryRun: true };
+    if (row.renewAllowed) return { ok: true, changed: false, dryRun: false };
+    const next = await store.updateDomain(row.id, { renewAllowed: true });
+    return { ok: Boolean(next), changed: Boolean(next), dryRun: false };
+  }
+
+  return { offerNames, chooseName, buy, advance, retry, resendLiveEmail, release, renew, decideRenewal, autoRenewVerdict, blockRenewal, allowRenewal };
 }
 
 export type DomainEngine = ReturnType<typeof createDomainEngine>;
