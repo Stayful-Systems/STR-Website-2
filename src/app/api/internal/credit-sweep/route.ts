@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
-import { expireDueGrants, previewDueGrants } from "@/lib/credit/ledger";
+import { expireDueGrants, idlePlanReport, previewDueGrants } from "@/lib/credit/ledger";
+import { idlePlanLogLine, idlePlanSweepReport } from "@/lib/admin/rollover-measure";
 import { syncUnitCosts } from "@/lib/credit/unit-costs";
 import { academyTrialSlotDue, ensureAnnualMonthlyGrant, ensureAcademyTrialMonthlyGrant, type AcademyTrialPurchase } from "@/lib/stripe/grants";
 
@@ -21,6 +22,13 @@ import { academyTrialSlotDue, ensureAnnualMonthlyGrant, ensureAcademyTrialMonthl
 // Batch 31a: it also grants Stayful Academy trials their monthly Pro credit
 // (months 2 and 3; the webhook grants month 1), keyed `trial:<sub>:<YYYY-MM>`.
 // The dry run lists the trial months it would grant (academyTrialDue).
+//
+// Batch 32a: both the dry and the live run report idlePlanCandidates, the
+// members credit_idle_plan_report finds with plan credit and no spend for
+// plan_credit_idle_months (user id, dates and pence; no emails). Report only:
+// nothing expires because of it until 32b. If the SQL function is not there
+// yet (schema.sql not run), it is null with idlePlanError and the rest of the
+// sweep runs as before.
 
 type AcademyTrialRow = AcademyTrialPurchase & { id: string };
 
@@ -72,7 +80,9 @@ export async function GET(request: Request) {
       } catch (err) {
         academy = { error: (err as Error).message };
       }
-      return Response.json({ dry: true, wouldExpire: due.expire, wouldLift: due.lift, annual: "not run on a dry run", seed: "not run on a dry run", academyTrialDue: academy });
+      const idle = await idlePlanSweepReport(() => idlePlanReport());
+      console.log(idlePlanLogLine(idle, true));
+      return Response.json({ dry: true, wouldExpire: due.expire, wouldLift: due.lift, annual: "not run on a dry run", seed: "not run on a dry run", academyTrialDue: academy, ...idle });
     } catch (err) {
       return Response.json({ dry: true, error: (err as Error).message }, { status: 500 });
     }
@@ -117,5 +127,9 @@ export async function GET(request: Request) {
     summary.errors.push(`seed: ${(err as Error).message}`);
   }
 
-  return Response.json(summary);
+  // Batch 32a: report only. Nothing below expires anything.
+  const idle = await idlePlanSweepReport(() => idlePlanReport());
+  console.log(idlePlanLogLine(idle, false));
+
+  return Response.json({ ...summary, ...idle });
 }

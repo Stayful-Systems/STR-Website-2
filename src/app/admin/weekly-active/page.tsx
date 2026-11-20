@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
 import { loadWeeklyActive } from "@/lib/activity/admin-server";
 import { WeeklyActiveView } from "./WeeklyActiveView";
+import { RolloverMeasure } from "./RolloverMeasure";
 
 export const metadata: Metadata = { title: "Weekly active — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -25,5 +26,10 @@ export default async function WeeklyActivePage({ searchParams }: { searchParams:
   if (!isAdminEmail(user.email)) notFound();
 
   const { status, message, report } = await loadWeeklyActive({ weeks: 12 });
-  return <WeeklyActiveView status={status} message={message} report={report} msg={msg ?? null} showAll={all === "1"} packFilter={{ campaign: packCampaign || null, content: packContent || null }} />;
+  return (
+    <>
+      <WeeklyActiveView status={status} message={message} report={report} msg={msg ?? null} showAll={all === "1"} packFilter={{ campaign: packCampaign || null, content: packContent || null }} />
+      <RolloverMeasure />
+    </>
+  );
 }
