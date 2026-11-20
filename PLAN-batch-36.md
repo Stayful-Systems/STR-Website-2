@@ -74,8 +74,21 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
   `{bedrooms}-bed`; fee then figure dropped first if a primary would pass 300 chars. Zac to review wording in the PR: "Between
   tenants, or thinking about it?", "Home empty while you're abroad?", "looks after the guests, the cleaning, the maintenance and
   the keys" (assumes operators do this), lead-form question wording.
-- [ ] **Phase 4 — Checks, area, eligibility.** `checks.ts`, `area-server.ts`, `eligibility-server.ts`.
-  Notes:
+- [x] **Phase 4 — Checks, area, eligibility.** `checks.ts`, `area-server.ts`, `eligibility-server.ts`.
+  Notes: 80 ad-packs tests pass, tsc/eslint clean. Pure/server split: `area.ts`+`area-server.ts`, `eligibility.ts`+
+  `eligibility-server.ts` (server-only files re-export the pure parts; tests can't import server-only). API: checks.ts
+  `runChecks({brand:{company,logoUrl,brandColour,feePct,areaLabel,areaKey,typeOnly?}, ads:[{angle,code,adName,link,texts,
+  script?,cardsText?,files?}], figures:[{areaKey,label?,sentence?}], operatorCode, domain}) -> {ok,failures,warnings,results},
+  contrastRatio, pickTextColour, AD_IMAGE_SIZES, CHECK_IDS, CHECK_LABELS` (check id for the no-source-brand check is
+  `source_brand`; `cardsText` = one string per card). area-server.ts `readMinAreaSamples, listDistricts() -> AreaOption[],
+  areaFigureSource({areaKey,minSamples?}) -> {areaKey,areaLabel,level,fellBack,bedrooms,agg,longLetRent,samples} |
+  {error:'not_enough_data',message}` — Phase 6 must store the RETURNED areaKey as `ad_packs.area_key` (after fall-back it is
+  the postcode area; checks compare exactly). eligibility-server.ts `packEligibility(userId,{admin?}) -> {eligible,reasons,
+  ownerId?,website?,domain?}, readAdPacksEnabled, evaluateEligibility, plainReason`. DECISION FOR ZAC: avg_net_revenue =
+  gross x 0.52 (gross less 15% platform fees, 15% management, 18% cleaning; before bills/mortgage/tax; medium confidence, no
+  code in this repo writes analyser_reports.net_revenue). `NET_INCLUDES_MANAGEMENT_FEE = false` (pinned by test): take-home =
+  net minus the operator's own fee, which can only UNDERSTATE (by about 15% of gross if the stored column really includes a
+  15% fee). Contrast check can never fail (best of white/near-black >= 4.35:1); below 4.5:1 is a warning only.
 - [ ] **Phase 5 — Image ads.** `images.tsx` (next/og, 1:1 / 4:5 / 9:16) + fonts.
   Notes:
 - [ ] **Phase 6 — Generator and store.** `store-server.ts`, `generate-server.ts`.
