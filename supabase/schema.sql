@@ -9144,7 +9144,7 @@ grant execute on function public.credit_expire_idle_plan(uuid, timestamptz) to s
 -- three landlord ads (angles 5b, 3a, 17) to upload to their own Meta account.
 -- Every ad carries a pack code in its ad name and link, so each website lead is
 -- recorded against the ad that brought it (ad_pack_lead_links). See
--- PLAN-batch-36.md. Checked by supabase/tests/adpacks-smoke.sql.
+-- PLAN-batch-36-ads.md. Checked by supabase/tests/adpacks-smoke.sql.
 --
 --   ad_packs            one per owner (owner_id unique). version is the pack
 --                       version n in the codes; operator_code is the first 6
@@ -9972,5 +9972,240 @@ end;
 $$;
 revoke all on function public.website_domain_charge(jsonb) from public, anon, authenticated;
 grant execute on function public.website_domain_charge(jsonb) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 36: customer websites, Phase 4 (self-edit, change requests, grace and switch-off)
+-- =========================
+-- A live site can now be edited by its owner, a member can ask Stayful for
+-- other changes, and a site that is abandoned, unpaid or cancelled is warned,
+-- switched off and finally has its data deleted. See PLAN-batch-36.md. This
+-- section is the whole database side:
+--
+--   websites.edit_rewrites_month / edit_rewrites_used
+--                            the owner's monthly allowance of page rewrites
+--                            for edits (separate from setup's regen_count).
+--   website_drafts           one working copy per site: settings, pages, the
+--                            version it was opened from (base_version) and the
+--                            pages rewritten and still awaiting approval.
+--                            The live site changes only on Publish.
+--   website_versions         the history: version 1 is the approved site
+--                            (snapshotted on the first edit), then one per
+--                            publish or restore. The newest 10 are kept.
+--   website_change_requests  "please change this for me": text, an optional
+--                            private screenshot path, a status and admin notes.
+--   website_grace            one row per site: the current abandoned /
+--                            cancelled / unpaid episode, its switch-off date,
+--                            when it was switched off (status stays 'paused':
+--                            there is no sixth status) and when its data was
+--                            deleted (the websites row stays as a stub).
+--   website_grace_notices    one row per warning stage per episode (sent or
+--                            skipped), so a warning goes out once.
+--
+--   website_version_snapshot(p_website, p_by)   version 1 = the site as approved, once.
+--   website_version_publish(...)                publish or restore one version
+--                                               under the site's row lock:
+--                                               'published' | 'stale'.
+--
+-- Settings (billing_settings; src/lib/websites/grace-settings.ts parses them):
+--   website_abandon_days        90: days with no login and no lead before warnings start
+--   website_warning_days        "30,14,3": days before switch-off a warning goes out
+--   website_delete_after_days   90: days switched off before the data is deleted
+--
+-- No new websites.status value (the Batch 31 check keeps its five), no
+-- foreign key changed: a websites row with a domain row is still never
+-- deleted. Everything is additive, idempotent and service role only. Nothing
+-- here is in ACCESS_COLUMNS (src/lib/access.ts).
+
+-- ── websites: the monthly edit-rewrite allowance ──
+alter table public.websites add column if not exists edit_rewrites_month text;
+alter table public.websites add column if not exists edit_rewrites_used integer not null default 0;
+alter table public.websites drop constraint if exists websites_edit_rewrites_used_check;
+alter table public.websites add constraint websites_edit_rewrites_used_check check (edit_rewrites_used >= 0);
+
+-- ── website_drafts ──
+create table if not exists public.website_drafts (
+  website_id uuid primary key references public.websites(id) on delete cascade,
+  settings jsonb not null default '{}'::jsonb,
+  pages jsonb not null default '{}'::jsonb,
+  -- The version this draft was opened from; Publish only works while it is still the newest.
+  base_version integer,
+  -- Pages rewritten by the copy writer and not yet approved one by one.
+  pending_pages text[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.website_drafts enable row level security;  -- no policies: service role only
+revoke all on public.website_drafts from anon, authenticated;
+
+-- ── website_versions ──
+create table if not exists public.website_versions (
+  id uuid primary key default gen_random_uuid(),
+  website_id uuid not null references public.websites(id) on delete cascade,
+  version_no integer not null,
+  settings jsonb not null default '{}'::jsonb,
+  pages jsonb not null default '{}'::jsonb,
+  kind text not null default 'publish',
+  restored_from integer,
+  published_by uuid,
+  published_at timestamptz not null default now()
+);
+alter table public.website_versions drop constraint if exists website_versions_kind_check;
+alter table public.website_versions add constraint website_versions_kind_check check (kind in ('approved', 'publish', 'restore'));
+alter table public.website_versions drop constraint if exists website_versions_version_no_check;
+alter table public.website_versions add constraint website_versions_version_no_check check (version_no >= 1);
+alter table public.website_versions drop constraint if exists website_versions_restored_from_check;
+alter table public.website_versions add constraint website_versions_restored_from_check check (restored_from is null or restored_from >= 1);
+create unique index if not exists website_versions_site_no_idx on public.website_versions (website_id, version_no);
+alter table public.website_versions enable row level security;  -- no policies: service role only
+revoke all on public.website_versions from anon, authenticated;
+
+-- ── website_change_requests ──
+create table if not exists public.website_change_requests (
+  id uuid primary key default gen_random_uuid(),
+  website_id uuid not null references public.websites(id) on delete cascade,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null,
+  -- A path inside the private bucket website-requests: <owner>/<id>.<ext>.
+  screenshot_path text,
+  status text not null default 'new',
+  admin_notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  closed_at timestamptz,
+  -- Claimed before the done/declined email is sent: that email goes once.
+  closed_emailed_at timestamptz
+);
+alter table public.website_change_requests drop constraint if exists website_change_requests_body_check;
+alter table public.website_change_requests add constraint website_change_requests_body_check check (char_length(body) between 1 and 2000);
+alter table public.website_change_requests drop constraint if exists website_change_requests_status_check;
+alter table public.website_change_requests add constraint website_change_requests_status_check check (status in ('new', 'in_progress', 'done', 'declined'));
+alter table public.website_change_requests drop constraint if exists website_change_requests_admin_notes_check;
+alter table public.website_change_requests add constraint website_change_requests_admin_notes_check check (admin_notes is null or char_length(admin_notes) <= 2000);
+create index if not exists website_change_requests_site_idx on public.website_change_requests (website_id, created_at desc);
+create index if not exists website_change_requests_open_idx on public.website_change_requests (created_at) where status in ('new', 'in_progress');
+alter table public.website_change_requests enable row level security;  -- no policies: service role only
+revoke all on public.website_change_requests from anon, authenticated;
+
+-- ── website_grace ──
+create table if not exists public.website_grace (
+  website_id uuid primary key references public.websites(id) on delete cascade,
+  reason text not null,
+  episode_started_at timestamptz not null,
+  switch_off_on date,
+  cancelled_at timestamptz,
+  switched_off_at timestamptz,
+  switch_off_by text,
+  off_emailed_at timestamptz,
+  delete_on date,
+  deleted_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+alter table public.website_grace drop constraint if exists website_grace_reason_check;
+alter table public.website_grace add constraint website_grace_reason_check check (reason in ('abandoned', 'cancelled', 'unpaid'));
+alter table public.website_grace drop constraint if exists website_grace_switch_off_by_check;
+alter table public.website_grace add constraint website_grace_switch_off_by_check check (switch_off_by is null or switch_off_by in ('cron', 'admin'));
+create index if not exists website_grace_switch_off_idx on public.website_grace (switch_off_on) where switched_off_at is null and cancelled_at is null;
+create index if not exists website_grace_delete_idx on public.website_grace (delete_on) where switched_off_at is not null and deleted_at is null;
+alter table public.website_grace enable row level security;  -- no policies: service role only
+revoke all on public.website_grace from anon, authenticated;
+
+-- ── website_grace_notices: one row per warning stage per episode ──
+create table if not exists public.website_grace_notices (
+  website_id uuid not null references public.websites(id) on delete cascade,
+  episode_started_at timestamptz not null,
+  -- The warning's day count (30, 14, 3: days before switch-off).
+  stage integer not null,
+  status text not null default 'sent',
+  sent_at timestamptz not null default now(),
+  primary key (website_id, episode_started_at, stage)
+);
+alter table public.website_grace_notices drop constraint if exists website_grace_notices_status_check;
+alter table public.website_grace_notices add constraint website_grace_notices_status_check check (status in ('sent', 'skipped'));
+alter table public.website_grace_notices drop constraint if exists website_grace_notices_stage_check;
+alter table public.website_grace_notices add constraint website_grace_notices_stage_check check (stage between 1 and 365);
+alter table public.website_grace_notices enable row level security;  -- no policies: service role only
+revoke all on public.website_grace_notices from anon, authenticated;
+
+-- ── billing_settings: the three grace settings ──
+insert into public.billing_settings (key, value) values
+  ('website_abandon_days', '90'),
+  ('website_warning_days', '"30,14,3"'),
+  ('website_delete_after_days', '90')
+on conflict (key) do nothing;
+
+-- ── Functions ──
+
+-- website_version_snapshot(p_website, p_by): version 1 is the site as it was
+-- approved. Taken on the first edit, once: a site that already has a version
+-- is left alone. Returns the newest version number (1 after a first snapshot).
+create or replace function public.website_version_snapshot(p_website uuid, p_by uuid default null)
+returns integer language plpgsql security definer set search_path = public as $$
+declare
+  v_max integer;
+begin
+  if p_website is null then raise exception 'website_version_snapshot_bad_input'; end if;
+  perform 1 from public.websites where id = p_website for update;
+  if not found then raise exception 'website_version_snapshot_no_site'; end if;
+  select max(version_no) into v_max from public.website_versions where website_id = p_website;
+  if v_max is not null then return v_max; end if;
+  insert into public.website_versions (website_id, version_no, settings, pages, kind, published_by)
+  select id, 1, settings, pages, 'approved', p_by from public.websites where id = p_website;
+  return 1;
+end;
+$$;
+revoke all on function public.website_version_snapshot(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.website_version_snapshot(uuid, uuid) to service_role;
+
+-- website_version_publish(...): publish one version of a site (an edit, or a
+-- restore of an old version). Under the site's row lock it:
+--   checks the newest version number is still p_base_version (a null base
+--   means the site has no version yet), else returns 'stale' and changes nothing;
+--   inserts the next version and copies its settings and pages onto websites;
+--   deletes the site's draft;
+--   keeps the newest 10 versions and returns the ids of the ones it pruned.
+-- Returns {result: 'published' | 'stale', version_no, version_id (on published), pruned: [uuid]}. Status
+-- is not read here: the app only calls it for a live site (or a rollback).
+create or replace function public.website_version_publish(
+  p_website uuid, p_base_version integer, p_settings jsonb, p_pages jsonb,
+  p_kind text, p_restored_from integer, p_by uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_max integer;
+  v_no integer;
+  v_id uuid;
+  v_pruned uuid[];
+begin
+  if p_website is null or p_settings is null or p_pages is null or p_kind is null or p_kind not in ('publish', 'restore') then
+    raise exception 'website_version_publish_bad_input';
+  end if;
+  perform 1 from public.websites where id = p_website for update;
+  if not found then raise exception 'website_version_publish_no_site'; end if;
+
+  select max(version_no) into v_max from public.website_versions where website_id = p_website;
+  if p_base_version is distinct from v_max then
+    return jsonb_build_object('result', 'stale', 'version_no', v_max, 'pruned', '[]'::jsonb);
+  end if;
+
+  v_no := coalesce(v_max, 0) + 1;
+  insert into public.website_versions (website_id, version_no, settings, pages, kind, restored_from, published_by)
+  values (p_website, v_no, p_settings, p_pages, p_kind, p_restored_from, p_by)
+  returning id into v_id;
+  update public.websites set settings = p_settings, pages = p_pages, updated_at = now() where id = p_website;
+  delete from public.website_drafts where website_id = p_website;
+
+  with doomed as (
+    delete from public.website_versions
+     where id in (select id from public.website_versions where website_id = p_website order by version_no desc offset 10)
+    returning id
+  )
+  select coalesce(array_agg(id), '{}'::uuid[]) into v_pruned from doomed;
+
+  return jsonb_build_object('result', 'published', 'version_no', v_no, 'version_id', v_id, 'pruned', to_jsonb(v_pruned));
+end;
+$$;
+revoke all on function public.website_version_publish(uuid, integer, jsonb, jsonb, text, integer, uuid) from public, anon, authenticated;
+grant execute on function public.website_version_publish(uuid, integer, jsonb, jsonb, text, integer, uuid) to service_role;
 
 notify pgrst, 'reload schema';

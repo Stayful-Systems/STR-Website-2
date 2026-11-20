@@ -7,7 +7,8 @@ const from = (rows: Record<string, unknown>) => parseWebsite((k) => rows[k]);
 
 const sql = readFileSync(new URL('../../../supabase/schema.sql', import.meta.url), 'utf8');
 const start = sql.indexOf('-- Batch 31: customer websites');
-const section = start === -1 ? '' : sql.slice(start);
+const after = sql.indexOf('\n-- =========================\n-- Batch', start + 1);
+const section = start === -1 ? '' : sql.slice(start, after === -1 ? undefined : after);
 
 test('the defaults are the plan: free, no plan gate, 20 a day, 5 a site', () => {
   assert.deepEqual(from({}), DEFAULT_WEBSITE);

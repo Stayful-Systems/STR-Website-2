@@ -159,8 +159,12 @@ async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>)
 /**
  * Write (or rewrite) a site's copy. `kind: 'first'` is the first draft and
  * takes no regeneration; `'regenerate'` takes one, refused at the cap.
+ * Batch 36: `'edit'` takes no setup regeneration either (the caller counts it
+ * against the monthly edit allowance), and `only` writes just those pages: the
+ * other pages are the `base` copy as it was (empty blocks without one), and the
+ * whole-site check is left to Publish.
  */
-export async function generateSiteCopy(o: { websiteId: string; site: SiteRef; settings: SiteSettings; kind: 'first' | 'regenerate' }): Promise<CopyResult> {
+export async function generateSiteCopy(o: { websiteId: string; site: SiteRef; settings: SiteSettings; kind: 'first' | 'regenerate' | 'edit'; only?: { pages: CopyPage[]; areas?: string[]; base?: SiteCopy } }): Promise<CopyResult> {
   const admin = createAdminClient();
   const fail = (reason: CopyFailure, message: string, regenCount: number | null, costPence = 0, problems?: { page: string; field: string; rule: string }[]): CopyResult => ({ ok: false, reason, message, regenCount, costPence, problems });
 
@@ -189,7 +193,11 @@ export async function generateSiteCopy(o: { websiteId: string; site: SiteRef; se
 
   const areas = listAreas(o.settings.areas);
   const areaNames = areas.map((a) => a.name);
-  const jobs: PageJob[] = [{ page: 'home' }, ...areas.map((a) => ({ page: 'area' as const, areaName: a.name })), { page: 'fees' }, { page: 'about' }, { page: 'faq' }];
+  const allJobs: PageJob[] = [{ page: 'home' }, ...areas.map((a) => ({ page: 'area' as const, areaName: a.name })), { page: 'fees' }, { page: 'about' }, { page: 'faq' }];
+  const only = o.only;
+  const wantArea = (n: string | undefined) => !only?.areas || only.areas.some((a) => a.toLowerCase() === (n ?? '').toLowerCase());
+  const jobs = only ? allJobs.filter((j) => only.pages.includes(j.page) && (j.page !== 'area' || wantArea(j.areaName))) : allJobs;
+  if (jobs.length === 0) return fail('rejected', 'There is nothing to write.', await countNow());
 
   const outcomes = await pool(jobs, CONCURRENCY, (j) => writePage(j, o.settings, areaNames, ctx, price));
   const costPence = outcomes.reduce((n, r) => n + r.costPence, 0);
@@ -203,7 +211,24 @@ export async function generateSiteCopy(o: { websiteId: string; site: SiteRef; se
     return refund(model ? 'model_error' : 'rejected', 'The copy could not be written. Please try again.', costPence, r.problems);
   }
 
-  const at = (page: CopyPage) => outcomes[jobs.findIndex((j) => j.page === page)].value;
+  const at = (page: CopyPage) => outcomes[jobs.findIndex((j) => j.page === page)]?.value ?? null;
+  if (only) {
+    // Only the asked-for pages are new; the rest stay as the base had them.
+    const base = only.base ?? { home: { headline: '', subheadline: '', intro: '', benefits: [] }, areas: [], fees: { headline: '', body: '', includes: [] }, about: { headline: '', body: '' }, faq: { headline: '', items: [] } };
+    const merged: SiteCopy = {
+      ...base,
+      home: (at('home') as HomeCopy | null) ?? base.home,
+      fees: (at('fees') as FeesCopy | null) ?? base.fees,
+      about: (at('about') as AboutCopy | null) ?? base.about,
+      faq: (at('faq') as FaqCopy | null) ?? base.faq,
+      areas: areas.map((a) => {
+        const i = jobs.findIndex((j) => j.page === 'area' && j.areaName === a.name);
+        if (i >= 0) return { area: a.name, ...(outcomes[i].value as { headline: string; body: string }) };
+        return base.areas.find((x) => x.area.toLowerCase() === a.name.toLowerCase()) ?? { area: a.name, headline: '', body: '' };
+      }),
+    };
+    return { ok: true, copy: merged, regenCount: (await countNow()) ?? 0, costPence, calls };
+  }
   const copy = assembleCopy({
     home: at('home') as HomeCopy,
     areas: areas.map((a) => ({ area: a.name, copy: outcomes[jobs.findIndex((j) => j.page === 'area' && j.areaName === a.name)].value as { headline: string; body: string } })),

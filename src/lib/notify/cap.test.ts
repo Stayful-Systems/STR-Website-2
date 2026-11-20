@@ -55,7 +55,7 @@ test('one-click unsubscribe turns off every switch behind that email, and only t
   for (const [kind, keys] of Object.entries(SWITCHES_BEHIND)) {
     // The Academy reminder (Batch 31a) and the plan credit final warning (Batch 34b)
     // are billing notices: capped, but no unsubscribe.
-    if (kind === 'academy_reminder' || kind === 'credit_idle_final') {
+    if (kind === 'academy_reminder' || kind === 'credit_idle_final' || kind === 'website_grace') {
       assert.deepEqual(keys, []);
       continue;
     }
@@ -74,4 +74,10 @@ test('Batch 34b: the credit idle reminders take the daily slot; only the 3/6-mon
   // The final warning is a billing notice: opt-outs never block it.
   assert.deepEqual(SWITCHES_BEHIND.credit_idle_final, []);
   assert.deepEqual(SWITCHES_BEHIND.academy_reminder, []);
+});
+
+test('Batch 36: the website grace notices take the daily slot and have no switch (a service notice)', async () => {
+  const { SWITCHES_BEHIND } = await import('./cap.ts');
+  assert.equal(slotFor('website_grace'), 'daily');
+  assert.deepEqual(SWITCHES_BEHIND.website_grace, []);
 });

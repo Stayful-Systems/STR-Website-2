@@ -1,184 +1,71 @@
-# Batch 36 — Ads A1: three branded landlord Facebook ads per operator, tagged from day one
+# PLAN — Batch 36: customer websites, Phase 4 — self-edit, change requests, admin console, grace and switch-off
 
-Academy operators whose website is live on its .co.uk domain get a pack of 3 landlord Facebook ads in their own
-brand (angle 5b tenant-notice video, 3a moving abroad, 17 renting rules changed). They upload the pack to their own
-Meta ad account by following a guide, copying every piece of text with one tap. Every ad carries a pack code in its
-ad name and link, so each website lead is recorded against the ad that brought it. Stayful runs nothing on Meta and
-has no Meta API.
+Planned against origin/main `0dd39a7` (re-checked 20 Nov 2026: main has not moved). Review R6 is NOT on main; Zac said build now.
+Branch: `claude/awesome-dirac-e9ybuw` (the harness branch for this session; it replaces `claude/eager-archimedes-76jy4p` named in the brief, as Batch 33 did).
+No spec file in the repo: Zac's brief and this checklist are the spec.
+Baseline: `npm test` 3989 pass / 0 fail, `npm run lint` 0 errors (79 pre-existing warnings), `npm run build` passes.
 
-Split: **36a** = everything but the video (switch `ad_packs_enabled` stays OFF). **36b** = video + voice + captions
-(after 36a is merged and the schema is run). Batch 35 stays lead forms.
+## Rules for every phase
+- Read CLAUDE.md and AGENTS.md. Graphify first. Read `node_modules/next/dist/docs/` before a route, page, layout or server action.
+- Do not change the plan. If something breaks it, stop and report.
+- Never touch: `src/lib/access.ts` (reading `accountStatus` is fine), `src/lib/leaddb/**`, `src/lib/funnels/charge-server.ts`, `tiers*.ts`, funnels pricing, Batch 35 ad sheets and outcomes, `src/lib/tracking/**`, `src/proxy.ts`, `src/app/f/**`, `src/lib/websites/report-server.ts`, the Batch 31/32/33 schema blocks (append after them only).
+- Touch minimally (list every changed line): `copy-server.ts`, `domains/host-server.ts`, `domains/purchase-server.ts` (only `allowRenewal` beside `blockRenewal` if needed), `app/s/[slug]/layout.tsx`, `leads/setup/website/Notice.tsx`, `leads/website/LeadPanel.tsx`, `admin/management/WebsitesPanel.tsx`, `notify/cap.ts`, `activity/kinds.ts`, `domains/schema.test.ts`, `.github/workflows/ci.yml`, `vercel.json` (one line).
+- Log lines carry ids and codes only: never an address, an email body or a change-request text.
+- Every dry run writes nothing, sends nothing and claims no slot; a fake that counts writes pins this.
+- Knowledge drafts: placeholders from settings, never typed figures, never approved in code (Phase 9).
 
-Branch: `claude/nice-galileo-qv5mt2` (the session's assigned branch; the plan named `claude/elegant-euler-r9fx0b`).
+## Progress
+- [x] Phase 0 — Prep
+  Notes: main still `0dd39a7`. Baseline test 3989/3989; lint 0 errors; build passes.
+- [x] Phase 1 — Schema and settings
+  Notes: block appended after Batch 33 (5 tables, 2 functions, 3 seeds, 2 websites columns). Local Postgres 16: shim + schema run 3 times, schema/data/index dumps identical; websites-p4-smoke.sql passes (stale base, 11th publish leaves 10, snapshot twice = one v1, notice pk no-op, delete-restrict still holds); older smokes still pass. Deviation: domains/schema.test.ts already bounds at the next header so is unchanged, but src/lib/websites/settings.test.ts read to end of file and would have matched the new website_* seeds: bounded it at the next header (2 lines). Warning-days seed is the JSON string "30,14,3" (not valid bare JSON). Stage in website_grace_notices = the warning's day count.
+- [x] Phase 2 — Pure rules (edit-rules, grace-rules, kinds, cap)
+  Notes: edit-rules (changedFields, pagesToRewrite(before, after) incremental: the edit run passes the draft before and after each patch so an approved page is not asked for again; filesInUse/filesToDelete; ukMonth/rewritesLeft/takeRewrite). grace-rules adds one state beyond the plan's list: `start` (begin an episode; the cron writes the row then asks again). Stage = the warning's day count; the most imminent due stage is sent, earlier ones skipped; a plan ending in <30 days still gets a 30-day first warning (switch-off = first warning + 30). Deletion reads the delete-days setting now, not the stored delete_on. kinds.ts +4 lines, cap.ts +5 lines (SendKind, SLOT_FOR, SWITCHES_BEHIND).
+- [x] Phase 3 — Edit server (edit-run, edit-server, copy-server `only`)
+  Notes: copy-server.ts: +28/-3 lines (kind 'edit'; `only` gains an optional `base` so the other pages stay as they were; only-mode skips the whole-site check, Publish runs it; the allowance is the caller's). website_version_publish now also returns version_id (for the website_version:<id> dedupe key; create or replace, smoke pins it). Pending pages in website_drafts.pending_pages carry a prefix: w:<page> = still to write, a:<page> = written, awaiting approval. A failed fetch reverts: live settings/copy back, the new version row removed, the draft re-inserted (a version pruned by that publish is not brought back). 23 run tests + 4 source pins.
+- [x] Phase 4 — Operator edit screen
+  Notes: /leads/website (home: status, derived warning with switch-off date, Switch back on button — real switchOnSite, no stub needed since Phase 6 landed first — what deletion removes/keeps only in the switched-off view, links to Edit and Requests), /leads/website/edit (EditWebsite client: setup fields with live preview via sitePagesOf/renderSitePage preview mode, logo/photo into the draft, pages to write/approve/edit, Publish with problems, history with Restore), edit-actions.ts (9 actions, each starts with editor()=websiteActor; one saveChangesAction instead of four per-step actions; only form fields read: companyName, brandColour, areas, fee, email, phone, aboutText, kind, image), edit-fields.ts (pure per-page field helpers + test). Touched minimally: Notice.tsx +5 lines (live-state 'Edit your website' link); LeadPanel.tsx WebsiteEntryCard: wrapped the right-hand link in a flex div and added a 'Manage' link to /leads/website for live/paused (+12/-5 lines, TSX only; websiteCardModel unchanged). 9 pins + 5 field tests. npm run build still to run in Phase 10 (a fork is editing admin files concurrently).
+- [x] Phase 5 — Change requests
+  Notes: built by a forked helper, checked by me. Added edit-requests-store.ts (live Supabase wiring; outside the plan's file list so the engine stays injectable; Phase 8 reuses it via liveRequestsEngine(): adminList, adminSetStatus, adminScreenshotUrl, openCounts). Feedback status emails go OUTSIDE the daily cap (direct replies), so the done/declined email does too. Next caps a Server Action post at 1 MB including text and next.config.ts is off limits, so the form refuses screenshots of 900 KB or more (server rule stays under 1 MB). 30 tests.
+- [x] Phase 6 — Grace server, cron and emails
+  Notes: built by a forked helper, reviewed by me (run order, dry run, cap wait, no same-day switch-off). purchase-server.ts: +11 lines, 1 changed (allowRenewal beside blockRenewal, which only wrote renewAllowed; returned from the factory). vercel.json +1 entry. grace-run.ts holds the injected-deps logic (switchOffWith, finishSwitchOffWith, switchOnWith, deleteWith, exportWith, siteGraceView, DELETION_REMOVES/KEEPS); grace-server.ts the live wiring: graceForSite, switchOffSite, switchOnSite, deleteSiteData, exportSiteData, readGraceSettings. Delete refuses a live site. Switch-on puts the site back to paused if it cannot end the episode. 33 tests.
+- [x] Phase 7 — Switched-off public page
+  Notes: grace-public.ts (isSwitchedOff pure; switchedOffBySlug with injectable lookup, admin client loaded lazily), templates/SwitchedOff.tsx (no imports, no settings, no form, no Stayful), layout.tsx +10 lines (import x2, neutral metadata, neutral page instead of notFound for a switched-off site), host-server.ts +5 changed lines (websites.status live|paused, switched-off only; temp-address redirect untouched). One existing pin updated: public-site.test.ts's `if (!live) notFound()` assertion now accepts the switched-off branch. Lead/report APIs unchanged (pinned).
+- [x] Phase 8 — Admin website console
+  Notes: built by a forked helper, actions read by me (requireAdmin first in every action; owner id read server-side; Run re-plans and refuses what the plan refuses, so Delete on a not-switched-off site is refused on the server and hidden in the screen). /admin/websites: grace-admin.ts (loader + planConsoleAction + consoleRunner, injected deps), page, WebsitesConsole, console-actions (dry-run/run for pause, resume, switch off, switch on, export, delete; the 3 grace settings through a closed GRACE_KEYS map + checkGraceSetting, with their own dry run; change requests via liveRequestsEngine incl. the 10-minute screenshot link). Deviation: 'Run only after a dry run' is enforced in the screen, not by a server token (the server re-plans instead). WebsitesPanel.tsx: +1 line (a link to /admin/websites after the intro paragraph). 25 tests.
+- [x] Phase 9 — Knowledge drafts
+  Notes: 3 new placeholders (website_abandon_days, website_warning_days ("30, 14 and 3"), website_delete_after_days), strict like the others; 6 draft entries in seed.ts (edit yourself, change requests, switch-off, switch-off for plan/unpaid with the two existing conditions, deletion, switch back on) — one more than the plan's five because the 600-character answer limit forced the switch-off entry to split; a CUSTOMER WEBSITES: EDITING AND SWITCH-OFF block in service-facts.ts. No figure typed anywhere (the monthly rewrite limit and version count are deliberately not stated). 69 knowledge tests pass.
+- [x] Phase 10 — Final checks, push, PR
+  Notes: npm test 4188/4188 (baseline 3989); npm run lint 0 errors, 79 warnings (same as baseline); npm run build passes and lists /leads/website, /leads/website/edit, /leads/website/requests, /admin/websites, /api/internal/website-grace. The build only passes here with NODE_OPTIONS=--max-old-space-size=6144: at the container's default 2 GB heap the TypeScript step runs out of memory (the baseline fit under it); standalone tsc is fine and CI/Vercel have more memory, but it is close to the line. Schema run 3 times on a fresh Postgres 16: schema, data and index dumps identical; all nine smoke files pass (credit, scan-days, pack, btl, websites, rollover, leaddb, domains, websites-p4).
 
-## Coordinator rules
+## Order
+After Phase 2: Phases 3, 5 and 6 can run in parallel (different files). Phase 9 any time after Phase 1. Then Phases 4 and 7, then 8.
 
-One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it needs in
-`node_modules/next/dist/docs/`), replies in ≤150 words (files, checks, deviations). After each phase: `git diff
---stat`, re-run its check (failures only), tick it here, note anything the next phase needs, commit
-`Phase N: <name>`. Stop and ask if anything breaks the plan. Never redo ticked phases.
+## Decisions (Zac, 20 Nov 2026)
+- Q1–Q4 all defaults. Warnings count towards the daily cap; they wait a day, but on the day before switch-off they are sent anyway.
+- Leads stay in SI under lead retention. No limit on change requests.
+- Company name can change; the domain stays; a new domain is a change request.
+- Edit rewrites: 10 per calendar month (`WEBSITE_EDIT_REWRITES_PER_MONTH`), separate from setup's 10.
+- Cancelled: switch off on the plan end date when known 30+ days ahead; otherwise 30 days after the first warning.
+- No new status: switch-off = `status='paused'` + `website_grace.switched_off_at`; deleted = `website_grace.deleted_at`.
+- Edits go to `website_drafts`; the live site changes only on Publish (full `goLive` checks and page fetch); a failed fetch republishes the previous version.
+- Edits never delete files on replace; a file is deleted only when no live/draft/last-10 version refers to it.
+- Deletion keeps a stub `websites` row; leads, lead_sources, report rows, charges, domain records and the funnel row are never touched.
 
-"All checks" = `npm test`, `npm run lint` (0 errors), `npx tsc --noEmit`, `npm run build`, and the schema check
-(fresh Postgres: shim + schema.sql twice, index/dump diff, every `supabase/tests/*-smoke.sql`).
+## Zac's click-through (after merge)
+1. Run `supabase/schema.sql`; the site loads. Create the private bucket `website-requests`.
+2. As a test operator: change logo and phone, preview, publish; live site updates. Restore the previous version.
+3. Change the areas: the new area page is written and asks for approval before Publish.
+4. Send a change request with a screenshot; see it in `/admin/websites`; mark it done; the operator gets an email.
+5. Admin: set the test site's owner `last_seen_at` 61 days back and its last lead older too. Grace cron Dry run lists the 30-day warning. Run: one email. Run again: no second email.
+6. Log in as that operator: `/leads/website` and the console show no pending switch-off.
 
-## Defaults taken
-
-- Voices (36b): Jane `RILOU7YmBhvwJGDGjNmP`, Olivia J `NbkKnEAZ7Bqw4EAkVEaz`, Oliver `lo1O1Dz1Tu4FWVEPaxuT`.
-- Bedrooms: the most common bedroom count in the chosen area (`modalBedrooms`).
-- Price: free with the Academy, one pack per operator. One free regenerate, only after a brand change (logo, colour,
-  company, fee, photos, area). Before approving, the voice can be changed once (36b). Admin regenerate unlimited,
-  always Dry run first, never counts.
-- Pack code: `SI-<6-char operator code>-<angle>-<n>` upper case, e.g. `SI-3F9A2C-5B-1`; operator code = first 6 hex
-  of the owner id upper-cased, next 6 on collision (unique column); n = pack version.
-- Ad name: `SI-3F9A2C-5B-1 · Tenant notice`.
-- Link: `https://<domain>/?ad=<CODE>&utm_source=facebook&utm_medium=paid_social&utm_campaign=SI-<op>&utm_content={{ad.id}}`.
-- Copy: 45 fixed templates (5 primary, 5 headlines, 5 descriptions x 3 angles). No AI writing.
-- Limits: headline ≤ 27 (hard 40); primary text ≤ 300 chars, first sentence ≤ 125; description ≤ 90 chars with a
-  "may be cut off on some placements past 30" note.
-- Eligible: account owner + linked, not refunded `academy_purchases` row + site live + domain live + switch on.
-- Activity kinds: `ad_pack_approved` (inApp, counts), `ad_text_copied` (recordOnly).
-- Entry: "Your ad pack" card on /leads (eligible owners only) → /leads/ads. No new nav item.
-
-## Do not touch
-
-`src/lib/domains/**` (33), `src/lib/leaddb/**` (32), `src/lib/funnels` pricing, `src/lib/tracking/**`,
-`ACCESS_COLUMNS`, `src/lib/academy/**`, `src/lib/websites/{LeadForm.tsx,sources.ts,report-server.ts}` (read only),
-`src/lib/management/report.ts`, `leads.status` / `leads.crm_pushed_at`.
-
-## Session 36a
-
-- [x] **Phase 0 — Setup.** Fetch main, record hash; plan file; baseline checks; schema-check script.
-  Notes: origin/main = `0dd39a7` (as expected). Branch `claude/nice-galileo-qv5mt2` already at 0dd39a7 (no work on it).
-  Baseline: npm test 3989/3989 pass; lint 0 errors (79 warnings); tsc clean; build OK; schema check passes
-  (8 smoke files, schema twice, no diff). Schema-check script: run
-  `/tmp/claude-0/-home-user-STR-Website-2/40edeeda-a663-5737-9418-5656d9df67ae/scratchpad/schema-check.sh`
-  (local Postgres 16 via `service postgresql start`; creates DB `schemacheck` each run; `npm ci` already done).
-- [x] **Phase 1 — Database.** `-- Batch 36: Ads A1` block (ad_packs, ad_pack_ads, ad_pack_runs, ad_pack_lead_links,
-  private bucket `ad-packs`, billing_settings seeds), `supabase/tests/adpacks-smoke.sql`, CI step.
-  Notes: block at schema.sql ~9141 (before Batch 31). `ad_packs.website_id` is a plain uuid, no FK (websites is created
-  later in the file). `ad_pack_runs.by` is a column name. billing_settings values are jsonb: `ad_packs_enabled` false,
-  others numbers (1, 1, 500, 5000, 5). `ad_pack_lead_links` PK = lead_id. Schema check: 9 smoke files, twice, no diff.
-- [x] **Phase 2 — Codes, links, limits.** `src/lib/ad-packs/{codes,links,limits}.ts` + tests.
-  Notes: 21 tests pass, tsc clean. API: codes `ANGLES, Angle, isAngle, operatorCode(ownerId, taken?), packCode, normaliseCode,
-  parseCode, PACK_CODE_MAX`; links `adLink({domain,code,operatorCode}), adName(code,angle), isAdIdPlaceholder, cleanMetaAdId,
-  ANGLE_LABELS`; limits `AD_LIMITS, checkLength(kind,text) -> {length, level green|amber|red, notes}, firstSentence, wordCount`.
-  operatorCode/packCode/adLink THROW on invalid input. Primary text: first sentence ≤125 (amber if over), total ≤300 (red if over);
-  description green ≤90, red over, note past 30 chars; empty = red.
-- [x] **Phase 3 — Angles, copy, figures.** `angles.ts` (45 templates, 5b script, card text, lead-form questions),
-  `figures.ts`.
-  Notes: 49 ad-packs tests pass, tsc/eslint clean. API: angles.ts `ANGLE_DEFS, angleDef, renderTexts({angle, brand:{company,
-  area,bedrooms,feePct}, figure}) -> {primary,headlines,descriptions}, renderCards -> Card[]{id,headline,body[],cta,big,label,
-  figure}, renderScript -> {lines,text,words}, feeSentence, SCRIPT_5B, leadFormQuestions`; figures.ts `buildFigure({area_label,
-  agg,feePct,netIncludesFee,minSamples?}) -> Figure|null, figureUnavailableReason, FIGURE_LABEL_RE, figureIsLabelled`. Market
-  figures are per YEAR; figures.ts divides by 12, rounds to £50. Templates use `{figure|fallback}`, `{fee|fallback}`,
-  `{bedrooms}-bed`; fee then figure dropped first if a primary would pass 300 chars. Zac to review wording in the PR: "Between
-  tenants, or thinking about it?", "Home empty while you're abroad?", "looks after the guests, the cleaning, the maintenance and
-  the keys" (assumes operators do this), lead-form question wording.
-- [x] **Phase 4 — Checks, area, eligibility.** `checks.ts`, `area-server.ts`, `eligibility-server.ts`.
-  Notes: 80 ad-packs tests pass, tsc/eslint clean. Pure/server split: `area.ts`+`area-server.ts`, `eligibility.ts`+
-  `eligibility-server.ts` (server-only files re-export the pure parts; tests can't import server-only). API: checks.ts
-  `runChecks({brand:{company,logoUrl,brandColour,feePct,areaLabel,areaKey,typeOnly?}, ads:[{angle,code,adName,link,texts,
-  script?,cardsText?,files?}], figures:[{areaKey,label?,sentence?}], operatorCode, domain}) -> {ok,failures,warnings,results},
-  contrastRatio, pickTextColour, AD_IMAGE_SIZES, CHECK_IDS, CHECK_LABELS` (check id for the no-source-brand check is
-  `source_brand`; `cardsText` = one string per card). area-server.ts `readMinAreaSamples, listDistricts() -> AreaOption[],
-  areaFigureSource({areaKey,minSamples?}) -> {areaKey,areaLabel,level,fellBack,bedrooms,agg,longLetRent,samples} |
-  {error:'not_enough_data',message}` — Phase 6 must store the RETURNED areaKey as `ad_packs.area_key` (after fall-back it is
-  the postcode area; checks compare exactly). eligibility-server.ts `packEligibility(userId,{admin?}) -> {eligible,reasons,
-  ownerId?,website?,domain?}, readAdPacksEnabled, evaluateEligibility, plainReason`. DECISION FOR ZAC: avg_net_revenue =
-  gross x 0.52 (gross less 15% platform fees, 15% management, 18% cleaning; before bills/mortgage/tax; medium confidence, no
-  code in this repo writes analyser_reports.net_revenue). `NET_INCLUDES_MANAGEMENT_FEE = false` (pinned by test): take-home =
-  net minus the operator's own fee, which can only UNDERSTATE (by about 15% of gross if the stored column really includes a
-  15% fee). Contrast check can never fail (best of white/near-black >= 4.35:1); below 4.5:1 is a warning only.
-- [x] **Phase 5 — Image ads.** `images.tsx` (next/og, 1:1 / 4:5 / 9:16) + fonts.
-  Notes: 99 ad-packs tests pass, tsc/eslint/build OK; coordinator viewed 3 sample PNGs (no clipping, label fully visible).
-  API: `renderCardPng({card,brand:{company,brandColour,logoUrl},photoUrl,size,fetchImage?}) -> Buffer`;
-  `renderAdImages({angle,cards,brand,photos:{pack:string[],site:string|null},fetchImage?,sizes?}) -> [{name,width,height,png}]`
-  (names like `3a-card1-4x5.png`); also `deriveTints, paletteFor, layoutFor, planCard, photoCandidates, defaultFetchImage`.
-  Fonts (Anton, Archivo Medium/SemiBold, OFL.txt) in src/lib/ad-packs/fonts/. next.config.ts: `outputFileTracingIncludes`
-  `/leads/ads` -> fonts. ANY OTHER ROUTE THAT CALLS THE GENERATOR (e.g. an admin action page /admin/ad-packs, a cron) needs
-  its own entry (Phase 10 must add `/admin/ad-packs`). Tests bundle images.tsx with esbuild (node can't load JSX). Figure
-  cards never use a photo; WebP photos fall back to type-only.
-- [x] **Phase 6 — Generator and store.** `store-server.ts`, `generate-server.ts`.
-  Notes: 175 ad-packs tests pass (all phases), tsc/eslint clean. Files: settings, store-types, rows, month, download,
-  generate-core, test-store, store-server, generate-server (+tests). API (generate-server.ts): `generatePack({ownerId,
-  by:'operator'|'admin', dry?, input:{areaKey, bedrooms?, photos[<=4], brand:{company,logoUrl,brandColour,feePct,areas?,
-  photoUrl}, domain, websiteId?, typeOnly?}})` -> `{ok:true,dry:false,status:'preview'|'checks_failed',packId,version,
-  operatorCode,ads[{id,angle,code,adName,link}],checks,costPence,regenCount,regenerate}` | `{ok:true,dry:true,wouldBlock:
-  {code,message}|null,plan}` | `{ok:false,code,message,packId?}`. Codes: invalid_input, in_progress, no_brand_change,
-  regen_used, cost_cap, monthly_cap, spend_unknown, not_enough_data, store_failed, render_failed, upload_failed,
-  generate_failed. `approvePack({ownerId}) -> {ok:true,activityKind:'ad_pack_approved',packId,version,operatorCode} |
-  {ok:false,code:invalid_input|no_pack|not_preview|store_failed,message}`. `listPackForOwner(ownerId) -> PackView|null
-  {pack,ads(current version),showAds,olderCodes,freeRegensLeft}`. Also `brandHash, regenerateBlock, estimateRawPence,
-  generateMessage, GENERATE_CODES, MAX_PHOTOS`; store-server.ts `createLiveStore, readAdPackSettings, uploadFile,
-  signedDownloadUrl(ownerId, packAdId, fileName)` (5-min link, null unless owner's ad with that file). Deviations: run row
-  written only once the pack row exists (refusals and not_enough_data write nothing, since ad_pack_runs.pack_id is not
-  null); `bedrooms` input accepted but IGNORED (modal bedrooms used, per plan default); `pack.version/brand_hash/regen_count`
-  move only when a new version is stored; regen_count rises only when an operator regenerate reaches preview;
-  ad_packs.cost_pence = running total; `script` and `cardsText` live inside ad_pack_ads.texts. Phase 10 needs
-  `/admin/ad-packs` in next.config.ts outputFileTracingIncludes (fonts).
-- [x] **Phase 7 — Attribution on arrival.** `attribution.ts`, `attribution-server.ts`, one line in the lead route,
-  `PackAdLine` on lead detail.
-  Notes: 24 new tests, tsc/eslint clean. API: attribution.ts `matchLeadToAd` (optional operatorCode so another operator's code
-  is foreign even if not in packAds), `linkLead(store, leadId)`, `linkMissing(store, opts)`, `packAdLineView`;
-  attribution-server.ts `linkLeadToPackAd(leadId)` (never throws), `linkMissingLeads({ownerId?, sinceApproved?, dry?}) ->
-  {ok,dry,leadIds,count,linked,untagged,skipped,failed}` (max 500 per run; Phase 10 uses it), `packAdLine`. "Approved pack" =
-  `ad_packs.approved_at is not null` (a regenerate doesn't stop linking). Writes nothing for a lead without a website_reports row.
-  Lead page shows `Ad: <code> · <angle label>` (the ad name already ends in the label). Ad code only arrives at step 1:
-  lead_sources is written once (ignoreDuplicates), so a repeat enquiry within the hour keeps the first row's code.
-- [x] **Phase 8 — Operator screen.** `/leads/ads`, entry card, activity kinds.
-  Notes: all checks green (npm test 4244/4244, lint 0 errors / 79 warnings = baseline, tsc clean, build OK). Files:
-  src/app/leads/ads/{page,AdPackClient,AdSection,EntryCard,actions,ops,view,state}.ts(x) + 4 test files;
-  src/lib/ad-packs/{photos,files-server,entry-server}.ts; leads/page.tsx entry card (Suspense, owners only); kinds.ts +
-  kinds.test.ts (`ad_pack_approved` inApp, `ad_text_copied` recordOnly). generate-server.ts: one line passing
-  `fetchImage: adPackFetchImage` (photos stored as bucket paths so brandHash stays stable); area-server.ts: `areaPreview()`
-  (skips the paid long-let lookup). Browser shrinks photos over 800 KB (actions cap 1 MB, Vercel 4.5 MB). Bedrooms are shown
-  read-only (modal size), as the generator ignores a requested value. Phase 9: replace `section#guide` in
-  src/app/leads/ads/page.tsx. COORDINATOR FIX: brandHash now uses the area key the pack STORES (area resolved first, it is a
-  free read), so after a district->area fall-back the regenerate button no longer shows spuriously (regression test added).
-- [x] **Phase 9 — Setup guide.** `guide.ts` + `Guide.tsx`.
-  Notes: npm test 4256/4256, tsc/eslint/build OK. Files: src/lib/ad-packs/{guide,guide-server}.ts + guide.test.ts (20 tests),
-  src/app/leads/ads/Guide.tsx, public/ad-packs/guide/README.md; page.tsx `section#guide` holds `<Guide>`; AdPackClient `TextRow`
-  exported (guide reuses copy button + `ad_text_copied` logging); next.config.ts `/leads/ads` trace also includes
-  `public/ad-packs/guide/*.png`. 13 steps (page picked in its own step from the upload step: one action per screen); README
-  lists the 13 PNG names Zac must supply. Missing screenshots show a plain-text placeholder (no broken images). Switch stays OFF
-  until the screenshots are in.
-- [x] **Phase 10 — Admin.** `/admin/ad-packs`.
-  Notes: 27 admin tests (202 ad-packs tests pass), tsc/eslint clean. Files: src/app/admin/ad-packs/{page,actions,
-  AdPacksPanel}, src/lib/ad-packs/{admin-view,admin-run,admin-server}.ts, next.config.ts one line. Regenerate Run needs the dry
-  run's token and re-plans from the live website (refuses if brand/version moved); a dry run whose checks would fail offers no
-  Run. Link-missing returns counts only (no lead ids); Run gated on a prior dry run in the panel (client state). BUG FOUND AND
-  FIXED by coordinator: a new version used to clear `approved_at`, so leads from still-running ads stopped linking until
-  re-approval. Now a regenerate keeps the first approval time, and approvePack keeps `approvedAt ?? now` (generate-core.ts).
-- [x] **Phase 11 — Knowledge and docs.** placeholders, seed drafts, service-facts, CLAUDE.md section.
-  Notes: npm test 4256/4256, tsc clean. placeholders.ts: `ad_pack_free_regens`, `ad_pack_voice_changes` (whole numbers, shown
-  in words). seed.ts: five DRAFT entries `adpack_what/who/regenerate/tagging/not_included` (no typed figures). service-facts.ts:
-  "LANDLORD AD PACK" block (a test needs every placeholder it uses in a seed entry). CLAUDE.md: Batch 36 section only.
-  Zac to approve the drafts in Stayful Intelligence.
-- [x] **Phase 12 — Final checks, review, PR.**
-  Notes: independent read-only review found NO cross-operator access hole, NO Stayful leak, schema/RLS/bucket/ACCESS_COLUMNS/
-  leads-writes clean. FIXED: (1) the generator's area read triggered the house-paid long-let lookup, also on refused requests
-  and dry runs, ahead of the cost caps (now removed; nothing used it; test pins it); (2) the area step needed no eligibility
-  check (added); (3) approve is now pinned to the version on screen (a regenerate meanwhile cannot be approved unseen).
-  KNOWN, LEFT FOR A FOLLOW-UP (minor): an operator regenerate of an APPROVED pack that fails its checks hides the live
-  version's downloads (the admin path guards this, the operator path does not); two concurrent generates can race on regen
-  count (narrow); `adPackFetchImage` serves any well-formed upload ref and site `photoUrl` is unvalidated (UUIDs unguessable);
-  PostgREST 1000-row default may undercount `monthSpendPence` / `knownMetaAdIds` / admin counts once 36b makes cost non-zero;
-  the fire-and-forget linker has no automatic sweep (admin Link missing leads covers it); a visitor can bind a real Meta ad
-  id to the wrong pack ad for the same operator via the public form; downloads/copy do not re-check eligibility after a
-  refund. Zac's decision still open: take-home maths (see Phase 4), Phase 3 copy wording.
-
-## Session 36b (after 36a merged and schema run)
-
-- [ ] B0 Setup (Vercel Sandbox available; Zac adds the 3 library voices to ElevenLabs)
-- [ ] B1 Database (`ad_pack_renders`, unit_costs row, smoke + CI)
-- [ ] B2 Renderer copy (`ad-render/`, no Stayful assets)
-- [ ] B3 Voice and captions (`voice-server.ts`, with-timestamps)
-- [ ] B4 Sandbox runner + cron (`render-server.ts`, `/api/internal/ad-pack-renders`)
-- [ ] B5 Screen + checks (voice step, video preview)
-- [ ] B6 Final checks, review, PR
-
-## Remaining risks
-
-Video quality below Stayful's hand-tuned ads (operator previews; keep switch off). Vercel Sandbox not enabled
-(fallback: GitHub Actions runner). Thin market data (lower min-sample setting, ≥3). Meta rule changes (constants in
-`links.ts`, `limits.ts`).
+## Review notes
+- A member editing another's site: every edit/request action starts with websiteActor() (owner only via ownerIdOrNull, team members refused); the only inputs besides text are a page key (parsed by the run) and a version number looked up among that owner's site's versions. Pinned in edit-actions.test.ts, edit-server.test.ts and the requests tests.
+- Deletion before the notices went out: graceState never returns switch_off until a warning was actually sent (skipped notices don't count), and delete_due only after switched_off_at + the delete days; deleteSiteData refuses a site that is not switched off. Pinned in grace-rules.test.ts and grace-run.test.ts.
+- Leads lost on switch-off: nothing filters leads, held reports, CRM or lead-database deliveries; report-server.ts, leaddb and the lead/report APIs are untouched (git diff 0dd39a7 is empty for them); a switched-off site takes no NEW lead because liveSiteBySlug only accepts a live site (unchanged, and now pinned).
+- Emails and the daily cap: warnings and the switched-off email go through claimSlot/finishSend with SendKind website_grace (no unsubscribe, opt-outs never block it); a used slot writes nothing and waits, except from the day before switch-off. The change-request closed email is a direct reply and goes outside the cap, as feedback status emails do.
+- Schema idempotence: only the -- Batch 36 block was added (no line of an earlier block changed or removed); every statement re-runs; no new status, no foreign key changed.
+- Protected files: git diff 0dd39a7 is empty for access.ts, src/lib/leaddb, funnels/charge-server.ts, funnels/tiers*, websites/report-server.ts, proxy.ts, src/app/f and src/lib/tracking.
+- Every dry run (grace cron, console actions, switchOffSite, deleteSiteData, the three settings) writes, sends and claims nothing; pinned by counting fakes.
+- Known limits: (1) a failed-fetch revert cannot bring back a version the same publish pruned (history is one shorter); (2) 'Run only after a dry run' is a screen rule, the server re-plans instead of checking a token; (3) change-request screenshots are refused at 900 KB or more by the form (Next's 1 MB action cap); (4) the website-requests bucket must be created by hand in Supabase.

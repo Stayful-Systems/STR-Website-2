@@ -23,6 +23,7 @@ import { formatPence } from '../credit/deal-pricing.ts';
 import { BALANCE_BANDS_PENCE, PRODUCT_FACTS, TEAM_EMAIL } from './config.ts';
 import { SEAT_PERIOD_DAYS, SEAT_PRICE_PENCE } from '../team/rules.ts';
 import { ACADEMY_FACTS } from '../academy/rules.ts';
+import { parseWarningDays } from '../websites/grace-settings.ts';
 import { WINDOW_END_HOUR, WINDOW_START_HOUR } from '../sms/uk-time.ts';
 import { callFloorPence } from '../standout/notify.ts';
 import { QUICK_MAX_WORDS, speakCharsFor, speakPricePence } from '../chat/voice-rules.ts';
@@ -522,6 +523,21 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   website_free_reports_per_site: g_('Free income reports one customer website may run in a UK day, in words (inside the limit across all websites)', 'billing_settings.website_free_reports_per_site_per_day', (g) => {
     const n = whole(g, 'website_free_reports_per_site_per_day', 1);
     return n === null ? null : countWords(n);
+  }),
+  // Batch 36: customer website grace (each read strictly from its billing_settings row, seeded at the end of schema.sql)
+  website_abandon_days: g_('Days with no login and no website lead before a live customer website is warned, then switched off', 'billing_settings.website_abandon_days', (g) => {
+    const n = whole(g, 'website_abandon_days', 1);
+    return n === null ? null : String(n);
+  }),
+  website_warning_days: g_('The days before switch-off a customer website warning email goes, in words ("30, 14 and 3")', 'billing_settings.website_warning_days', (g) => {
+    const days = parseWarningDays(raw(g, 'website_warning_days'));
+    if (!days) return null;
+    const xs = days.map(String);
+    return xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+  }),
+  website_delete_after_days: g_('Days a switched-off customer website waits before its data is deleted', 'billing_settings.website_delete_after_days', (g) => {
+    const n = whole(g, 'website_delete_after_days', 1);
+    return n === null ? null : String(n);
   }),
   // Teams (src/lib/team/rules.ts: a code constant, so a change is a reviewed code change)
   team_seat_cost: g_("A team member's seat, from the owner's credit", 'code SEAT_PRICE_PENCE (src/lib/team/rules.ts)', () => formatPence(SEAT_PRICE_PENCE)),

@@ -35,7 +35,8 @@ test('the site layout is neutral: operator title and icon, noindex, never Stayfu
   // The brand reaches the page as CSS custom properties; attribution is mounted once here.
   assert.match(layout, /siteThemeVars\(/);
   assert.match(layout, /<AttributionProvider>/);
-  assert.match(layout, /if \(!live\) notFound\(\)/);
+  // Batch 36: a switched-off site gets the neutral page; anything else that is not live is still a 404.
+  assert.match(layout, /if \(!live\) \{\s*if \(await switchedOffBySlug\(slug\)\) return <SwitchedOff \/>;\s*notFound\(\);\s*\}/);
 });
 
 test('the outer /s layout carries the same neutral frame for not-found pages', () => {

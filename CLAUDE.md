@@ -60,7 +60,7 @@ wire contract: `PLAN-batch-32.md`. Code: `src/lib/leaddb/`.
 
 An Academy operator whose website is live on its own domain gets a pack of three landlord Facebook ads in their own
 brand (tenant-notice video, moving abroad, renting rules changed), made from their website and uploaded by them to
-their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-batch-36.md`. Code:
+their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-batch-36-ads.md`. Code:
 `src/lib/ad-packs/`; screens `/leads/ads` (operator) and `/admin/ad-packs`.
 
 - **Contract.** Pack code `SI-<op>-<angle>-<n>` in the ad name and the link
