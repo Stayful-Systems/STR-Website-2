@@ -104,5 +104,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/adpacks-render-smoke.sql
       - name: Website edit versions, grace notices and delete-restrict checks (Batch 36)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/websites-p4-smoke.sql
+      - name: Ad lead sheet tables, owner-bound rows and seed checks (Batch 35)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/adsheets-smoke.sql
       - name: Website transfer table, one-open-per-site and ref checks (Batch 37)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/website-transfers-smoke.sql

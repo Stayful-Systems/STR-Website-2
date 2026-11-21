@@ -10308,6 +10308,113 @@ grant execute on function public.website_version_publish(uuid, integer, jsonb, j
 notify pgrst, 'reload schema';
 
 -- =========================
+-- Batch 35: ad lead sheets (Phase 1: schema and settings)
+-- =========================
+-- An operator can connect the Google Sheet their Meta lead form fills in. The
+-- service account reads only the sheet an owner linked (ad_sheet_links, one row
+-- per owner); each row read becomes a lead and is recorded once in
+-- ad_sheet_rows (link_id + row_key unique). See PLAN-batch-35.md. Checked by
+-- supabase/tests/adsheets-smoke.sql.
+--
+-- Both tables are reached by the service role only: RLS on with no policy, and
+-- nothing here is added to ACCESS_COLUMNS (src/lib/access.ts). ad_sheet_rows
+-- carries (link_id, owner_id) as a composite foreign key to the link, so a row
+-- can never belong to a different owner than its link.
+--
+-- leads.meeting_reached_at is stamped the first time a lead's stage goes to
+-- meeting_booked or signed (never cleared), for the ad ranking.
+--
+-- Settings (billing_settings; the app parses them):
+--   ad_sheets_enabled           master switch for the whole feature (off)
+--   ad_sheet_min_leads          leads an ad needs before it is ranked
+--   ad_sheet_quiet_days         days with no new row before the quiet email
+--   ad_sheet_outcome_pct        percent of older leads that must be past New
+--   ad_sheet_outcome_age_days   how old a lead is before that check counts it
+--   ad_sheet_reminder_age_days  how old a New lead is before the reminder
+--   ad_sheet_dedupe_days        window for merging a sheet row into a lead
+--   ad_sheet_guide_checked_at   when the setup guide was last checked (null)
+
+-- ── ad_sheet_links: one row per owner ──
+create table if not exists public.ad_sheet_links (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null unique references public.profiles(id) on delete cascade,
+  spreadsheet_id text not null unique,
+  tab_gid text,
+  tab_title text,
+  state text not null default 'waiting_test_row',
+  header_hash text,
+  header_map jsonb,
+  columns_changed_at timestamptz,
+  last_row_read integer not null default 0,
+  rows_imported integer not null default 0,
+  untagged_count integer not null default 0,
+  last_row_at timestamptz,
+  last_import_at timestamptz,
+  last_error_code text,
+  quiet_email_sent_at timestamptz,
+  connected_at timestamptz not null default now(),
+  activated_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  -- The target of the composite foreign key on ad_sheet_rows.
+  constraint ad_sheet_links_id_owner_key unique (id, owner_id)
+);
+alter table public.ad_sheet_links drop constraint if exists ad_sheet_links_state_check;
+alter table public.ad_sheet_links add constraint ad_sheet_links_state_check
+  check (state in ('waiting_test_row', 'active', 'error', 'disconnected'));
+alter table public.ad_sheet_links drop constraint if exists ad_sheet_links_counts_check;
+alter table public.ad_sheet_links add constraint ad_sheet_links_counts_check
+  check (last_row_read >= 0 and rows_imported >= 0 and untagged_count >= 0);
+alter table public.ad_sheet_links enable row level security;
+revoke all on public.ad_sheet_links from anon, authenticated;
+
+-- ── ad_sheet_rows: one row per sheet row read ──
+create table if not exists public.ad_sheet_rows (
+  id uuid primary key default gen_random_uuid(),
+  link_id uuid not null,
+  owner_id uuid not null,
+  row_key varchar(80) not null,
+  row_number integer not null,
+  state text not null,
+  lead_id uuid references public.leads(id) on delete set null,
+  missing text[] not null default '{}',
+  -- Incomplete rows and unknown columns only; never a full copy of a row.
+  answers jsonb,
+  created_at timestamptz not null default now(),
+  constraint ad_sheet_rows_link_owner_fkey foreign key (link_id, owner_id)
+    references public.ad_sheet_links (id, owner_id) on delete cascade,
+  constraint ad_sheet_rows_link_key_unique unique (link_id, row_key)
+);
+alter table public.ad_sheet_rows drop constraint if exists ad_sheet_rows_state_check;
+alter table public.ad_sheet_rows add constraint ad_sheet_rows_state_check
+  check (state in ('imported', 'merged', 'incomplete', 'test', 'foreign'));
+create index if not exists ad_sheet_rows_owner_state_idx on public.ad_sheet_rows (owner_id, state);
+alter table public.ad_sheet_rows enable row level security;
+revoke all on public.ad_sheet_rows from anon, authenticated;
+
+-- ── leads.meeting_reached_at, and its idempotent backfill ──
+alter table public.leads add column if not exists meeting_reached_at timestamptz;
+update public.leads
+   set meeting_reached_at = stage_changed_at
+ where meeting_reached_at is null
+   and stage_changed_at is not null
+   and stage in ('meeting_booked', 'signed');
+
+-- ── settings ──
+insert into public.billing_settings (key, value) values
+  ('ad_sheets_enabled', 'false'::jsonb),
+  ('ad_sheet_min_leads', '5'::jsonb),
+  ('ad_sheet_quiet_days', '7'::jsonb),
+  ('ad_sheet_outcome_pct', '50'::jsonb),
+  ('ad_sheet_outcome_age_days', '14'::jsonb),
+  ('ad_sheet_reminder_age_days', '7'::jsonb),
+  ('ad_sheet_dedupe_days', '30'::jsonb),
+  ('ad_sheet_guide_checked_at', 'null'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
+
+-- =========================
 -- Batch 37: customer websites, Phase 5 (transfer to the operator)
 -- =========================
 -- An operator who leaves can take the website (plain files plus a guide) and

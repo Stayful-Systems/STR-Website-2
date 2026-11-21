@@ -69,7 +69,10 @@ test('no domain code logs, and the domain code imports nothing from the funnel c
 
 test('the files Batch 33 must not touch are not mentioned by the domain code or the schema section', () => {
   const sql = read('supabase/schema.sql');
-  const section = sql.slice(sql.indexOf('-- Batch 33: customer website domains'));
+  const start = sql.indexOf('-- Batch 33: customer website domains');
+  // Later batches are appended after this one (Batch 35 alters leads); the section ends where the next starts.
+  const next = sql.indexOf('-- Batch 35: ad lead sheets');
+  const section = sql.slice(start, next > start ? next : undefined);
   assert.doesNotMatch(section, /alter table public\.(profiles|funnels|leads)\b/);
 });
 

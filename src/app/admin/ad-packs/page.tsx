@@ -29,6 +29,7 @@ export default async function AdminAdPacks() {
     <main className="mx-auto max-w-6xl px-5 py-10">
       <Link href="/admin" className="text-sm text-primary hover:underline">← Admin</Link>
       <h1 className="mt-2 text-2xl font-bold text-foreground">Ad packs</h1>
+      <p className="mt-1 text-sm"><Link href="/admin/ad-sheets" className="text-primary hover:underline">Lead form sheets →</Link></p>
       <p className="mt-1 text-sm text-muted-foreground">
         The three landlord Facebook ads each Academy operator has been given, and the website leads recorded against each ad.
         Counts only: no landlord&apos;s details are shown here.

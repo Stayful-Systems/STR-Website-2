@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useActionState, useState } from "react";
 import { archiveLeadsAction, restoreLeadsAction, type LeadActionState } from "./lead-actions";
 import { PushLeadButton } from "./PushLeadButton";
+import { StageTaps } from "./StageTaps";
+import { LEAD_STAGES, STAGE_LABELS, type LeadStage } from "@/lib/leads/stage";
 
 /** Everything a row shows, already formatted on the server. */
 export interface LeadListRow {
@@ -28,6 +30,11 @@ export interface LeadListRow {
 
 const INITIAL: LeadActionState = {};
 const FORM_ID = "lead-bulk";
+
+/** The row carries the stage label; the taps need the stage value. */
+function stageOf(label: string): LeadStage {
+  return LEAD_STAGES.find((s) => STAGE_LABELS[s] === label) ?? "new";
+}
 
 /**
  * The lead list, with tick-boxes for archiving (or, on the Archived tab,
@@ -125,6 +132,11 @@ export function LeadList({ rows, archivedTab }: { rows: LeadListRow[]; archivedT
                 </p>
               ) : null}
               {r.retention ? <p className="mt-1 text-xs text-warning">{r.retention}</p> : null}
+              {r.archived ? null : (
+                <div className="mt-2">
+                  <StageTaps leadId={r.id} stage={stageOf(r.stage)} />
+                </div>
+              )}
             </div>
             <div className="flex flex-col items-end gap-1.5 text-right">
               <div>

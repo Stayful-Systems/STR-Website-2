@@ -27,7 +27,7 @@ export type Slot = 'daily' | 'weekly';
  * and go anyway when it is not, so the day's later capped emails move to the
  * next day (src/lib/voice/cap-server.ts).
  */
-export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call' | 'academy_reminder' | 'credit_idle' | 'credit_idle_final' | 'website_grace';
+export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call' | 'academy_reminder' | 'credit_idle' | 'credit_idle_final' | 'website_grace' | 'ad_sheet_quiet';
 
 export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   todays_5: 'daily',
@@ -40,6 +40,7 @@ export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   credit_idle: 'daily',
   credit_idle_final: 'daily',
   website_grace: 'daily',
+  ad_sheet_quiet: 'daily',
   your_week: 'weekly',
 };
 
@@ -75,6 +76,9 @@ export const SWITCHES_BEHIND: Readonly<Record<SendKind, readonly NotificationKey
   // Batch 36: the website warning and switched-off emails are service notices like billing
   // (src/lib/email/website-grace.ts): capped, but opt-outs never block them.
   website_grace: [],
+  // Batch 35: the "no Facebook leads for N days" email (src/lib/ad-sheets/quiet.ts) is a service notice
+  // about the operator's own lead form: capped, but opt-outs never block it, so no switch behind it.
+  ad_sheet_quiet: [],
 };
 
 /** The day a send counts against: the UTC date, as the picks' "sent today" guard counts it. */

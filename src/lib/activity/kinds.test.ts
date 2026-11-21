@@ -200,3 +200,19 @@ test("Batch 36's website change request and switch-back-on are registered and re
   // Publishing or restoring an edit reuses funnel_edited, which counts as weekly active.
   assert.equal(isCounted('funnel_edited'), true);
 });
+
+test("Batch 35: connecting the Facebook lead form sheet is recorded, and is record only", () => {
+  assert.equal(isActivityKind('ad_sheet_connected'), true);
+  assert.equal(kindLabel('ad_sheet_connected'), 'Connected their Facebook lead form sheet');
+  assert.equal(isQualifying('ad_sheet_connected'), false);
+  assert.equal(isCounted('ad_sheet_connected'), false);
+  assert.ok(!QUALIFYING_KINDS.includes('ad_sheet_connected' as never));
+});
+
+test("Batch 35: opening the ad ranking is recorded, and is record only", () => {
+  assert.equal(isActivityKind('ad_ranking_viewed'), true);
+  assert.equal(kindLabel('ad_ranking_viewed'), 'Looked at which of their ads brought leads');
+  assert.equal(isQualifying('ad_ranking_viewed'), false);
+  assert.equal(isCounted('ad_ranking_viewed'), false);
+  assert.ok(!QUALIFYING_KINDS.includes('ad_ranking_viewed' as never));
+});

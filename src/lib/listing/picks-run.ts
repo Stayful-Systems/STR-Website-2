@@ -83,6 +83,7 @@ import { siSavedPairs } from "../standout/saved-server";
 import { markSavedEmailed, savedForYouFor } from "../standout/email-server";
 import { anyHasBtl, btlLaunchSection } from "../btl/launch";
 import { btlLaunchDueFor, markBtlLaunchSent } from "../btl/launch-server";
+import { staleNewLeadsFor } from "../ad-sheets/reminder-server";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
 // Every member with picks on (profiles.sourcing_alerts, default on) who has
@@ -1264,6 +1265,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // profile is not complete. One read for the whole audience; a team member
   // is never asked, so never nudged.
   const nudges = await profileNudgesFor(admin, dailyIds.filter((id) => payerIn(payers, id).payerId === id));
+  // Batch 35: one line about the owner's own leads still at New past the reminder age. It only rides this
+  // email (never a send of its own); a failed read gives no line.
+  const staleLeads = await staleNewLeadsFor(admin, dailyIds.filter((id) => payerIn(payers, id).payerId === id)).catch(() => ({ counts: new Map<string, number>(), ageDays: 0 }));
   // Batch 20, Part B: the £5 low-credit decision, at the top of the email of
   // anyone due it who pays for themselves (a team's owner decides for it).
   // Never on the admin's test send, which marks nothing.
@@ -1631,6 +1635,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       unsubscribe,
       // Batch 12: "Your profile is 60% done" while it is not complete (never for a team member).
       profileNudge: nudges.has(userId) ? { percent: nudges.get(userId)!, url: `${base.replace(/\/$/, "")}/profile`, pence: settings.profileCompletePence } : null,
+      staleLeads: staleLeads.counts.has(userId) ? { count: staleLeads.counts.get(userId)!, ageDays: staleLeads.ageDays, url: `${base.replace(/\/$/, "")}/leads` } : null,
       lowCredit: lowNotices.has(userId) ? lowCreditSection(lowNotices.get(userId)!, base) : null,
       packOffer: packOffers.get(userId)?.due ? packOfferSection(packOffers.get(userId)!, base) : null,
       answerToken,

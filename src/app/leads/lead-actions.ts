@@ -6,6 +6,7 @@ import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { leadScopeOrPaused, type LeadScope } from '@/lib/leads/scope';
 import { touchLeads } from '@/lib/leads/activity';
 import { parseStage, STAGE_LABELS } from '@/lib/leads/stage';
+import { meetingStampFor } from '@/lib/leads/meeting-stamp';
 import { purgeAfter, retentionDate } from '@/lib/leads/retention';
 import { logActivity } from '@/lib/activity/log';
 
@@ -145,6 +146,20 @@ export async function setLeadStageAction(_prev: LeadActionState, formData: FormD
   if (error || (data ?? []).length === 0) {
     if (error) console.error('[leads] stage failed:', error.message);
     return { error: 'That lead no longer exists.' };
+  }
+
+  // First time at Meeting booked or Signed: stamp once. The `is null` filter makes
+  // "once" hold even for two taps at the same moment; Lost never clears it.
+  const stamp = meetingStampFor(null, stage, new Date());
+  if (stamp) {
+    const { error: stampError } = await createAdminClient()
+      .from('leads')
+      .update({ meeting_reached_at: stamp })
+      .eq('user_id', s.ownerId)
+      .eq('id', leadId)
+      .is('meeting_reached_at', null);
+    // The move itself worked; a missed stamp is logged, never shown as a failed move.
+    if (stampError) console.error('[leads] meeting stamp failed:', stampError.message);
   }
 
   await touchLeads(s.ownerId, [leadId]);

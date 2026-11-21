@@ -11,7 +11,7 @@ import { getFunnel } from '../funnels';
 import { siteUrl } from '../url';
 import type { AnalysisResult } from '../types';
 import type { AnalysisInput } from '../analysis/input';
-import { leaseCutoff, reuseSince } from './dedupe';
+import { leaseCutoff, pickSameLandlord, reuseSince, sameLandlordSince } from './dedupe';
 
 /**
  * Writing down a lead. Every write is service-role: `leads` is RLS-on with a
@@ -66,7 +66,8 @@ export type CaptureResult =
  */
 export async function captureLead(input: {
   userId: string;
-  funnelId: string;
+  /** Batch 35: null for a sheet lead of an operator with no website funnel. */
+  funnelId: string | null;
   contact: LeadContact;
   property: LeadProperty;
   status: LeadStatus;
@@ -77,7 +78,7 @@ export async function captureLead(input: {
   const admin = createAdminClient();
   const now = input.now ?? new Date();
 
-  if (input.contact.email && input.property.postcode) {
+  if (input.funnelId && input.contact.email && input.property.postcode) {
     const { data: prior, error: priorError } = await admin
       .from('leads')
       .select('id, status, result')
@@ -121,6 +122,36 @@ export async function captureLead(input: {
   const id = data.id as string;
   if (input.analysis) await rememberLeadInput(id, input.analysis);
   return { id, reused: false };
+}
+
+/**
+ * Batch 35: an earlier lead of the same landlord (same owner, same postcode,
+ * same email or phone) created inside `days`, not archived, or null. Owner
+ * scoped: another owner's lead never matches. Read only; a lookup error is
+ * null (the caller then makes a new lead, never loses the row).
+ */
+export async function findSameLandlordLead(
+  ownerId: string,
+  cand: { postcode: string | null; email: string | null; phone: string | null },
+  days: number,
+  now: Date = new Date(),
+): Promise<{ id: string } | null> {
+  if (!hasServiceRole() || !cand.postcode || (!cand.email && !cand.phone)) return null;
+  const area = postcodeAreaOf(cand.postcode);
+  let q = createAdminClient()
+    .from('leads')
+    .select('id, email, phone, postcode, created_at')
+    .eq('user_id', ownerId)
+    .is('archived_at', null)
+    .gte('created_at', sameLandlordSince(now, days).toISOString());
+  if (area) q = q.eq('postcode_area', area);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(200);
+  if (error) {
+    console.warn('[leads] same-landlord check failed:', error.message);
+    return null;
+  }
+  const hit = pickSameLandlord((data ?? []) as Parameters<typeof pickSameLandlord>[0], cand, days, now);
+  return hit ? { id: hit.id } : null;
 }
 
 /**

@@ -12,6 +12,8 @@ import { LiveActions } from "./LiveActions";
 import { CannotUseScreen, GalleryScreen, MoreOptions, ProblemScreen, StartScreen, WorkingScreen } from "./Screens";
 import { StartForm, type PhotoItem } from "./StartForm";
 import { Calm } from "./ui";
+import { ConnectSheet } from "./ConnectSheet";
+import { YourAds } from "./YourAds";
 import { packScreen, regenView } from "./state";
 import { adViewModel, approvalVm, areaPreviewView, brandOfSettings, brandProblemText, eligibilityView, figureCallout, previewPathsOf, problemView, regenIntro, stageOf, voiceVm, type AreaPreviewView } from "./view";
 
@@ -133,6 +135,8 @@ export default async function AdsPage() {
         more={stage === "making" ? null : <MoreOptions pack={packRef} voice={voice} canChangeVoice={stage === "review"} regenerate={regenerate} regenIntro={intro} />}
       />
       {previewNotice}
+      {stage === "approved" ? <ConnectSheet forms={adVms.map((a, i) => ({ id: a.id, title: a.heading, questions: ads[i].leadForm }))} /> : null}
+      {stage === "approved" ? <YourAds ownerId={ownerId} ads={ads.map((a) => ({ id: a.id, ownerId: a.ownerId, code: a.code, angle: a.angle }))} /> : null}
     </LiveActions>
   );
 }

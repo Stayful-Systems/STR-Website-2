@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
+import { meetingStampFor } from '../leads/meeting-stamp';
 import type { LeadStage } from '../leads/stage';
 
 /**
@@ -51,5 +52,19 @@ export async function setLeadStage(userId: string, leadId: string, stage: LeadSt
     console.error('[api] lead stage failed:', error.message);
     return false;
   }
-  return (data ?? []).length > 0;
+  if ((data ?? []).length === 0) return false;
+
+  // First time at Meeting booked or Signed: stamp once (the `is null` filter holds it even for two calls at once);
+  // Lost never clears it. A missed stamp is logged, never shown as a failed move.
+  const stamp = meetingStampFor(null, stage, new Date());
+  if (stamp) {
+    const { error: stampError } = await createAdminClient()
+      .from('leads')
+      .update({ meeting_reached_at: stamp })
+      .eq('user_id', userId)
+      .eq('id', leadId)
+      .is('meeting_reached_at', null);
+    if (stampError) console.error('[api] meeting stamp failed:', stampError.message);
+  }
+  return true;
 }

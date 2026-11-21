@@ -100,3 +100,37 @@ their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-b
   signed links (`videoUrlAction`). `/admin/ad-packs` has a Video column. A dev-only preview of every state with fake data is
   at `src/app/dev/ads-preview/` (404 in production; `dev` is a reserved slug).
 - **Knowledge.** Seven draft entries in `seed.ts` (`adpack_*`, incl. `adpack_video_voice` and `adpack_video_email`) and a block in `service-facts.ts`.
+
+# Batch 35: Facebook lead forms through a Google Sheet, attribution, one-tap outcomes, "Your ads"
+
+An operator can switch their ad pack from website mode to Facebook instant forms. Meta saves each answer into a Google
+Sheet the operator owns; the operator shares it with Stayful's service account and Stayful reads only that sheet. Plan,
+decisions and phases: `PLAN-batch-35.md`. Code: `src/lib/ad-sheets/`; screens `/leads/ads` (operator: connect, Your ads)
+and `/admin/ad-sheets`.
+
+- **Contract.** Tables `ad_sheet_links` (one row per owner) and `ad_sheet_rows` (link id + row key unique, so a row is
+  kept once); `leads.meeting_reached_at` (stamped once, the first time a stage goes to Meeting booked or Signed). Service
+  account env `GOOGLE_SHEETS_SA_EMAIL` / `GOOGLE_SHEETS_SA_PRIVATE_KEY` (never in code or the database); unset: the connect
+  screen says "Lead form link not available yet". Neither table is in `ACCESS_COLUMNS`. `leads.status` and
+  `leads.crm_pushed_at` are **never** written by this.
+- **Switch and settings.** `ad_sheets_enabled` stays OFF until Zac turns it on. The rest are `billing_settings` rows
+  read by `settings.ts`: `ad_sheet_min_leads`, `ad_sheet_quiet_days`, `ad_sheet_outcome_pct`, `ad_sheet_outcome_age_days`,
+  `ad_sheet_reminder_age_days`, `ad_sheet_dedupe_days` (and `ad_sheet_guide_checked_at`). Seeded in `supabase/schema.sql`'s
+  Batch 35 block; a test pins the defaults to the seeds.
+- **Flow.** `/api/internal/ad-sheets` (`21 * * * *`, `?dry=1` writes nothing) imports new rows, then runs the quiet check.
+  A complete row (name, phone or email, postcode) becomes a lead (no report), linked to its ad in `ad_pack_lead_links`
+  (pack code in the ad name, then Meta ad id, otherwise "Ad unknown"), pushed lead-only to the lead database
+  (`enqueueLeadDbPush`) and announced under the same `funnels.notify_new_lead` setting as a website lead. The same landlord
+  (owner + postcode + email or phone) inside `ad_sheet_dedupe_days` joins the existing lead. No new lead for
+  `ad_sheet_quiet_days` sends one email through the daily cap (`ad_sheet_quiet`, opt-outs never block it).
+- **Outcomes and Your ads.** Five one-tap stage buttons (`StageTaps.tsx`). Your ads (`ranking.ts`) ranks an ad at
+  `ad_sheet_min_leads` leads by signed, then meetings, then leads; untagged leads are in totals only; no spend and no
+  cost per lead. Record-only kinds `ad_sheet_connected` and `ad_ranking_viewed`.
+- **Daily email line.** `buildDaily` carries one line, "N leads are over D days old and still at New, mark what
+  happened", only when N > 0 and D is `ad_sheet_reminder_age_days` (`reminder.ts` counts the recipient's own
+  non-archived New leads; `reminder-server.ts` reads them for `picks-run.ts`). It never adds a send or a `SendKind`; the
+  daily cap is unchanged (a test pins it).
+- **Never log a lead.** Log lines carry a lead id, link id, ad code or error code at most, never an address, name, email,
+  phone or row. Admin screens show states and counts, never cell contents.
+- **Knowledge.** Five draft entries in `seed.ts` (`adsheet_*`: what, connect, attribution, outcomes, your_ads), six
+  placeholders in `placeholders.ts` (`{ad_sheet_*}`), and a FACEBOOK LEAD FORMS block in `service-facts.ts`.
