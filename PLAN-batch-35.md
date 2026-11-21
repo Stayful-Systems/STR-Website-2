@@ -30,7 +30,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
 - [x] **Phase 0 — Setup** (needs A1 on main). Merge main, baseline `npm test`, `npm run lint`, `npm run typecheck` (baseline: 4630 tests pass, 0 lint errors / 79 warnings, typecheck clean). Write this file, commit.
   Notes: Done. main = a3cae75, branch level with it. Baseline green (4630 tests, 0 lint errors, typecheck clean). No numbered migrations: schema.sql is one idempotent file.
 
-- [ ] **Phase 1 — Database** (needs 0). Files: `supabase/schema.sql` ("-- Batch 35" block), `supabase/tests/adsheets-smoke.sql` (new), `.github/workflows/ci.yml` (one step).
+- [x] **Phase 1 — Database** (needs 0). Files: `supabase/schema.sql` ("-- Batch 35" block), `supabase/tests/adsheets-smoke.sql` (new), `.github/workflows/ci.yml` (one step).
   - `ad_sheet_links`: id, owner_id unique → profiles cascade, spreadsheet_id unique, tab_gid, tab_title, state check (waiting_test_row, active, error, disconnected), header_hash, header_map jsonb, columns_changed_at, last_row_read int, rows_imported int, untagged_count int, last_row_at, last_import_at, last_error_code, quiet_email_sent_at, connected_at, activated_at, created_at, updated_at; unique(id, owner_id).
   - `ad_sheet_rows`: id, link_id, owner_id, FK (link_id, owner_id) → ad_sheet_links(id, owner_id) cascade, row_key varchar(80), row_number, state check (imported, merged, incomplete, test, foreign), lead_id → leads set null, missing text[], answers jsonb (incomplete + unknown columns only), created_at; unique(link_id,row_key); index (owner_id, state).
   - `leads.meeting_reached_at timestamptz` if not exists; idempotent backfill = stage_changed_at where stage in (meeting_booked, signed) and it is null.
