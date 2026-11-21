@@ -539,6 +539,11 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const n = whole(g, 'website_delete_after_days', 1);
     return n === null ? null : String(n);
   }),
+  // Batch 37: customer website transfer (read strictly from its billing_settings row, seeded at the end of schema.sql)
+  website_transfer_overlap_days: g_('Days our copy of a customer website keeps serving after the operator starts a transfer, before our hosting stops once the domain has moved', 'billing_settings.website_transfer_overlap_days', (g) => {
+    const n = whole(g, 'website_transfer_overlap_days', 1);
+    return n === null ? null : String(n);
+  }),
   // Teams (src/lib/team/rules.ts: a code constant, so a change is a reviewed code change)
   team_seat_cost: g_("A team member's seat, from the owner's credit", 'code SEAT_PRICE_PENCE (src/lib/team/rules.ts)', () => formatPence(SEAT_PRICE_PENCE)),
   team_seat_days: g_('Days a seat lasts before it renews', 'code SEAT_PERIOD_DAYS (src/lib/team/rules.ts)', () => String(SEAT_PERIOD_DAYS)),
