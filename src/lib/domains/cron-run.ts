@@ -35,6 +35,8 @@ export interface CronDeps {
   engine: DomainEngine;
   /** Rows in these statuses (the route reads website_domains; a dry run uses only this and the verdicts). */
   list: (statuses: readonly DomainStatus[]) => Promise<DomainRow[]>;
+  /** Batch 37: domain ids that have left our account (a website transfer that is not cancelled). The cron leaves them alone. */
+  skip?: () => Promise<ReadonlySet<string>>;
   /** A stamp on a row (store.updateDomain). */
   stamp: (id: string, patch: DomainPatch) => Promise<unknown>;
   /** One admin email; true when it went. `key` is Resend's idempotency key. */
@@ -68,7 +70,8 @@ export interface Plan {
 /** What a real run would touch, from our own rows and the auto-renew verdicts (reads only). */
 export async function plan(deps: CronDeps): Promise<Plan> {
   const now = deps.now();
-  const rows = await deps.list(ALL);
+  const skip = deps.skip ? await deps.skip() : null;
+  const rows = (await deps.list(ALL)).filter((r) => !skip?.has(r.id));
   const today = ukDay(now);
   const staleBefore = now.getTime() - REGISTERING_RESUME_MINUTES * 60_000;
 

@@ -257,6 +257,10 @@
 		{
 			"path": "/api/internal/ad-sheets",
 			"schedule": "21 * * * *"
+		},
+		{
+			"path": "/api/internal/website-transfers",
+			"schedule": "6-59/10 * * * *"
 		}
 	]
 }

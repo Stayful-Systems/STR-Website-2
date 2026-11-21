@@ -425,6 +425,30 @@ test('changeIpsTag is refused (no documented Openprovider call) and sends nothin
   assert.equal(c.calls.length, 0);
 });
 
+test('transferCode reads auth_code from the domain record and returns it trimmed', async () => {
+  const c = client((call) => {
+    if (call.method === 'GET' && call.url.includes('full_name=')) return json(200, { code: 0, data: { results: [domainRec()] } });
+    if (call.method === 'GET' && call.url.endsWith('/domains/4242')) return json(200, { code: 0, data: domainRec({ auth_code: ' Xy7-secret ' }) });
+    return json(404, {});
+  });
+  assert.equal(await c.reg.transferCode('acme.co.uk'), 'Xy7-secret');
+  assert.ok(c.api().every((x) => x.method === 'GET'), 'a read only');
+});
+
+test('transferCode: an absent or empty auth_code is refused (the manual step), and so is a name we do not hold', async () => {
+  const absent = client((call) => (call.url.includes('full_name=') ? json(200, { code: 0, data: { results: [domainRec()] } }) : json(200, { code: 0, data: domainRec() })));
+  await rejects(absent.reg.transferCode('acme.co.uk'), 'refused', null);
+  const empty = client((call) => (call.url.includes('full_name=') ? json(200, { code: 0, data: { results: [domainRec()] } }) : json(200, { code: 0, data: domainRec({ auth_code: '  ' }) })));
+  await rejects(empty.reg.transferCode('acme.co.uk'), 'refused', null);
+  const none = client(() => json(200, { code: 0, data: { results: [] } }));
+  await rejects(none.reg.transferCode('acme.co.uk'), 'refused', 404);
+});
+
+test('transferCode never puts the code in an error message', async () => {
+  const c = client(() => json(500, { code: 1, desc: 'auth_code Xy7-secret' }));
+  await assert.rejects(c.reg.transferCode('acme.co.uk'), (e: unknown) => e instanceof RegistrarError && !e.message.includes('Xy7'));
+});
+
 test('the registrar id is openprovider', () => {
   assert.equal(createOpenprovider({ username: 'u', password: 'p', sandbox: true, fetch: (async () => json(200, {})) as typeof fetch }).id, 'openprovider');
 });

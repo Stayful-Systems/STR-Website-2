@@ -575,3 +575,21 @@ test('errors are stored as a code and a status only, 200 characters at most, cre
   assert.equal(errorText(new Error('Bearer abcdefghijklmnopqrstuvwxyz0123456789 password=hunter2')), 'error');
   assert.ok(errorText(new RegistrarError('refused')).length <= 200);
 });
+
+test('release with { registrar: false } makes no registrar call but still removes Vercel, clears the site address and marks it released', async () => {
+  const h = harness();
+  const { domainId, name, siteId } = await liveDomain(h);
+  h.registrar.log.length = 0;
+  h.vercel.log.length = 0;
+  const writes = h.registrar.writeCalls();
+  const dry = await h.engine.release(domainId, { dryRun: true, registrar: false });
+  assert.equal(dry.outcome, 'dry_run');
+  assert.equal(h.registrar.log.length, 0);
+  const r = await h.engine.release(domainId, { registrar: false });
+  assert.equal(r.outcome, 'released');
+  assert.deepEqual(h.registrar.log, [], 'no registrar call at all');
+  assert.equal(h.registrar.writeCalls(), writes);
+  assert.deepEqual(h.vercel.log, [`removeDomain:www.${name}`, `removeDomain:${name}`]);
+  assert.equal(h.store.sites.get(siteId)?.domain, null);
+  assert.equal((await h.store.domain(domainId))?.status, 'released');
+});

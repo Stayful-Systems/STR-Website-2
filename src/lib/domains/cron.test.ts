@@ -287,3 +287,22 @@ test('vercel.json schedules the cron at 4, 19, 34 and 49 past the hour', () => {
   const v = JSON.parse(readFileSync(new URL('../../../vercel.json', import.meta.url), 'utf8')) as { crons: Array<{ path: string; schedule: string }> };
   assert.deepEqual(v.crons.filter((c) => c.path === '/api/internal/domains'), [{ path: '/api/internal/domains', schedule: '4,19,34,49 * * * *' }]);
 });
+
+test('a domain that has left our account (an uncancelled website transfer) is not planned or touched by the cron', async () => {
+  const h = harness();
+  const moved = await liveDomain(h, 'Alder Homes Ltd');
+  const kept = await liveDomain(h, 'Birch Homes Ltd');
+  for (const d of [moved, kept]) await h.store.updateDomain(d.domainId, { expiresAt: new Date(h.deps.now().getTime() + 3 * DAY).toISOString() });
+  const base = cron(h).deps;
+  const before = await plan(base);
+  assert.ok(before.renewalWindow.some((r) => r.id === moved.domainId), 'flagged without the skip');
+  const { deps, emails } = cron(h, { skip: async () => new Set([moved.domainId]) });
+  const p = await plan(deps);
+  assert.deepEqual(p.renewalWindow.map((r) => r.id), [kept.domainId]);
+  assert.ok(!Object.values(p).flat().some((r) => r.id === moved.domainId), 'in no step');
+  h.registrar.log.length = 0;
+  const report = await runDomains(deps, { dry: false });
+  assert.ok(!Object.values(report.ids).flat().includes(moved.domainId));
+  assert.ok(!emails.some((e) => e.key.includes(moved.domainId)));
+  assert.ok(!h.registrar.log.some((l) => l.includes(moved.name)), 'the registrar is never asked about it');
+});

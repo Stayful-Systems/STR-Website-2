@@ -129,13 +129,18 @@ async function loadSites(now: Date, websiteIds?: readonly string[]): Promise<Gra
   let ids: string[];
   if (websiteIds) ids = [...new Set(websiteIds)].filter((id) => UUID.test(id));
   else {
-    const [live, open] = await Promise.all([
+    const [live, open, moved] = await Promise.all([
       admin.from('websites').select('id').eq('status', 'live').limit(5000),
       admin.from('website_grace').select('website_id').is('cancelled_at', null).is('deleted_at', null).limit(5000),
+      // Batch 37: a site with an OPEN transfer (not cancelled, overlap not ended) is the operator's: no warning, no switch-off, no deletion.
+      // Once the overlap has ended the row stays (the exported form keeps working), but a site that comes back to setup is ours again.
+      admin.from('website_transfers').select('website_id').is('cancelled_at', null).is('overlap_ended_at', null).limit(5000),
     ]);
     if (live.error) throw new Error(live.error.message);
     if (open.error) throw new Error(open.error.message);
-    ids = [...new Set([...(live.data ?? []).map((r) => String((r as { id: unknown }).id)), ...(open.data ?? []).map((r) => String((r as { website_id: unknown }).website_id))])];
+    if (moved.error) throw new Error(moved.error.message); // fail closed: never act on a site that may have been handed over
+    const transferred = new Set((moved.data ?? []).map((r) => String((r as { website_id: unknown }).website_id)));
+    ids = [...new Set([...(live.data ?? []).map((r) => String((r as { id: unknown }).id)), ...(open.data ?? []).map((r) => String((r as { website_id: unknown }).website_id))])].filter((id) => !transferred.has(id));
   }
   if (ids.length === 0) return [];
 

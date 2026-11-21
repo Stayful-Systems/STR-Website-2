@@ -174,6 +174,8 @@ export interface RunOptions {
   dryRun?: boolean;
   /** An admin pressed it: Buy then ignores "auto-buy is off". */
   admin?: boolean;
+  /** release only: false = the domain has left our registrar account (Batch 37), so setAutoRenew is skipped. */
+  registrar?: boolean;
 }
 
 export type OfferResult =
@@ -595,7 +597,7 @@ export function createDomainEngine(deps: DomainDeps) {
         ? [
             { step: 'Vercel', detail: `Remove www.${row.name}, then ${row.name}, from the project (already gone counts as done). If Vercel refuses, stop: the registrar is not touched.` },
             { step: 'Website', detail: "Clear the website's own address; its /s/<slug> address works again." },
-            { step: 'Registrar', detail: `Turn auto-renew off. ${row.name} stays Stayful's until it expires: a .co.uk cannot be refunded.` },
+            { step: 'Registrar', detail: opts.registrar === false ? 'The domain has left our account: no registrar call.' : `Turn auto-renew off. ${row.name} stays Stayful's until it expires: a .co.uk cannot be refunded.` },
             { step: 'Done', detail: 'Mark the domain released.' },
           ]
         : [{ step: 'Cancel', detail: `Nothing was bought for ${row.name}: mark it released.` }];
@@ -607,10 +609,10 @@ export function createDomainEngine(deps: DomainDeps) {
       return result(done ?? row, 'released', true);
     }
 
-    let reg: Registrar;
+    let reg: Registrar | null = null;
     let vercel: VercelDomains;
     try {
-      reg = deps.registrar();
+      if (opts.registrar !== false) reg = deps.registrar();
       vercel = deps.vercel();
     } catch {
       return result(row, 'not_configured', false);
@@ -627,7 +629,7 @@ export function createDomainEngine(deps: DomainDeps) {
     }
     await store.setSiteDomain(row.websiteId, null);
     try {
-      await reg.setAutoRenew(row.name, false);
+      if (reg) await reg.setAutoRenew(row.name, false);
     } catch (e) {
       const stopped = await store.updateDomain(row.id, { lastError: errorText(e) });
       return result(stopped ?? releasing, 'registrar_failed', false);

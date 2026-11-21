@@ -31,6 +31,13 @@ export function retryAfterMs(header: string | null, attempt: number): number {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** Batch 37: a file sent with an email. `content` is the bytes (a Buffer) or an already base64-encoded string. */
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer | string;
+  contentType?: string;
+}
+
 export async function sendEmail(params: {
   to: string;
   subject: string;
@@ -55,6 +62,8 @@ export async function sendEmail(params: {
    * gone — is retried once at once with the same key, which settles it.
    */
   idempotencyKey?: string;
+  /** Batch 37: files to attach (Resend's `attachments`: filename, base64 content, content_type). Left out of the body when none. */
+  attachments?: EmailAttachment[];
 }): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = params.from ?? process.env.EMAIL_FROM;
@@ -70,6 +79,15 @@ export async function sendEmail(params: {
     text: params.text,
     ...(params.replyTo ? { reply_to: params.replyTo } : {}),
     ...(params.headers ? { headers: params.headers } : {}),
+    ...(params.attachments && params.attachments.length > 0
+      ? {
+          attachments: params.attachments.map((a) => ({
+            filename: a.filename,
+            content: typeof a.content === "string" ? a.content : a.content.toString("base64"),
+            ...(a.contentType ? { content_type: a.contentType } : {}),
+          })),
+        }
+      : {}),
   });
   const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
   if (params.idempotencyKey) headers["Idempotency-Key"] = params.idempotencyKey;
