@@ -62,7 +62,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: `npm test`: two runs + retry after mid-run failure → each row once; incomplete saved; same landlord form + sheet → one lead; never another owner's id; dry run no writes; leaddb unchanged for website leads, accepts sheet leads.
   Notes: Exports: runImport({dry,linkId},{store,client,now}) in import.ts; runAdSheetImport({dry,linkId}) in import-server.ts; notifySheetLead. Known gap to review in Phase 12: the leaddb sweep does not re-queue a sheet lead whose first enqueue failed. ad_sheet_connected activity kind is Phase 7 work.
 
-- [ ] **Phase 6 — Cron and monitoring** (needs 5). Files: `src/app/api/internal/ad-sheets/route.ts`, `vercel.json` (one line `21 * * * *`), `src/lib/ad-sheets/quiet.ts` (+test), `src/lib/notify/cap.ts` (one SendKind `ad_sheet_quiet`).
+- [x] **Phase 6 — Cron and monitoring** (needs 5). Files: `src/app/api/internal/ad-sheets/route.ts`, `vercel.json` (one line `21 * * * *`), `src/lib/ad-sheets/quiet.ts` (+test), `src/lib/notify/cap.ts` (one SendKind `ad_sheet_quiet`).
   - Route follows leaddb-deliveries (secrets → 404, auth → 401, service role → 503, `?dry=1`); runs import, then quiet check; `not_configured` when service account unset. quiet.ts: active link with no row for `ad_sheet_quiet_days` and `quiet_email_sent_at` null → one email through the cap, then stamp; new row clears the stamp; taken slot → no stamp, retry next day.
   - Check: `npm test`: quiet email once across many runs; not re-sent until a new row + 7 more quiet days; taken slot no stamp; dry run sends nothing.
   Notes:

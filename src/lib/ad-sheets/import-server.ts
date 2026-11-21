@@ -172,6 +172,8 @@ export function supabaseImportStore(pending: Promise<unknown>[] = []): ImportSto
       for (const k of Object.keys(patch) as (keyof LinkPatch)[]) {
         if (patch[k] !== undefined) row[PATCH_COLUMNS[k]] = patch[k];
       }
+      // Batch 35 phase 6: a new row ends the quiet spell, so the quiet email may go again after another quiet period.
+      if (patch.lastRowAt !== undefined) row.quiet_email_sent_at = null;
       // A link disconnected while the run was going stays disconnected.
       const { error } = await db().from('ad_sheet_links').update(row).eq('id', linkId).neq('state', 'disconnected');
       if (error) fail('ad_sheet_links', error.code);
