@@ -73,7 +73,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: `npm test` ops tests: non-owner refused; sheet linked to another owner refused; not shared → right message; mode stays website until a row read; activity kind pinned record-only.
   Notes:
 
-- [ ] **Phase 8 — One-tap outcomes** (needs 1; can run alongside 5–7). Files: `src/app/leads/StageTaps.tsx` (new), `LeadList.tsx` (minimal), `src/app/leads/[id]/LeadDetailActions.tsx` (minimal), `src/app/leads/lead-actions.ts` (stamp), test.
+- [x] **Phase 8 — One-tap outcomes** (needs 1; can run alongside 5–7). Files: `src/app/leads/StageTaps.tsx` (new), `LeadList.tsx` (minimal), `src/app/leads/[id]/LeadDetailActions.tsx` (minimal), `src/app/leads/lead-actions.ts` (stamp), test.
   - Five buttons (New, Contacted, Meeting booked, Signed, Lost), current highlighted; one tap calls `setLeadStageAction` (already logs `lead_action`); replaces the select on lead cards and lead page. `setLeadStageAction` stamps `meeting_reached_at` once when null and stage is meeting_booked or signed.
   - Check: `npm test`: tap records lead_action {action:'stage'}; stamp set once and survives later Lost; paused seat / capability without access refused.
   Notes:

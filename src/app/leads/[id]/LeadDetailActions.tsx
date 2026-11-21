@@ -4,11 +4,11 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import {
   archiveLeadsAction,
   restoreLeadsAction,
-  setLeadStageAction,
   markLeadOpenedAction,
   type LeadActionState,
 } from "../lead-actions";
-import { LEAD_STAGES, STAGE_LABELS, type LeadStage } from "@/lib/leads/stage";
+import { type LeadStage } from "@/lib/leads/stage";
+import { StageTaps } from "../StageTaps";
 
 const INITIAL: LeadActionState = {};
 
@@ -41,36 +41,17 @@ export function LeadDetailActions({
   hasReport: boolean;
   reportUrl: string | null;
 }) {
-  const [stageState, stageAction, stagePending] = useActionState(setLeadStageAction, INITIAL);
   const [archiveState, archiveAction, archivePending] = useActionState(
     archived ? restoreLeadsAction : archiveLeadsAction,
     INITIAL,
   );
   const [copied, setCopied] = useState(false);
-  const stageForm = useRef<HTMLFormElement>(null);
 
   const button = "rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-60";
 
   return (
     <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
-      <form ref={stageForm} action={stageAction} className="flex items-center gap-2">
-        <input type="hidden" name="leadId" value={leadId} />
-        <label htmlFor="lead-stage" className="text-xs text-muted-foreground">Stage</label>
-        <select
-          id="lead-stage"
-          name="stage"
-          defaultValue={stage}
-          disabled={stagePending}
-          onChange={() => stageForm.current?.requestSubmit()}
-          className="rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
-        >
-          {LEAD_STAGES.map((s) => (
-            <option key={s} value={s}>{STAGE_LABELS[s]}</option>
-          ))}
-        </select>
-      </form>
-      {stageState.error ? <p className="text-xs text-destructive" role="alert">{stageState.error}</p> : null}
-      {stageState.notice ? <p className="text-xs text-muted-foreground" role="status">{stageState.notice}</p> : null}
+      <StageTaps leadId={leadId} stage={stage} />
 
       <div className="flex flex-wrap gap-2 sm:justify-end">
         {hasReport ? (
