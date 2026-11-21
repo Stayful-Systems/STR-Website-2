@@ -116,9 +116,10 @@ never charged.
   Files: `src/app/leads/website/transfer/{page.tsx,TransferForm.tsx,transfer-actions.ts,transfer-actions.test.ts}`, `src/app/leads/website/page.tsx` (+1 "Take my website" link).
   Pre-start screen: what happens, provider picker with each tag (or "Other: type its tag"), code-method line; "Check" step then Confirm → `startTransfer`. After start: status, Download link valid 10 minutes, domain status, overlap end date, "Email me the code again". Every action starts with `websiteActor()`; form read for `providerKey` and `tag` only.
   Check: source-read test pins `websiteActor()` first in every action and the form fields read; team member refused; build lists `/leads/website/transfer`.
-- [ ] Phase 9 — Admin transfers panel (deps: 5)
+- [x] Phase 9 — Admin transfers panel (deps: 5)
   Files: `src/app/admin/websites/TransfersPanel.tsx`, `transfer-admin-actions.ts` (+test), `src/app/admin/websites/page.tsx` (+panel).
   Columns: operator email, site, provider, tag or method, files state, domain state, overlap ends, last error; manual step in plain words. Domains-panel pattern (dry run then run); `requireAdmin()` first; audit line `[admin] transfers: <admin> <kind> <id8>: ok|refused <code>`.
+  Notes: new TransfersPanel.tsx, transfer-admin-actions.ts (+12 tests); admin/websites/page.tsx +49/-1 (panel plus a read-only loadTransfers() loader kept in page.tsx because a 'use server' file cannot safely export a loader). Only runs write the audit line (dry runs log nothing); audit line `[admin] transfers: <admin> <kind> <id8>: ok|refused <code>`. transfer-server.ts needed no change. npm test 4824/0, build lists /admin/websites.
   Check: test pins `requireAdmin` first, dry runs change nothing, cancel refused after moved; build lists `/admin/websites`.
 - [x] Phase 10 — Knowledge drafts (deps: 1; any time after)
   Files: `src/lib/knowledge/seed.ts`, `placeholders.ts`, `service-facts.ts`.
