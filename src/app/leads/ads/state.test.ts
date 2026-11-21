@@ -65,7 +65,7 @@ test('regenerate: offered only with a free regeneration left AND a changed brand
   const same = regenView(view, BRAND);
   assert.equal(same.canRegenerate, false);
   assert.equal(same.left, 1);
-  assert.match(same.reason ?? '', /Change your logo, colour, company name, fee, photos or area first/);
+  assert.match(same.reason ?? '', /Change your logo, colours, company name, fee, area or photos first/);
   // Each part of the brand counts as a change.
   for (const changed of [{ ...BRAND, company: 'Brightstone Lettings' }, { ...BRAND, brandColour: '#223344' }, { ...BRAND, logoUrl: 'https://cdn.example.test/new.png' }, { ...BRAND, feePct: 10 }, { ...BRAND, logoUrl: null }]) {
     const v = regenView(view, changed);
@@ -86,7 +86,7 @@ test('regenerate: once the free regeneration is used it is never offered, howeve
   const v = regenView(view, { ...BRAND, brandColour: '#556677', company: 'Another Name' });
   assert.equal(v.canRegenerate, false);
   assert.equal(v.left, 0);
-  assert.equal(v.reason, 'You have used your free regeneration.');
+  assert.equal(v.reason, 'You have already used your free chance to make new ads.');
   // Directly after that regenerate the unchanged brand reads as "no change" for the new version.
   assert.equal(regenView({ ...view, freeRegensLeft: 1, pack: { ...view.pack, regenCount: 0 } }, { ...BRAND, brandColour: '#223344' }).canRegenerate, false);
 });

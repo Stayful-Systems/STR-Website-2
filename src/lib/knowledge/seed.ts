@@ -1076,7 +1076,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'What is the ad pack?',
     variants: ['What do I get in my ad pack?', 'Do you make Facebook ads for me?', 'Can I get ready-made Facebook ads for landlords?', 'Does Stayful run my Facebook ads?', 'How do I use the ad pack?'],
-    answer: 'It is a set of landlord Facebook ads in your own brand, made from your website: a video ad about tenant notice, with a voiceover in a voice you pick and the words on screen, one for landlords moving abroad and one for landlords whose renting rules have changed. You upload them to your own Meta ad account with the step-by-step guide, which has a copy button for every text. Stayful runs nothing on Meta for you.',
+    answer: 'It is a set of landlord Facebook ads in your own brand, made from your website: a video ad about tenant notice, with a voiceover in a voice you pick and the words on screen, one for landlords moving abroad and one for landlords whose renting rules have changed. You look at the three ads on your Your Facebook ads page and download them, then press the button that says they look good and follow the step-by-step guide, one step on each screen, which has a big copy button for every text and a few wordings to choose from. Stayful runs nothing on Meta for you.',
   },
   {
     slug: 'adpack_who',

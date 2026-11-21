@@ -189,3 +189,6 @@ One subagent per phase. Each reads CLAUDE.md + AGENTS.md (and the Next docs it n
 Video quality below Stayful's hand-tuned ads (operator previews; keep switch off). Vercel Sandbox not enabled
 (fallback: GitHub Actions runner). Thin market data (lower min-sample setting, ≥3). Meta rule changes (constants in
 `links.ts`, `limits.ts`).
+
+## 21 Nov follow-up (after the first real test)
+Zac's test found: (1) the video's voice upload was refused because the ad-packs bucket did not allow audio/mpeg or application/json (fixed in schema.sql, pinned by `bucket.test.ts`, live bucket fixed by hand; the render then worked: 77 s, 9:16 + 4:5 + 1:1 + poster, 39p total of which 26p were two wasted voice payments); (2) nobody was told when the video finished (now one email when ready or failed for good, once each: `notified_at` / `notified_outcome` on ad_pack_renders, applied to the live database); (3) the screen was cluttered, jargon-heavy and not phone-friendly (rebuilt: staged `/leads/ads`, a separate one-step-per-screen `/leads/ads/guide`, dev-only preview at `/dev/ads-preview`, plain-language test). The test account's rows are still in the live database and are listed in TEST-DATA-CLEANUP.sql (scratchpad): delete them when the test is finished.

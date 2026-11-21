@@ -88,8 +88,15 @@ their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-b
   finish your video"; claimed once via `ad_pack_renders.notified_at`/`notified_outcome`, reset by a voice change or retry,
   outside the one-email-a-day cap like the other replies to something the operator started).
   Code `src/lib/ad-packs/{voices,voice-*,captions,render-*}.ts`; no Stayful asset under `ad-render/` (a test pins it).
-- **Screen.** Approve stays off until the video is ready (`PackView.approval`). One voice change before approving
-  (`changeVoice`; free when the voice was unavailable) and `retryVideo`, both owner-only and pinned to the version on
-  screen. While the video is made the screen asks `pollPackAction` every 8 s (read only, safe fields) and stops after
-  15 minutes. The video plays from one-hour signed links (`videoUrlAction`). `/admin/ad-packs` has a Video column.
+- **Screen.** Plain English, phone first, one thing per screen (no jargon is a tested rule: `plain-language.test.ts`).
+  `/leads/ads` is staged by the pack's state: start (area, voice, Make my ads), making (the two picture ads at once, the
+  video says it takes 5 to 10 minutes and that an email follows), review (the three ads as big pictures/video with
+  Download; everything technical sits under "More options"), approved. `/leads/ads/guide` is the one-step-per-screen
+  wizard for Facebook (the real screenshots in `public/ad-packs/guide/`, a big Copy button for the main text, headline,
+  extra line, ad name and link, "Show me another wording", progress saved per ad on the device). Approve stays off until the
+  video is ready (`PackView.approval`); one voice change before approving (`changeVoice`; free when the voice was
+  unavailable) and `retryVideo`, both owner-only and pinned to the version on screen. While the video is made the screen
+  asks `pollPackAction` every 8 s (read only, safe fields) and stops after 15 minutes. The video plays from one-hour
+  signed links (`videoUrlAction`). `/admin/ad-packs` has a Video column. A dev-only preview of every state with fake data is
+  at `src/app/dev/ads-preview/` (404 in production; `dev` is a reserved slug).
 - **Knowledge.** Seven draft entries in `seed.ts` (`adpack_*`, incl. `adpack_video_voice` and `adpack_video_email`) and a block in `service-facts.ts`.
