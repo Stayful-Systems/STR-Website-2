@@ -74,6 +74,8 @@ export interface Registrar {
   /** Renew for one year: the new expiry. */
   renew(name: string): Promise<{ expiresAt: string }>;
   info(name: string): Promise<OwnedDomain | null>;
-  /** Built for Batch 37 (moving a domain to the member's own registrar). Wired to nothing yet. */
+  /** Batch 37 (moving a domain to the member's own registrar). */
   changeIpsTag(name: string, tag: string): Promise<void>;
+  /** Batch 37: the domain's transfer (auth) code. Absent or unreadable: `refused` (a manual step). Never logged or stored. */
+  transferCode(name: string): Promise<string>;
 }
