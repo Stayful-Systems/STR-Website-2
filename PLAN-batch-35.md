@@ -44,7 +44,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: `npm test` (fake fetch): JWT shape, 403 → not_shared, unconfigured → not_configured, URL parsing variants.
   Notes:
 
-- [ ] **Phase 3 — Mapping rows** (needs 0). Files: `src/lib/ad-sheets/headers.ts`, `rows.ts`, `rows.test.ts`, `fixtures.ts`.
+- [x] **Phase 3 — Mapping rows** (needs 0). Files: `src/lib/ad-sheets/headers.ts`, `rows.ts`, `rows.test.ts`, `fixtures.ts`.
   - headers.ts: variants for name (full_name / first+last / name), email, phone, postcode (post_code, postal_code, zip, "property postcode"), ad_id, ad_name, lead id, created_time, form_id, campaign_name, is_organic; `mapHeaders` → {map, hash, missingRequired}; `headersChanged(oldHash, new)`. Tolerant (lower-case, strip punctuation/underscores).
   - rows.ts: `toCandidate(row, map)` → {name,email,phone,postcode,adName,adId,metaLeadId,answers} (trim, normalise UK postcode and phone); `isComplete` (name + (phone|email) + postcode, with missing[]); `isTestLead` ("test lead", "dummy data"); `rowKey` (Meta lead id or sha256 of cells); `findCodeInText(adName)` unanchored finder run through A1's `normaliseCode`.
   - Check: `npm test`: header variants, incomplete flagged with right missing, test rows, stable row key, code found inside "SI-3F9A2C-5B-1 · Tenant notice".
