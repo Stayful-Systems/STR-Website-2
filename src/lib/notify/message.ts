@@ -321,6 +321,8 @@ export interface DailyInput {
   figureFor?: (card: DealCard) => string | null;
   /** Batch 12: the profile line while the profile is incomplete (profileNudgeSection). Absent once complete. */
   profileNudge?: ProfileNudge | null;
+  /** Batch 35: the leads reminder line (staleLeadsSection). Absent, or a count of 0, leaves it out; it never makes an email or a send of its own. */
+  staleLeads?: StaleLeadsNote | null;
   /**
    * Saved profiles (Batch 13): one part per running profile, in charge order
    * (the active one first). When given it replaces `pick`, `teasers` and
@@ -460,6 +462,27 @@ export function profileNudgeSection(n: ProfileNudge): Section {
   return { key: 'notice', title: null, blocks: [{ type: 'text', text: profileNudgeLine(n), tone: 'callout' }, { type: 'buttons', links: [{ label: 'Finish my profile', url: n.url }] }] };
 }
 
+/** Batch 35: "N leads are over 7 days old and still at New". */
+export interface StaleLeadsNote {
+  /** The recipient's own non-archived leads still at New and older than `ageDays`. */
+  count: number;
+  /** billing_settings.ad_sheet_reminder_age_days: the wording's number comes from here, never typed. */
+  ageDays: number;
+  /** The leads page. renderEmail marks it ?via=email like every own-site link. */
+  url: string;
+}
+
+export function staleLeadsLine(n: Pick<StaleLeadsNote, 'count' | 'ageDays'>): string {
+  const one = n.count === 1;
+  return `${n.count} ${one ? 'lead is' : 'leads are'} over ${n.ageDays} days old and still at New, mark what happened.`;
+}
+
+/** The one line, inside the one-a-day email: no email of its own; null at 0 (or nonsense). */
+export function staleLeadsSection(n: StaleLeadsNote): Section | null {
+  if (!Number.isInteger(n.count) || n.count <= 0 || !Number.isInteger(n.ageDays) || n.ageDays <= 0) return null;
+  return { key: 'notice', title: null, blocks: [{ type: 'text', text: staleLeadsLine(n) }, { type: 'buttons', links: [{ label: 'Open your leads', url: n.url }] }] };
+}
+
 export interface BuiltMessage {
   message: Message;
   /** Teaser ids actually in the email, in order. */
@@ -537,6 +560,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
       sections.push({ key: 'teasers', title: part.pick ? `The other ${plural(kept.length, 'deal')} on your Today` : `${plural(kept.length, 'deal')} on your Today`, blocks });
     }
   }
+  // Batch 35: one line about leads left at New, only inside an email that is going anyway.
+  const staleLeads = input.staleLeads ? staleLeadsSection(input.staleLeads) : null;
   const unfunded = (input.unfunded ?? []).filter((n) => n.trim());
   const credit: Section[] = [];
   if (unfunded.length > 0 && dealCount > 0) {
@@ -555,6 +580,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     const nudges = nudgesSection(briefing.nudges);
     if (nudges) sections.push(nudges);
     if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+    if (staleLeads) sections.push(staleLeads);
     if (input.btlLaunch) sections.push(input.btlLaunch);
     sections.push(...credit);
     if (creditNote) sections.push(creditNote);
@@ -562,6 +588,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     sections.push(...credit);
     if (changes) sections.push(changes);
     if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+    if (staleLeads) sections.push(staleLeads);
     if (input.btlLaunch) sections.push(input.btlLaunch);
   }
 

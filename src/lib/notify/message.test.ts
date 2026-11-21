@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { DealCard } from '../marketplace/grid.ts';
-import { buildDaily, changeItem, changesPhrase, profileNudgeLine, teaserItem, visibleTeasers, type ChangeInput, type Section } from './message.ts';
+import { buildDaily, changeItem, changesPhrase, profileNudgeLine, staleLeadsLine, teaserItem, visibleTeasers, type ChangeInput, type Section } from './message.ts';
+import { SLOT_FOR } from './cap.ts';
 import { renderEmail } from './render-email.ts';
 import { packOfferSection } from '../credit/pack-offer.ts';
 
@@ -207,6 +208,35 @@ test('the profile line rides the daily email while the profile is incomplete, an
   assert.equal(buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [], freeCutoffIso: null, unsubscribe: null, profileNudge: nudge }), null);
   assert.equal(profileNudgeLine({ percent: 33.4, pence: 0 }), 'Your profile is 33% done: finish it for better deals.');
   assert.equal(profileNudgeLine({ percent: 100, pence: 750 }), 'Your profile is 100% done: finish it for better deals and £7.50 credit.');
+});
+
+// ── Batch 35: the leads reminder line ──
+
+test('the leads line rides the daily email only when N is above 0, with the setting\'s days and singular or plural wording', () => {
+  const base = { siteUrl: SITE, now: NOW, pick, teasers: [card()], changes: [], freeCutoffIso: null, unsubscribe: null };
+  const lineOf = (built: ReturnType<typeof buildDaily>) =>
+    built!.message.sections.flatMap((s) => s.blocks).flatMap((b) => (b.type === 'text' ? [b.text] : [])).find((t) => /still at New/.test(t));
+  const plural = buildDaily({ ...base, staleLeads: { count: 3, ageDays: 7, url: `${SITE}/leads` } })!;
+  assert.equal(lineOf(plural), '3 leads are over 7 days old and still at New, mark what happened.');
+  assert.equal(lineOf(buildDaily({ ...base, staleLeads: { count: 1, ageDays: 7, url: `${SITE}/leads` } })), '1 lead is over 7 days old and still at New, mark what happened.');
+  // The number of days is the setting's, never a typed 7.
+  assert.equal(lineOf(buildDaily({ ...base, staleLeads: { count: 2, ageDays: 10, url: `${SITE}/leads` } })), '2 leads are over 10 days old and still at New, mark what happened.');
+  assert.equal(staleLeadsLine({ count: 5, ageDays: 3 }), '5 leads are over 3 days old and still at New, mark what happened.');
+  const rendered = renderEmail(plural.message);
+  assert.match(rendered.html, /leads\?via=email/, 'the link is marked as an email click');
+  assert.match(rendered.text, /3 leads are over 7 days old/);
+  // Absent at 0, absent when not given, absent for nonsense.
+  for (const none of [{ count: 0, ageDays: 7, url: `${SITE}/leads` }, null, undefined, { count: -1, ageDays: 7, url: `${SITE}/leads` }, { count: 2, ageDays: 0, url: `${SITE}/leads` }]) {
+    assert.equal(lineOf(buildDaily({ ...base, staleLeads: none })), undefined);
+  }
+  // Never an email of its own: nothing else to say means no email, and the kind and subject are untouched.
+  assert.equal(buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [], freeCutoffIso: null, unsubscribe: null, staleLeads: { count: 4, ageDays: 7, url: `${SITE}/leads` } }), null);
+  const without = buildDaily(base)!;
+  assert.equal(plural.message.kind, without.message.kind);
+  assert.equal(plural.message.subject, without.message.subject);
+  assert.deepEqual(plural.teaserIds, without.teaserIds);
+  // And no send kind or slot was added for it: the daily cap is unchanged.
+  assert.ok(!Object.keys(SLOT_FOR).some((k) => /stale|lead_?remind|leads_?reminder/i.test(k)), 'no send kind for the leads line');
 });
 
 test('saved profiles: one headed part per profile, no deal twice, counts from every part, one unsubscribe', () => {

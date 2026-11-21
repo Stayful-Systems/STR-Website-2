@@ -562,6 +562,31 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const n = whole(g, 'ad_pack_voice_changes', 0);
     return n === null ? null : countWords(n);
   }),
+  // Batch 35: Facebook lead forms through Google Sheets (each read strictly from its billing_settings row, seeded in schema.sql's Batch 35 block)
+  ad_sheet_min_leads: g_('Leads an ad needs before it is ranked in Your ads', 'billing_settings.ad_sheet_min_leads', (g) => {
+    const n = whole(g, 'ad_sheet_min_leads', 1);
+    return n === null ? null : String(n);
+  }),
+  ad_sheet_quiet_days: g_('Days with no new lead from the lead form sheet before the one quiet email', 'billing_settings.ad_sheet_quiet_days', (g) => {
+    const n = whole(g, 'ad_sheet_quiet_days', 1);
+    return n === null ? null : String(n);
+  }),
+  ad_sheet_outcome_pct: g_('Percent of older leads that must be past New before the Outcomes are not being marked note stays away (the number only, the answer adds the percent sign)', 'billing_settings.ad_sheet_outcome_pct', (g) => {
+    const n = whole(g, 'ad_sheet_outcome_pct', 1);
+    return n === null || n > 100 ? null : String(n);
+  }),
+  ad_sheet_outcome_age_days: g_('How many days old a lead is before the Outcomes note counts it', 'billing_settings.ad_sheet_outcome_age_days', (g) => {
+    const n = whole(g, 'ad_sheet_outcome_age_days', 1);
+    return n === null ? null : String(n);
+  }),
+  ad_sheet_reminder_age_days: g_('Days a lead sits at New before the daily email reminds the operator to mark what happened', 'billing_settings.ad_sheet_reminder_age_days', (g) => {
+    const n = whole(g, 'ad_sheet_reminder_age_days', 1);
+    return n === null ? null : String(n);
+  }),
+  ad_sheet_dedupe_days: g_('Days within which the same landlord from the lead form sheet joins the lead they already have', 'billing_settings.ad_sheet_dedupe_days', (g) => {
+    const n = whole(g, 'ad_sheet_dedupe_days', 1);
+    return n === null ? null : String(n);
+  }),
 
   // The member's own (view and chat only, never a call)
   balance: m_('Their exact credit balance', 'the member’s credit', (m) => money(m.balancePence)),

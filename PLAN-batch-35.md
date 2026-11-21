@@ -88,7 +88,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: `npm test` action test: admin-only; dry runs write nothing; no row contents in output.
   Notes:
 
-- [ ] **Phase 11 — Daily email line and knowledge** (needs 8, 9). Files: `src/lib/notify/message.ts` (one line in the leads section) + its input builder, `src/lib/knowledge/seed.ts`, `placeholders.ts`, `service-facts.ts`, `CLAUDE.md`.
+- [x] **Phase 11 — Daily email line and knowledge** (needs 8, 9). Files: `src/lib/notify/message.ts` (one line in the leads section) + its input builder, `src/lib/knowledge/seed.ts`, `placeholders.ts`, `service-facts.ts`, `CLAUDE.md`.
   - Daily email line: "N leads are over 7 days old and still at New, mark what happened" only when N > 0; never adds a send; cap unchanged. Knowledge drafts `adsheet_what`, `adsheet_connect`, `adsheet_attribution`, `adsheet_outcomes`, `adsheet_your_ads` (never approved in code); placeholders `{ad_sheet_min_leads}`, `{ad_sheet_quiet_days}`, `{ad_sheet_outcome_pct}`, `{ad_sheet_outcome_age_days}`, `{ad_sheet_reminder_age_days}`, `{ad_sheet_dedupe_days}`. "FACEBOOK LEAD FORMS" line in `service-facts.ts`; "Batch 35" section in `CLAUDE.md`.
   - Check: `npm test`: seed tests (placeholders resolve, no typed figure); daily email test line at N>0, absent at 0.
   Notes:
