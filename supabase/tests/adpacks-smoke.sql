@@ -114,6 +114,10 @@ begin
   if not exists (select 1 from storage.buckets where id = 'ad-packs' and public = false) then
     raise exception 'the ad-packs bucket must exist and be private';
   end if;
+  -- It must accept every type the code uploads (the cached voice and its script were once refused).
+  if not (select allowed_mime_types @> array['image/jpeg', 'image/png', 'video/mp4', 'audio/mpeg', 'application/json'] from storage.buckets where id = 'ad-packs') then
+    raise exception 'the ad-packs bucket must allow image/jpeg, image/png, video/mp4, audio/mpeg and application/json';
+  end if;
   select count(*) into n from public.billing_settings where key in
     ('ad_packs_enabled', 'ad_pack_free_regens', 'ad_pack_voice_changes', 'ad_pack_max_raw_pence', 'ad_pack_monthly_cap_pence', 'ad_pack_min_area_samples');
   if n <> 6 then raise exception 'all six ad pack settings must be seeded (found %)', n; end if;

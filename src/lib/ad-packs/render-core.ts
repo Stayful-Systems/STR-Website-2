@@ -21,7 +21,8 @@
  *                render's cost: see settle()) plus this render's worst case over
  *                ad_pack_monthly_cap_pence: failed `monthly_cap`, no retry
  *   d  voice     the version's voice.mp3 + script.json already in the private bucket are
- *                reused (a retry never pays twice); otherwise B3 `synthesise`
+ *                reused (a retry never pays twice); otherwise B3 `synthesise`. Storing the voice is only a cache: a failure to
+ *                store it is logged (`voice_cache_failed`) and the render carries on with the voice in memory
  *   e  brief     brief.json from the 5b ad's stored script and its PINNED brand snapshot (`texts.brand`, written when the
  *                version was made: company, colour, logo, photos, area, bedrooms, fee line, figure). The live website settings
  *                are never read, so a retry or a voice change after a brand edit cannot mix new brand with the old script.
@@ -39,6 +40,9 @@
  *                the pack's CURRENT version while it is in 'preview' (else `superseded`); a store failure is
  *                `store_failed`. THEN the 5b ad's `files.video` becomes the ready shape and the render row is done,
  *                so a row never ends 'done' without its video check recorded.
+ *   i  email     a finished render's "your video is ready" / "we couldn't finish it" email (notify-core.ts): a sweep before
+ *                the claims (a send that failed last tick, a render finished by a function that was cut off) and one after
+ *                (the render this pass finished); claimed atomically, once per result, and a failed send never fails a render
  *   h  failure   a code only (never stderr, a brief text, a url or an address): back to
  *                queued while attempts < max, else failed; voice_unavailable, bad_brief, superseded and
  *                monthly_cap are never retried
@@ -64,6 +68,7 @@ import path from 'node:path';
 import { cleanLines, validateBriefScript, type BriefScript } from './captions.ts';
 import { mergeVideoChecks, type CheckVideo } from './checks.ts';
 import { monthStartIso } from './month.ts';
+import { notifyVideoOutcomes, type NotifyReport, type VideoNotifyDeps } from './notify-core.ts';
 import { PHOTO_MAX_BYTES, sniffPhoto } from './photos.ts';
 import { fitsCap } from './settings.ts';
 import { isVoiceKey, type VoiceKey } from './voices.ts';
@@ -111,6 +116,8 @@ export type RenderDeps = {
   renderSettings: () => Promise<RenderSettings>;
   now: () => Date;
   log?: (event: string, fields: { packId?: string; code?: string; seconds?: number }) => void;
+  /** The completion email (notify-core.ts). Left out, nothing is sent (the tests that are not about it). */
+  notify?: VideoNotifyDeps;
 };
 
 // ── Constants ──
@@ -118,6 +125,8 @@ export type RenderDeps = {
 /** The route's maxDuration, and how much of it is kept back for the voice, the uploads and the bookkeeping. */
 export const ROUTE_MAX_SECONDS = 300;
 export const ROUTE_RESERVE_SECONDS = 30;
+/** Less than this left of the route's time and the sandbox is not started (the row goes back for the next tick). */
+export const MIN_SANDBOX_SECONDS = 60;
 /** The lease on a claimed row is max_seconds + this. */
 export const LEASE_EXTRA_SECONDS = 60;
 
@@ -128,7 +137,8 @@ export const OUT_DIR = 'out';
 /** Written by notice.py into OUT_DIR: {"captions": N, "scenes": [ids], "duration": seconds}. */
 export const RENDER_INFO_PATH = 'out/render-info.json';
 export const DEFAULT_BRAND_COLOUR = '#1F3A5F'; // mirrors images.tsx (a test cannot import JSX)
-export const MAX_VIDEO_BYTES = 30 * 1024 * 1024;
+/** The ad-packs bucket refuses a file over its file_size_limit (20 MB, supabase/schema.sql; bucket.test.ts pins the match), so a bigger video is not uploaded. */
+export const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
 export const MAX_POSTER_BYTES = 10 * 1024 * 1024;
 export const MAX_RENDER_PHOTOS = 4;
 
@@ -151,6 +161,9 @@ export const OUTPUTS = [
   { src: 'notice_4x5.mp4', name: 'notice-4x5.mp4', width: 1080, height: 1350, contentType: 'video/mp4' },
   { src: 'notice_1x1.mp4', name: 'notice-1x1.mp4', width: 1080, height: 1080, contentType: 'video/mp4' },
 ] as const;
+/** The content types the worker uploads besides the three videos and the poster: the cached voice and its script. The bucket must allow them (bucket.test.ts). */
+export const VOICE_MIME = 'audio/mpeg';
+export const SCRIPT_MIME = 'application/json';
 export const POSTER = { src: 'poster.png', name: 'notice-poster.png', width: 1080, height: 1920, contentType: 'image/png' } as const;
 
 /** Codes a retry cannot fix. */
@@ -399,6 +412,8 @@ export type RenderReport = {
   wouldRun?: { packId: string; version: number; attempts: number }[];
   claimed: number;
   results: RenderLine[];
+  /** The completion emails of this pass (counts only), when the mailer is wired. */
+  notified?: NotifyReport;
 };
 
 // ── The worker ──
@@ -412,7 +427,7 @@ export function leaseUntilFor(at: Date, settings: Pick<RenderSettings, 'maxSecon
   return new Date(at.getTime() + (Math.max(ROUTE_MAX_SECONDS, settings.maxSeconds) + LEASE_EXTRA_SECONDS) * 1000).toISOString();
 }
 
-type Spend = { voicePence: number; sandboxSeconds: number; sandboxId: string | null; videos: CheckVideo[] };
+type Spend = { voicePence: number; sandboxSeconds: number; sandboxId: string | null; videos: CheckVideo[]; startedMs: number };
 
 export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; limit?: number } = {}): Promise<RenderReport> {
   const now = deps.now();
@@ -439,6 +454,9 @@ export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; li
     if (res) log('render_swept', { packId: r.packId, code: res === 'failed' ? 'timeout' : 'requeued' });
   }
 
+  // i (first): anyone not yet told about a render that finished earlier (a send that failed, a worker cut off after it finished).
+  const before = await notifyVideoOutcomes({ renders: deps.renders, packs: deps.packs, notify: deps.notify, now: deps.now, log: deps.log });
+
   // b: claim and run, oldest first.
   const candidates = await deps.renders.listQueued(limit * 2 + 2);
   for (const c of candidates) {
@@ -448,13 +466,19 @@ export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; li
     report.claimed++;
     report.results.push(await runOne(deps, row, settings));
   }
+
+  // i (then): the render this pass finished.
+  if (deps.notify) {
+    const after = report.claimed > 0 ? await notifyVideoOutcomes({ renders: deps.renders, packs: deps.packs, notify: deps.notify, now: deps.now, log: deps.log }) : { sent: 0, failed: 0, skipped: 0 };
+    report.notified = { sent: before.sent + after.sent, failed: before.failed + after.failed, skipped: before.skipped + after.skipped };
+  }
   return report;
 }
 
 /** One claimed row, start to finish. Never throws. */
 async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings): Promise<RenderLine> {
   const log = deps.log ?? (() => {});
-  const spend: Spend = { voicePence: 0, sandboxSeconds: 0, sandboxId: null, videos: [] };
+  const spend: Spend = { voicePence: 0, sandboxSeconds: 0, sandboxId: null, videos: [], startedMs: deps.now().getTime() };
   let pack: PackRow | null = null;
   let files: AdVideoReady | null = null;
   let code = 'render_failed';
@@ -636,9 +660,16 @@ async function voiceFor(deps: RenderDeps, ownerId: string, pack: PackRow, row: R
     throw new RenderFail(VOICE_CODE_OF[res.code] ?? 'voice_failed');
   }
   spend.voicePence += res.costPence;
-  const a = await deps.storage.put(paths.audio, res.audio, 'audio/mpeg');
-  const s = a.ok ? await deps.storage.put(paths.script, new TextEncoder().encode(JSON.stringify(res.script)), 'application/json') : { ok: false };
-  if (!a.ok || !s.ok) throw new RenderFail('upload_failed');
+  // The cache is an optimisation (a retry reuses it instead of paying for the voice again). The voice is already paid for
+  // and in memory, so a failure to store it must not abort the render: carry on and only log a short code. (Both files are
+  // read back or neither is, so a half-written cache is simply made again later.)
+  try {
+    const a = await deps.storage.put(paths.audio, res.audio, VOICE_MIME);
+    const s = a.ok ? await deps.storage.put(paths.script, new TextEncoder().encode(JSON.stringify(res.script)), SCRIPT_MIME) : { ok: false };
+    if (!a.ok || !s.ok) (deps.log ?? (() => {}))('voice_cache_failed', { packId: pack.id, code: 'voice_cache_failed' });
+  } catch {
+    (deps.log ?? (() => {}))('voice_cache_failed', { packId: pack.id, code: 'voice_cache_failed' });
+  }
   return { audio: res.audio, script: res.script };
 }
 
@@ -708,15 +739,18 @@ async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, setti
   if (briefProblems(brief).length > 0) throw new RenderFail('bad_brief');
   const rendererFiles = await deps.rendererFiles();
 
-  // f: the sandbox. Stopped in a finally, always.
+  // f: the sandbox. Stopped in a finally, always. The route has ROUTE_MAX_SECONDS in all, so what the voice and the fetches
+  // above already took comes off the sandbox's budget (the reserve is for the uploads and the bookkeeping after it).
   const startMs = deps.now().getTime();
-  const deadline = startMs + effectiveMax * 1000;
+  const sandboxMax = Math.min(effectiveMax, Math.floor(ROUTE_MAX_SECONDS - ROUTE_RESERVE_SECONDS - (startMs - spend.startedMs) / 1000));
+  if (sandboxMax < MIN_SANDBOX_SECONDS) throw new RenderFail('timeout');
+  const deadline = startMs + sandboxMax * 1000;
   const left = () => deadline - deps.now().getTime();
   let outputs: { src: (typeof OUTPUTS)[number] | typeof POSTER; bytes: Uint8Array }[] = [];
   let sandbox: SandboxLike | null = null;
   try {
     try {
-      sandbox = await deps.sandbox({ vcpus: settings.vcpus, timeoutMs: effectiveMax * 1000 });
+      sandbox = await deps.sandbox({ vcpus: settings.vcpus, timeoutMs: sandboxMax * 1000 });
     } catch {
       throw new RenderFail('sandbox_failed');
     }

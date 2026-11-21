@@ -5,7 +5,7 @@ import { signedDownloadUrlWith } from '../../../lib/ad-packs/download.ts';
 import { PHOTO_MAX_BYTES, uploadRef, MAX_UPLOADS_PER_OWNER } from '../../../lib/ad-packs/photos.ts';
 import { buildActivityCall } from '../../../lib/activity/event.ts';
 import { approveOp, areaPreviewOp, changeVoiceOp, copyOp, downloadOp, generateOp, MESSAGES, pollPackOp, retryVideoOp, uploadPhotoOp, videoUrlOp, type AdsDeps, type EligibilityFacts, type Session } from './ops.ts';
-import { isCopyKind, VIDEO_ACTION_TEXT } from './view.ts';
+import { isCopyKind, PLAIN_CODES, VOICE_UNAVAILABLE_TEXT } from './view.ts';
 import { VIDEO_ACTION_CODES } from '../../../lib/ad-packs/generate-core.ts';
 
 const OWNER_A = '3f9a2c11-1111-4111-8111-111111111111';
@@ -142,7 +142,7 @@ test('generate: another owner’s pack id is refused before anything is made', a
   a.as(owner(OWNER_A));
   const own = await generateOp(a.deps, { ...input, packId: a.view.pack.id });
   assert.equal(own.ok, undefined, 'the owner’s own pack id is only a key: the free regeneration rule then says no change');
-  assert.match(own.error ?? '', /not changed/);
+  assert.match(own.error ?? '', /Nothing has changed/);
 });
 
 test('generate: photo references must be the owner’s own uploads; web addresses and other owners’ files are refused', async () => {
@@ -179,7 +179,7 @@ test('generate: a refusal from the generator is its plain message, never a code'
   const s = setup();
   s.h.area.result = { error: 'not_enough_data' };
   const out = await generateOp(s.deps, input);
-  assert.equal(out.error, 'There is not enough data in your area yet.');
+  assert.equal(out.error, 'We do not have enough information for that area yet. Please try a bigger area nearby.');
   assert.doesNotMatch(out.error ?? '', /not_enough_data/);
 });
 
@@ -408,7 +408,7 @@ test('change voice: another owner’s pack, a missing or made-up pack id, and a 
   assert.equal(a.calls.changeVoice.length, 0);
   // A version that moved on is the generator's refusal, in plain words, and changes nothing.
   const stale = await changeVoiceOp(a.deps, { packId: a.view.pack.id, voiceKey: 'oliver', version: '9' });
-  assert.match(stale.error ?? '', /changed while you were looking/);
+  assert.match(stale.error ?? '', /moved on since you opened/);
   assert.equal((await a.h.store.getPack(OWNER_A))!.voiceChanges, 0);
 });
 
@@ -428,7 +428,7 @@ test('change voice: a voice that is not one of the three, a team member, a signe
 test('change voice: every refusal code from the generator reaches the screen as one plain sentence, never a code or a stack line', async () => {
   const a = await readyPack();
   const codes = [...VIDEO_ACTION_CODES, 'cost_cap', 'monthly_cap', 'spend_unknown'];
-  assert.deepEqual(Object.keys(VIDEO_ACTION_TEXT).sort(), [...codes].sort(), 'there is a sentence for every code');
+  for (const c of codes) assert.ok(PLAIN_CODES[c], `there is a sentence for ${c}`);
   const messages = [undefined, '', 'voice_limit_used', 'Error: boom at /var/task/x.js:12:3', 'x'];
   for (const code of codes) {
     for (const message of messages) {
@@ -438,9 +438,13 @@ test('change voice: every refusal code from the generator reaches the screen as 
       assert.doesNotMatch(out.error ?? '', /[a-z]+_[a-z]+|Error:|\bat \S+:\d+|undefined/, `${code}/${String(message)}: ${out.error}`);
     }
   }
-  // A proper sentence from the generator is kept as it is.
-  const kept = await changeVoiceOp({ ...a.deps, changeVoice: async () => ({ ok: false as const, code: 'same_voice' as const, message: 'That is the voice your video already has. Choose a different one.' }) }, { packId: a.view.pack.id, voiceKey: 'oliver', version: '1' });
-  assert.equal(kept.error, 'That is the voice your video already has. Choose a different one.');
+  // The sentence for the code wins over the generator's own words (which can say "pack").
+  const kept = await changeVoiceOp({ ...a.deps, changeVoice: async () => ({ ok: false as const, code: 'same_voice' as const, message: 'That is the voice your pack already has.' }) }, { packId: a.view.pack.id, voiceKey: 'oliver', version: '1' });
+  assert.equal(kept.error, PLAIN_CODES.same_voice);
+  // A code we do not know keeps a clean sentence, and drops one with an internal word in it.
+  const unknown = (message: string) => changeVoiceOp({ ...a.deps, changeVoice: async () => ({ ok: false as const, code: 'brand_new' as never, message }) }, { packId: a.view.pack.id, voiceKey: 'oliver', version: '1' });
+  assert.equal((await unknown('Please wait a moment and try again.')).error, 'Please wait a moment and try again.');
+  assert.equal((await unknown('Your pack could not be changed.')).error, 'Something went wrong. Please try again.');
 });
 
 test('change voice: the same voice, a video still running and an approved pack are refused in plain words', async () => {
@@ -450,7 +454,7 @@ test('change voice: the same voice, a video still running and an approved pack a
   assert.match((await changeVoiceOp(a.deps, { packId: a.view.pack.id, voiceKey: 'oliver', version: '1' })).error ?? '', /being made right now/);
   await a.h.finishVideo(OWNER_A);
   assert.equal((await approveOp(a.deps, { packId: a.view.pack.id })).ok, true);
-  assert.match((await changeVoiceOp(a.deps, { packId: a.view.pack.id, voiceKey: 'oliver', version: '1' })).error ?? '', /before you approve/);
+  assert.match((await changeVoiceOp(a.deps, { packId: a.view.pack.id, voiceKey: 'oliver', version: '1' })).error ?? '', /before you move on/);
   assert.equal((await a.h.store.getPack(OWNER_A))!.voiceChanges, 0);
 });
 
@@ -485,7 +489,7 @@ test('retry: a failed video is queued again for the owner with the version pinne
   await a.h.setRender(OWNER_A, { state: 'failed', errorCode: 'voice_unavailable' });
   assert.match((await retryVideoOp(a.deps, { packId: a.view.pack.id, version: '1' })).error ?? '', /nothing to try again/i);
   // Plain words for a stale version and for a team member.
-  assert.match((await retryVideoOp(a.deps, { packId: a.view.pack.id, version: '7' })).error ?? '', /changed while you were looking/);
+  assert.match((await retryVideoOp(a.deps, { packId: a.view.pack.id, version: '7' })).error ?? '', /moved on since you opened/);
   a.as({ ok: false, reason: 'member' });
   assert.deepEqual(await retryVideoOp(a.deps, { packId: a.view.pack.id, version: '1' }), { error: MESSAGES.member });
 });
@@ -515,7 +519,7 @@ test('poll: answers for the owner’s own pack with the video, approve and voice
   assert.equal(out.video.state, 'queued');
   assert.equal(out.video.poll, true);
   assert.equal(out.approval.ok, false);
-  assert.match(out.approval.ok ? '' : out.approval.message, /still being made/);
+  assert.match(out.approval.ok ? '' : out.approval.message, /as soon as your video is ready/);
   // Nothing internal: no id, no path, no owner, no raw code or error.
   const text = JSON.stringify(out);
   for (const secret of [OWNER_A, a.view.pack.id, a.view.ads[0].id, 'errorCode', 'sandbox', 'bucket', 'path']) assert.ok(!text.includes(secret), secret);
@@ -540,7 +544,7 @@ test('poll: it follows the render to ready, to failed and to a voice that is not
   await a.h.setRender(OWNER_A, { state: 'failed', errorCode: 'voice_unavailable' });
   const unavailable = await get();
   assert.equal(unavailable.video.action, 'change_voice');
-  assert.equal(unavailable.video.message, "That voice isn't available yet. Please choose another.");
+  assert.equal(unavailable.video.message, VOICE_UNAVAILABLE_TEXT);
   assert.equal(unavailable.video.poll, false);
 });
 
@@ -583,9 +587,9 @@ test('video link: a fresh view link for a file of the owner’s own ready video;
 test('approve: while the video is being made or has failed the pack is not approved and the reason is plain', async () => {
   const a = await madePack();
   const pending = await approveOp(a.deps, { packId: a.view.pack.id, version: '1' });
-  assert.match(pending.error ?? '', /still being made/);
+  assert.match(pending.error ?? "", /as soon as it is ready/);
   await a.h.setRender(OWNER_A, { state: 'failed', errorCode: 'sandbox_failed' });
-  assert.match((await approveOp(a.deps, { packId: a.view.pack.id, version: '1' })).error ?? '', /couldn.t make your video/);
+  assert.match((await approveOp(a.deps, { packId: a.view.pack.id, version: '1' })).error ?? '', /not ready yet/);
   assert.equal(a.records.length, 0);
   assert.equal((await a.h.store.getPack(OWNER_A))!.status, 'preview');
 });

@@ -9275,16 +9275,22 @@ create index if not exists ad_pack_lead_links_meta_idx on public.ad_pack_lead_li
 alter table public.ad_pack_lead_links enable row level security;
 revoke all on public.ad_pack_lead_links from anon, authenticated;
 
--- The private bucket for the pack's image and video files. Private, with no
--- storage.objects policy, so only the service role reads or writes it; an
--- operator downloads through a short signed link. Same pattern as
+-- The private bucket for the pack's image, video, voice and script files.
+-- Private, with no storage.objects policy, so only the service role reads or
+-- writes it; an operator downloads through a short signed link. Same pattern as
 -- feedback-screenshots (above): "on conflict" puts it back to private, and an
 -- old storage schema raises a notice instead of stopping the run (create the
 -- bucket by hand, private).
+-- allowed_mime_types must list EVERY type the ad-pack code uploads: images
+-- (cards, photos, the video's poster), video/mp4 (the notice video), audio/mpeg
+-- (the cached voiceover) and application/json (its script). Batch 38b shipped
+-- without the last two and the bucket refused the voice (upload_failed);
+-- re-running this statement fixes an existing database. A test
+-- (src/lib/ad-packs/bucket.test.ts) fails if the code uploads a type missing here.
 do $$
 begin
   insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-  values ('ad-packs', 'ad-packs', false, 20971520, array['image/jpeg', 'image/png', 'image/webp', 'video/mp4'])
+  values ('ad-packs', 'ad-packs', false, 20971520, array['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'audio/mpeg', 'application/json'])
   on conflict (id) do update
     set public = false,
         file_size_limit = excluded.file_size_limit,
@@ -9364,6 +9370,18 @@ alter table public.ad_pack_renders add constraint ad_pack_renders_counts_check
 alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_error_code_check;
 alter table public.ad_pack_renders add constraint ad_pack_renders_error_code_check
   check (error_code is null or char_length(error_code) <= 60);
+-- The "your video is ready / we could not finish it" email (src/lib/ad-packs/notify-core.ts),
+-- sent once per result of a render. The worker claims the send with one conditional
+-- update (notified_at is null) and records which result it was: 'ready', 'failed', or
+-- 'skipped' (decided that nobody needs an email: no address, or the pack moved on). A
+-- failed send gives the claim back (both null) for the next five-minute pass, inside a
+-- 30-minute window. A voice change or a retry resets both, so the new result emails
+-- again. Nullable; null until claimed.
+alter table public.ad_pack_renders add column if not exists notified_at timestamptz;
+alter table public.ad_pack_renders add column if not exists notified_outcome text;
+alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_notified_check;
+alter table public.ad_pack_renders add constraint ad_pack_renders_notified_check
+  check (notified_outcome is null or notified_outcome in ('ready', 'failed', 'skipped'));
 create index if not exists ad_pack_renders_state_idx on public.ad_pack_renders (state, created_at);
 create index if not exists ad_pack_renders_pack_idx on public.ad_pack_renders (pack_id);
 alter table public.ad_pack_renders enable row level security;

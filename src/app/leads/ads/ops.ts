@@ -21,7 +21,7 @@
  *   upload     the owner's own folder only; type, size and first bytes are checked here
  *   voice      (38b) changeVoice / retryVideo: the pack id must be the owner's pack and the version on screen
  *              is pinned; eligibility is checked (they can cost money); the generator's refusals become one
- *              plain sentence (videoActionMessage)
+ *              plain sentence (plainRefusal)
  *   poll       (38b) read only: the pack id must be the owner's; answers with the video, approve and voice
  *              fields of view.ts (PollView) and nothing else: no id, no code, no path, no secret
  *   video url  (38b) a one-hour view link for a file of the owner's own READY video (or its poster) only
@@ -33,11 +33,11 @@
  */
 import type { ApproveResult, ChangeVoiceResult, GenerateRequest, GenerateResult, PackView, RetryVideoResult } from '../../../lib/ad-packs/generate-core.ts';
 import { parseAreaKey } from '../../../lib/ad-packs/area.ts';
-import { plainReason, type EligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
+import type { EligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
 import { checkPhoto, cleanPhotoRefs, MAX_UPLOADS_PER_OWNER, PHOTO_MESSAGES, uploadRef } from '../../../lib/ad-packs/photos.ts';
 import type { PackAdRow } from '../../../lib/ad-packs/store-types.ts';
 import { isVoiceKey, type VoiceKey } from '../../../lib/ad-packs/voices.ts';
-import { areaPreviewView, brandOfSettings, brandProblemText, copyTargetExists, isCopyKind, LOGO_REFUSAL, pollViewOf, videoActionMessage, isVideoFileName, VIDEO_POSTER_NAME, type AreaPreviewInput, type AreaPreviewView, type CopyKind, type PollView, type SiteBrandInput } from './view.ts';
+import { areaPreviewView, brandOfSettings, brandProblemText, copyTargetExists, eligibilitySentence, isCopyKind, LOGO_REFUSAL, plainRefusal, pollViewOf, isVideoFileName, VIDEO_POSTER_NAME, type AreaPreviewInput, type AreaPreviewView, type CopyKind, type PollView, type SiteBrandInput } from './view.ts';
 
 export type AdsState = { ok?: boolean; error?: string; notice?: string };
 export type UploadState = { ok: true; ref: string; previewUrl: string | null } | { ok: false; error: string };
@@ -47,13 +47,13 @@ export type PollState = ({ ok: true } & PollView) | { ok: false };
 
 export const MESSAGES = {
   signed_out: 'Please sign in again.',
-  member: 'Only the account owner can set up the ad pack.',
-  not_found: 'We could not find that pack. Please reload the page and try again.',
-  area: 'Please choose your area from the list.',
+  member: 'Only the account owner can make the ads.',
+  not_found: 'We could not find your ads. Please reload the page and try again.',
+  area: 'Please choose a place from the list.',
   photos: 'Those photos could not be used. Please add them again.',
   try_again: 'Something went wrong. Please try again.',
   download: 'We could not make that download link. Please try again.',
-  not_eligible: 'The ad pack is not available for this account yet.',
+  not_eligible: 'Your Facebook ads are not available for this account yet.',
   voice: 'Please choose one of the three voices.',
 } as const;
 
@@ -96,7 +96,7 @@ export interface AdsDeps {
 
 const sessionError = (s: Extract<Session, { ok: false }>): string => MESSAGES[s.reason];
 
-const eligibilityError = (e: EligibilityFacts): string => (e.reasons.length > 0 ? plainReason(e.reasons[0]) : MESSAGES.not_eligible);
+const eligibilityError = (e: EligibilityFacts): string => (e.reasons.length > 0 ? eligibilitySentence(e.reasons[0]) : MESSAGES.not_eligible);
 
 /** The owner's own pack, only when `packId` (if sent) names it. */
 async function ownPack(deps: AdsDeps, ownerId: string, packId: unknown): Promise<{ ok: true; view: PackView | null } | { ok: false }> {
@@ -146,7 +146,7 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
       ...(voiceKey ? { voiceKey } : {}),
     },
   });
-  if (!result.ok) return { error: result.message };
+  if (!result.ok) return { error: plainRefusal(result.code, result.message) };
   // A dry run is never asked for here; a checks_failed pack is shown by the page, which re-reads it.
   return { ok: true };
 }
@@ -167,10 +167,10 @@ export async function approveOp(deps: AdsDeps, input: { packId?: unknown; versio
   // The version on screen when the button was pressed; a non-number means the form did not send one, so it is not pinned.
   const expectedVersion = typeof input.version === 'string' && /^[0-9]{1,6}$/.test(input.version) ? Number(input.version) : undefined;
   const out = await deps.approve({ ownerId: s.ownerId, expectedVersion });
-  if (!out.ok) return { error: out.message };
+  if (!out.ok) return { error: plainRefusal(out.code, out.message) };
   // Record only what the generator says happened; the version, never anything the owner wrote.
   await deps.record(s.ownerId, out.activityKind, { extras: { version: out.version }, dedupeKey: `ad_pack_approved:${out.packId}:v${out.version}` });
-  return { ok: true, notice: 'Approved. Your files and texts are ready below.' };
+  return { ok: true, notice: 'Done. Your ads are ready to put on Facebook.' };
 }
 
 // ── Download ──
@@ -256,8 +256,8 @@ export async function changeVoiceOp(deps: AdsDeps, input: { packId?: unknown; vo
   if (expectedVersion === undefined) return { error: MESSAGES.not_found };
 
   const out = await deps.changeVoice({ ownerId: s.ownerId, voiceKey: input.voiceKey, expectedVersion });
-  if (!out.ok) return { error: videoActionMessage(out.code, out.message) };
-  return { ok: true, notice: out.free ? 'Your video is being made again with the new voice. This change was free.' : 'Your video is being made again with the new voice. It usually takes 3 to 6 minutes.' };
+  if (!out.ok) return { error: plainRefusal(out.code, out.message) };
+  return { ok: true, notice: out.free ? 'Your video is being made again with the new voice. This change was free.' : 'Your video is being made again with the new voice. This takes about 5 to 10 minutes, and we will email you when it is ready.' };
 }
 
 export async function retryVideoOp(deps: AdsDeps, input: { packId?: unknown; version?: unknown }): Promise<AdsState> {
@@ -270,8 +270,8 @@ export async function retryVideoOp(deps: AdsDeps, input: { packId?: unknown; ver
   if (expectedVersion === undefined) return { error: MESSAGES.not_found };
 
   const out = await deps.retryVideo({ ownerId: s.ownerId, expectedVersion });
-  if (!out.ok) return { error: videoActionMessage(out.code, out.message) };
-  return { ok: true, notice: 'Trying again. Your video usually takes 3 to 6 minutes.' };
+  if (!out.ok) return { error: plainRefusal(out.code, out.message) };
+  return { ok: true, notice: 'Trying again. This takes about 5 to 10 minutes, and we will email you when it is ready.' };
 }
 
 /**
