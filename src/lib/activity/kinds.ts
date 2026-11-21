@@ -228,6 +228,7 @@ export const ACTIVITY_KINDS = {
   // Batch 36: a change request for their website, and switching a switched-off website back on (src/lib/websites). Record only.
   website_change_requested: recordOnly('Asked for a change to their website'),
   website_switched_on: recordOnly('Switched their website back on'),
+  website_transfer_requested: recordOnly('Asked to take their website'),
   // Batch 23b: the morning briefing (src/lib/briefing). Record only: Today's
   // own views already count, and weekly active is unchanged.
   briefing_seen: recordOnly('Saw their morning briefing'),
