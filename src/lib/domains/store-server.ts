@@ -297,6 +297,15 @@ export async function listDomainRows(statuses?: readonly DomainStatus[]): Promis
   return (data ?? []).map((r) => toDomainRow(r as Record<string, unknown>));
 }
 
+/** Batch 37: ids of domains whose website transfer is not cancelled (the domain has left, or is leaving, our account). Read only. */
+export async function transferredDomainIds(): Promise<ReadonlySet<string>> {
+  if (!hasServiceRole()) return new Set();
+  const { data, error } = await admin().from('website_transfers').select('domain_id').is('cancelled_at', null).not('domain_id', 'is', null);
+  // Fail closed: if the transfers cannot be read, the cron must not act on a domain that may have left.
+  if (error) throw new Error(`transfer read failed: ${error.code ?? 'error'}`);
+  return new Set((data ?? []).map((r) => String((r as { domain_id: string }).domain_id)));
+}
+
 /** The member's own domain (not released) for the setup page, by the signed-in owner's website id. */
 export async function domainOfSite(websiteId: string): Promise<DomainRow | null> {
   if (!hasServiceRole()) return null;

@@ -253,6 +253,10 @@
 		{
 			"path": "/api/internal/ad-pack-renders",
 			"schedule": "*/5 * * * *"
+		},
+		{
+			"path": "/api/internal/website-transfers",
+			"schedule": "6-59/10 * * * *"
 		}
 	]
 }

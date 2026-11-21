@@ -5,7 +5,7 @@ import { isEmailConfigured, sendEmail } from '@/lib/email/send';
 import { brandedFrom } from '@/lib/email/from';
 import { siteUrl } from '@/lib/url';
 import { runDomains } from '@/lib/domains/cron-run';
-import { createLiveStore, liveDomainEngine, listDomainRows } from '@/lib/domains/store-server';
+import { createLiveStore, liveDomainEngine, listDomainRows, transferredDomainIds } from '@/lib/domains/store-server';
 
 /**
  * Batch 33: the website domains' status cron (every 15 minutes).
@@ -42,6 +42,7 @@ export async function GET(request: Request) {
       {
         engine: liveDomainEngine(),
         list: listDomainRows,
+        skip: transferredDomainIds,
         stamp: (id, patch) => store.updateDomain(id, patch),
         async sendAdmin(copy, key) {
           if (!isEmailConfigured()) return false;

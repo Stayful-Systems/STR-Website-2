@@ -8,7 +8,7 @@
  */
 import { RegistrarError, type Availability, type DnsRecord, type OwnedDomain, type Registrar } from './types.ts';
 
-export type FakeOp = 'check' | 'findOwned' | 'register' | 'setDns' | 'setAutoRenew' | 'renew' | 'info' | 'changeIpsTag';
+export type FakeOp = 'check' | 'findOwned' | 'register' | 'setDns' | 'setAutoRenew' | 'renew' | 'info' | 'changeIpsTag' | 'transferCode';
 
 export class FakeRegistrar implements Registrar {
   readonly id = 'fake';
@@ -21,7 +21,11 @@ export class FakeRegistrar implements Registrar {
   readonly prices = new Map<string, number>();
   defaultPricePence = 600;
   readonly dns = new Map<string, DnsRecord[]>();
-  readonly calls: Record<FakeOp, number> = { check: 0, findOwned: 0, register: 0, setDns: 0, setAutoRenew: 0, renew: 0, info: 0, changeIpsTag: 0 };
+  /** The IPS tag last set for each name (changeIpsTag). */
+  readonly tags = new Map<string, string>();
+  /** What transferCode returns: fixed, and not a real code. */
+  static readonly TEST_TRANSFER_CODE = 'FAKE-TEST-CODE';
+  readonly calls: Record<FakeOp, number> = { check: 0, findOwned: 0, register: 0, setDns: 0, setAutoRenew: 0, renew: 0, info: 0, changeIpsTag: 0, transferCode: 0 };
   /** Every call in order, "op:name". */
   readonly log: string[] = [];
   /** The next register throws `unclear`: 'before' = nothing happened, 'after' = the name WAS registered. */
@@ -101,12 +105,18 @@ export class FakeRegistrar implements Registrar {
     return o ? { ref: o.ref, expiresAt: o.expiresAt, autoRenew: o.autoRenew } : null;
   }
 
-  async changeIpsTag(name: string): Promise<void> {
+  async changeIpsTag(name: string, tag: string): Promise<void> {
     this.enter('changeIpsTag', name);
+    this.tags.set(name, tag);
+  }
+
+  async transferCode(name: string): Promise<string> {
+    this.enter('transferCode', name);
+    return FakeRegistrar.TEST_TRANSFER_CODE;
   }
 
   /** The calls that spend money or change the registrar: none of these may happen on a dry run. */
   writeCalls(): number {
-    return this.calls.register + this.calls.setDns + this.calls.setAutoRenew + this.calls.renew + this.calls.changeIpsTag;
+    return this.calls.register + this.calls.setDns + this.calls.setAutoRenew + this.calls.renew + this.calls.changeIpsTag + this.calls.transferCode;
   }
 }

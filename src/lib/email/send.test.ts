@@ -125,3 +125,18 @@ test('Batch 21 (G9): every call carries a timeout signal', async () => {
   await sendEmail(mail);
   assert.ok(calls[0].signal instanceof AbortSignal);
 });
+
+test('Batch 37: attachments go to Resend as filename, base64 content and content_type; none means no field', async () => {
+  await sendEmail({ ...mail, attachments: [{ filename: 'site.zip', content: Buffer.from('zip-bytes'), contentType: 'application/zip' }, { filename: 'a.txt', content: 'YWJj' }] });
+  const body = JSON.parse(calls[0].body);
+  assert.deepEqual(body.attachments, [
+    { filename: 'site.zip', content: Buffer.from('zip-bytes').toString('base64'), content_type: 'application/zip' },
+    { filename: 'a.txt', content: 'YWJj' },
+  ]);
+  calls = [];
+  await sendEmail(mail);
+  assert.ok(!('attachments' in JSON.parse(calls[0].body)));
+  calls = [];
+  await sendEmail({ ...mail, attachments: [] });
+  assert.ok(!('attachments' in JSON.parse(calls[0].body)));
+});

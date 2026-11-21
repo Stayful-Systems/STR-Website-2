@@ -391,5 +391,19 @@ export function createOpenprovider(config: OpenproviderConfig): Registrar {
       // no rather than guess a call that moves a customer's domain.
       throw new RegistrarError('refused');
     },
+
+    async transferCode(name) {
+      // Batch 37. UNCONFIRMED for .uk until 9 Feb 2027 (the Nominet change): the
+      // documented Get domain record (GET /domains/{id}) carries `auth_code` for
+      // TLDs that have one. A .co.uk may not return it yet; absent is `refused`
+      // (the manual step), never a guess. The code is returned, never logged.
+      const found = await lookup(split(name).full);
+      if (!found) throw new RegistrarError('refused', 404);
+      const r = await call('GET', `/domains/${idOf(found)}`, undefined, { tolerate: [404] });
+      if (r.status === 404) throw new RegistrarError('refused', 404);
+      const code = asStr(asObj(asObj(r.body)?.data)?.auth_code);
+      if (!code || !code.trim()) throw new RegistrarError('refused');
+      return code.trim();
+    },
   };
 }

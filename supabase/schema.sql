@@ -10306,3 +10306,124 @@ revoke all on function public.website_version_publish(uuid, integer, jsonb, json
 grant execute on function public.website_version_publish(uuid, integer, jsonb, jsonb, text, integer, uuid) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 37: customer websites, Phase 5 (transfer to the operator)
+-- =========================
+-- An operator who leaves can take the website (plain files plus a guide) and
+-- the .co.uk domain with them; our copy keeps serving for an overlap so
+-- nothing goes dark. See PLAN-batch-37.md. This section is the whole database
+-- side, and it is one new table: every state of a transfer lives in
+-- website_transfers, so no old constraint, status value or foreign key is
+-- changed (a website's status keeps the five values Batch 31 gave it).
+--
+--   website_transfers   one row per transfer of one website. website_id is
+--                       restrict (a site with a transfer row is never deleted
+--                       from under it, same as its domain row). owner_id is
+--                       the account owner, no foreign key (the record outlives
+--                       the member). ref is the random reference in the
+--                       exported form's address (/api/t/<ref>/lead): it must
+--                       never be guessable and is unique. method is how the
+--                       domain moves: 'tag' (IPS tag change, before the date in
+--                       website_transfer_code_from), 'code' (transfer code, from
+--                       that date) or 'none' (the site has no domain: files
+--                       only). snapshot is the brand and name the thank-you page
+--                       uses after the site is switched off. export_* is the
+--                       files (pending, ready, failed; the zip lives in the
+--                       private bucket website-transfers at export_path).
+--                       domain_state is none / pending / manual / requested /
+--                       moved; the *_at columns are the claims that make each
+--                       step run once. overlap_ends_at / overlap_ended_at are
+--                       the 30-day overlap; cancelled_at / cancelled_by an
+--                       admin cancel.
+--
+-- At most one OPEN transfer per website (cancelled_at and overlap_ended_at
+-- both null): a partial unique index. A finished or cancelled row stays, and
+-- "coming back" starts a new setup on the same site.
+--
+-- Settings (billing_settings; src/lib/websites/transfer-settings.ts parses them):
+--   website_transfer_overlap_days  30: days our copy keeps serving after a transfer starts
+--   website_transfer_stuck_days    5: days a requested domain move may sit before the admin is told, once
+--   website_transfer_code_from     "2027-02-09": from this date .uk moves use a transfer code, not an IPS tag
+--
+-- Everything is additive, idempotent and service role only (row level security
+-- on, no policy, nothing granted to anon or authenticated). Nothing here is in
+-- ACCESS_COLUMNS (src/lib/access.ts).
+
+-- ── website_transfers ──
+create table if not exists public.website_transfers (
+  id uuid primary key default gen_random_uuid(),
+  website_id uuid not null references public.websites(id) on delete restrict,
+  owner_id uuid not null,
+  -- The random reference in the exported form's address. 32 hex characters by default.
+  ref text not null default replace(gen_random_uuid()::text, '-', ''),
+  provider_key text not null,
+  provider_name text not null,
+  -- The new registrar's IPS tag (capitals, digits, hyphens). Null for the code method or no domain.
+  ips_tag text,
+  method text not null default 'none',
+  domain_id uuid references public.website_domains(id) on delete restrict,
+  domain_name text,
+  snapshot jsonb not null default '{}'::jsonb,
+  export_state text not null default 'pending',
+  export_path text,
+  export_attempts integer not null default 0,
+  export_error text,
+  export_ready_at timestamptz,
+  export_emailed_at timestamptz,
+  domain_state text not null default 'none',
+  tag_claimed_at timestamptz,
+  domain_requested_at timestamptz,
+  code_sent_at timestamptz,
+  domain_moved_at timestamptz,
+  stuck_alerted_at timestamptz,
+  moved_emailed_at timestamptz,
+  overlap_ends_at timestamptz,
+  overlap_ended_at timestamptz,
+  cancelled_at timestamptz,
+  cancelled_by uuid,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.website_transfers drop constraint if exists website_transfers_ref_check;
+alter table public.website_transfers add constraint website_transfers_ref_check check (ref ~ '^[a-z0-9]{16,64}$');
+alter table public.website_transfers drop constraint if exists website_transfers_method_check;
+alter table public.website_transfers add constraint website_transfers_method_check check (method in ('tag', 'code', 'none'));
+alter table public.website_transfers drop constraint if exists website_transfers_export_state_check;
+alter table public.website_transfers add constraint website_transfers_export_state_check check (export_state in ('pending', 'ready', 'failed'));
+alter table public.website_transfers drop constraint if exists website_transfers_domain_state_check;
+alter table public.website_transfers add constraint website_transfers_domain_state_check check (domain_state in ('none', 'pending', 'manual', 'requested', 'moved'));
+alter table public.website_transfers drop constraint if exists website_transfers_export_attempts_check;
+alter table public.website_transfers add constraint website_transfers_export_attempts_check check (export_attempts >= 0);
+alter table public.website_transfers drop constraint if exists website_transfers_export_error_check;
+alter table public.website_transfers add constraint website_transfers_export_error_check check (export_error is null or char_length(export_error) <= 200);
+alter table public.website_transfers drop constraint if exists website_transfers_ips_tag_check;
+alter table public.website_transfers add constraint website_transfers_ips_tag_check check (ips_tag is null or ips_tag ~ '^[A-Z0-9][A-Z0-9-]{1,30}$');
+create unique index if not exists website_transfers_ref_idx on public.website_transfers (ref);
+-- One open transfer per website: a second one is refused until the first is cancelled or its overlap has ended.
+create unique index if not exists website_transfers_open_idx on public.website_transfers (website_id) where cancelled_at is null and overlap_ended_at is null;
+create index if not exists website_transfers_owner_idx on public.website_transfers (owner_id);
+alter table public.website_transfers enable row level security;  -- no policies: service role only
+revoke all on public.website_transfers from anon, authenticated;
+
+-- ── The private bucket for the exported zips ──
+-- Private: the operator downloads through a short signed link. "On conflict"
+-- puts it back to private; an old storage schema raises a notice instead of
+-- stopping the run (create the bucket by hand, private).
+do $$
+begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('website-transfers', 'website-transfers', false, 52428800, array['application/zip'])
+  on conflict (id) do nothing;
+exception when others then
+  raise notice 'The website-transfers bucket was not created (%): create it by hand, private.', sqlerrm;
+end $$;
+
+-- ── billing_settings: the three transfer settings ──
+insert into public.billing_settings (key, value) values
+  ('website_transfer_overlap_days', '30'::jsonb),
+  ('website_transfer_stuck_days', '5'::jsonb),
+  ('website_transfer_code_from', '"2027-02-09"'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

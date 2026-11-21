@@ -714,3 +714,32 @@ test('one site failing does not stop the others', async () => {
   assert.deepEqual(warnsOf(w, 'good'), [30]);
   assert.deepEqual(warnsOf(w, 'bad'), []);
 });
+
+// ── Batch 37: a transferred site is the operator's, not ours to warn, switch off or delete ──
+
+test('a site that was handed over to its operator gets no warning, switch-off or deletion', async () => {
+  const w = new World();
+  w.add('moved', { lastSeen: at('2026-01-01') });
+  w.add('kept', { lastSeen: at('2026-01-01') });
+  // The loader (pinned below) leaves a site with an open transfer out of the candidates.
+  const transferred = new Set(['moved']);
+  const deps = w.deps();
+  const all = deps.sites;
+  deps.sites = async (now) => (await all(now)).filter((s) => !transferred.has(s.websiteId));
+  await runWebsiteGrace(deps, { dry: false, now: at('2026-03-02', '06:45:00') });
+  assert.deepEqual(warnsOf(w, 'moved'), []);
+  assert.deepEqual(warnsOf(w, 'kept'), [30]);
+  assert.equal(w.rows.get('moved')?.episode, null);
+  assert.equal(w.deletedSites.length, 0);
+});
+
+test('the cron loader skips every website with a transfer row that is not cancelled, and fails closed', () => {
+  const server = readFileSync(new URL('./grace-server.ts', import.meta.url), 'utf8');
+  const start = server.indexOf('async function loadSites(');
+  const loader = server.slice(start, server.indexOf('\n}\n', start));
+  assert.match(loader, /from\('website_transfers'\)\.select\('website_id'\)\.is\('cancelled_at', null\)\.is\('overlap_ended_at', null\)/);
+  assert.match(loader, /if \(moved\.error\) throw new Error/);
+  assert.match(loader, /\.filter\(\(id\) => !transferred\.has\(id\)\)/);
+  // Only the cron's own candidate list is filtered: a screen asking for one site by id is unchanged.
+  assert.ok(loader.indexOf('if (websiteIds)') < loader.indexOf("from('website_transfers')"));
+});

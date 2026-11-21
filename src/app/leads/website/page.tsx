@@ -109,6 +109,7 @@ export default async function WebsiteHome() {
           {live ? <Link href="/leads/website/edit" className={linkBtn}>Edit your website</Link> : null}
           {!live && site.status !== "paused" ? <Link href="/leads/setup/website" className={linkBtn}>Continue setup</Link> : null}
           <Link href="/leads/website/requests" className={linkBtn}>Change requests</Link>
+          <Link href="/leads/website/transfer" className={linkBtn}>Take my website</Link>
         </div>
       </div>
     </main>
