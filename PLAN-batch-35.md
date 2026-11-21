@@ -39,7 +39,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: schema.sql runs twice with empty diffs (CI schema job); smoke test asserts RLS, no policies, no anon/auth privilege, both unique constraints, composite FK rejects owner mismatch. Local check: `npm run typecheck` + schema lint tests if any; SQL smoke runs in CI (Postgres).
   Notes:
 
-- [ ] **Phase 2 — Google client** (needs 0). Files: `src/lib/ad-sheets/google.ts`, `sheet-link.ts`, `google.test.ts`, `.env.example` ("Batch 35" block: `GOOGLE_SHEETS_SA_EMAIL`, `GOOGLE_SHEETS_SA_PRIVATE_KEY` with escaped \n, scope `spreadsheets.readonly`; comments: never in code or DB; Zac creates the service account).
+- [x] **Phase 2 — Google client** (needs 0). Files: `src/lib/ad-sheets/google.ts`, `sheet-link.ts`, `google.test.ts`, `.env.example` ("Batch 35" block: `GOOGLE_SHEETS_SA_EMAIL`, `GOOGLE_SHEETS_SA_PRIVATE_KEY` with escaped \n, scope `spreadsheets.readonly`; comments: never in code or DB; Zac creates the service account).
   - No new dependency: RS256 JWT via `node:crypto` createSign, token exchange with in-run cache; `sheetMeta(id)` (tabs); `readRange(id, tab, fromRow, toRow)`; errors become codes only: not_configured, not_shared (403), not_found (404), rate_limited, error; fetch injectable. `sheet-link.ts`: parse a pasted Sheets URL → {spreadsheetId, gid}, reject anything else.
   - Check: `npm test` (fake fetch): JWT shape, 403 → not_shared, unconfigured → not_configured, URL parsing variants.
   Notes:
