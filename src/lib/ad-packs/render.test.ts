@@ -26,7 +26,10 @@ import {
   type RenderReport,
 } from './render-core.ts';
 import { DEFAULT_RENDER_SETTINGS, parseAdVideo, parseRenderSettings, type RenderSettings } from './render-store.ts';
-import { FakeSandboxes, FakeStorage, type MemoryRenderStore } from './render-test-store.ts';
+import { adPacksBucketMimeTypes, FakeSandboxes, FakeStorage, type MemoryRenderStore } from './render-test-store.ts';
+import { NOTIFY_WINDOW_MINUTES, type VideoNotifyDeps } from './notify-core.ts';
+import { videoEmailKey, videoFailedCopy, videoReadyCopy, type VideoEmailOutcome } from '../email/ad-pack-video.ts';
+import { renderRequestEmail } from '../email/website-edit.ts';
 import type { AdPackStore, PackAdRow, VideoBrand } from './store-types.ts';
 import { estimateVoicePence, type SynthesiseResult } from './voice-core.ts';
 
@@ -1168,4 +1171,347 @@ test('requeueRender: resets a finished row in place (keeps the cost), creates a 
   assert.equal(r.row()!.voiceKey, 'olivia', 'a running row is left alone');
   const fresh = await r.renders.requeueRender({ packId: r.packId, version: 7, voiceKey: 'jane' });
   assert.ok(fresh && fresh.state === 'queued' && fresh.version === 7);
+});
+
+// ── The voice cache is an optimisation, never a reason to fail or to pay twice ──
+
+test('a voice that cannot be cached does not abort the render: it is in memory, the voice is bought once, a short code is logged', async () => {
+  for (const [name, set] of [
+    ['the bucket refuses the audio', (r: Rig) => (r.storage.failPut = (p) => p.endsWith('voice.mp3'))],
+    ['the bucket refuses the script', (r: Rig) => (r.storage.failPut = (p) => p.endsWith('script.json'))],
+    ['the upload throws', (r: Rig) => (r.storage.throwOnPut = (p) => p.endsWith('voice.mp3') || p.endsWith('script.json'))],
+  ] as const) {
+    const r = await rig();
+    set(r);
+    const report = await r.run();
+    assert.equal(report.results[0].outcome, 'done', name);
+    assert.equal(r.row()!.state, 'done', name);
+    assert.equal(r.synthCalls.length, 1, `${name}: the voice was bought once`);
+    // The voice that was just bought is what went into the sandbox.
+    assert.deepEqual([...(r.sandboxes.created[0].sandbox.files.get('voice.mp3') ?? [])], [0x49, 0x44, 0x33, 1, 2, 3, 4, 5], name);
+    assert.ok(r.logs.some((l) => l.event === 'voice_cache_failed' && l.fields.code === 'voice_cache_failed' && l.fields.packId === r.packId), name);
+    assert.ok(!r.logs.some((l) => l.event === 'render_failed' || l.event === 'render_retry'), name);
+    // The voice cost is counted, and the finished videos were still stored.
+    assert.ok(r.row()!.costPence >= 4, name);
+    assert.ok(r.storage.files.has(`${OWNER}/${r.packId}/v1/notice-9x16.mp4`), name);
+    assert.ok(!JSON.stringify(r.logs).includes(SECRET_TEXT), name);
+  }
+});
+
+test('a genuine failure to store the finished videos still fails the attempt (and the sandbox is stopped)', async () => {
+  const r = await rig();
+  r.storage.failPut = (p) => p.endsWith('notice-9x16.mp4');
+  const report = await r.run();
+  assert.equal(report.results[0].code, 'upload_failed');
+  assert.equal(r.sandboxes.created[0].sandbox.stopped, 1);
+  const t = await rig();
+  t.storage.throwOnPut = (p) => p.endsWith('notice-poster.png');
+  assert.equal((await t.run()).results[0].code, 'upload_failed');
+});
+
+test('a whole render against a bucket that allows only what schema.sql lists: every put is accepted (the voice, the script, the videos, the poster)', async () => {
+  const r = await rig();
+  r.storage.allowedTypes = new Set(adPacksBucketMimeTypes());
+  assert.ok(r.storage.allowedTypes.size > 0);
+  const report = await r.run();
+  assert.equal(report.results[0].outcome, 'done');
+  assert.equal(r.synthCalls.length, 1);
+  assert.ok(!r.logs.some((l) => l.event === 'voice_cache_failed'), 'the cache was written');
+  assert.deepEqual([...new Set(r.storage.putTypes)].sort(), ['application/json', 'audio/mpeg', 'image/png', 'video/mp4']);
+  assert.ok(r.storage.files.has(`${OWNER}/${r.packId}/v1/voice.mp3`) && r.storage.files.has(`${OWNER}/${r.packId}/v1/script.json`));
+  // The same render against the OLD bucket (images and video only) shows what went wrong live: it no longer fails the render, but it is logged.
+  const old = await rig();
+  old.storage.allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'video/mp4']);
+  assert.equal((await old.run()).results[0].outcome, 'done');
+  assert.ok(old.logs.some((l) => l.event === 'voice_cache_failed'));
+});
+
+test('the sandbox budget shrinks by what the voice took, so a slow voice cannot push the function past its limit', async () => {
+  const slow = await rig();
+  slow.synthResult.value = (lines) => {
+    slow.advance(100_000);
+    return okSynth(lines);
+  };
+  assert.equal((await slow.run()).results[0].outcome, 'done');
+  assert.equal(slow.sandboxes.created[0].timeoutMs, (300 - 30 - 100) * 1000);
+  const tooSlow = await rig();
+  tooSlow.synthResult.value = (lines) => {
+    tooSlow.advance(230_000);
+    return okSynth(lines);
+  };
+  const report = await tooSlow.run();
+  assert.equal(report.results[0].code, 'timeout');
+  assert.equal(tooSlow.sandboxes.created.length, 0, 'no sandbox is started with less than a minute left');
+  assert.equal(tooSlow.row()!.state, 'queued', 'the next tick tries again, with the voice already stored');
+  assert.ok(tooSlow.storage.files.has(`${OWNER}/${tooSlow.packId}/v1/voice.mp3`));
+  const fast = await rig();
+  await fast.run();
+  assert.equal(fast.sandboxes.created[0].timeoutMs, 270_000, 'an ordinary render keeps the full budget');
+});
+
+// ── The completion email ──
+
+type Mail = { to: string; outcome: VideoEmailOutcome; errorCode: string | null; key: string };
+function withMailer(r: Rig, email: string | null = 'owner@example.test') {
+  const sent: Mail[] = [];
+  const lookups: string[] = [];
+  const emails = new Map<string, string | null>([[OWNER, email]]);
+  const mailer = { fail: false, throws: false, calls: 0 };
+  const notify: VideoNotifyDeps = {
+    ownerEmail: async (id) => {
+      lookups.push(id);
+      return emails.get(id) ?? null;
+    },
+    send: async (to, o) => {
+      mailer.calls++;
+      if (mailer.throws) throw new Error('mailer down: owner@example.test');
+      if (mailer.fail) return { sent: false };
+      sent.push({ to, outcome: o.outcome, errorCode: o.errorCode, key: o.idempotencyKey });
+      return { sent: true };
+    },
+  };
+  r.deps.notify = notify;
+  return { sent, lookups, emails, mailer };
+}
+const tick = async (r: Rig) => {
+  r.advance(5 * 60_000);
+  return r.run();
+};
+
+test('email: a render that is done and approvable emails the owner once, whatever the cron does next', async () => {
+  const r = await rig();
+  const m = withMailer(r);
+  const report = await r.run();
+  assert.equal(report.results[0].outcome, 'done');
+  assert.deepEqual(report.notified, { sent: 1, failed: 0, skipped: 0 });
+  assert.deepEqual(m.sent.map((x) => [x.to, x.outcome]), [['owner@example.test', 'ready']]);
+  assert.equal(r.row()!.notifiedOutcome, 'ready');
+  assert.ok(r.row()!.notifiedAt);
+  for (let i = 0; i < 4; i++) await tick(r);
+  await Promise.all([r.run(), r.run()]);
+  assert.equal(m.sent.length, 1, 'one email in all');
+  // The video was really approvable when it was sent.
+  const approve = await r.h.engine.approvePack({ ownerId: OWNER });
+  assert.ok(approve.ok);
+});
+
+test('email: a render that fails for good emails once; a render that will be tried again emails nothing', async () => {
+  const r = await rig();
+  const m = withMailer(r);
+  failRender(r, 'ERR missing_asset\n');
+  const states: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const rep = await tick(r);
+    states.push(rep.results[0].outcome);
+    if (i < 2) assert.equal(m.sent.length, 0, `try ${i + 1} will run again: nothing is sent`);
+  }
+  assert.deepEqual(states, ['queued', 'queued', 'failed']);
+  assert.equal(r.row()!.state, 'failed');
+  assert.deepEqual(m.sent.map((x) => [x.outcome, x.errorCode]), [['failed', 'missing_asset']]);
+  for (let i = 0; i < 3; i++) await tick(r);
+  assert.equal(m.sent.length, 1, 'repeated ticks never send it twice');
+  assert.equal(r.row()!.notifiedOutcome, 'failed');
+});
+
+test('email: a voice that is not in the account fails at once and says to choose a different voice', async () => {
+  const r = await rig();
+  const m = withMailer(r);
+  r.synthResult.value = () => ({ ok: false, code: 'voice_unavailable' });
+  await r.run();
+  assert.deepEqual(m.sent.map((x) => [x.outcome, x.errorCode]), [['failed', 'voice_unavailable']]);
+  const text = renderRequestEmail(videoFailedCopy('voice_unavailable'), 'https://site.test').text;
+  assert.match(text, /different voice/);
+});
+
+test('email: a video that fails its checks emails "we could not finish it" once, and the pack cannot be approved', async () => {
+  const r = await rig();
+  const m = withMailer(r);
+  r.sandboxes.opts.onRun = healthy(r, { audio: false });
+  await r.run();
+  assert.equal((await r.h.store.getPack(OWNER))!.status, 'checks_failed');
+  await tick(r);
+  assert.deepEqual(m.sent.map((x) => x.outcome), ['failed']);
+});
+
+test('email: a voice change and a retry re-arm it, so the new result emails again', async () => {
+  const r = await rig();
+  const m = withMailer(r);
+  await r.run();
+  assert.equal(m.sent.length, 1);
+  const first = r.row()!.finishedAt;
+
+  const changed = await r.h.engine.changeVoice({ ownerId: OWNER, voiceKey: 'olivia' });
+  assert.ok(changed.ok);
+  assert.equal(r.row()!.notifiedAt, null);
+  assert.equal(r.row()!.notifiedOutcome, null);
+  assert.equal((await tick(r)).results[0].outcome, 'done');
+  assert.deepEqual(m.sent.map((x) => x.outcome), ['ready', 'ready']);
+  assert.notEqual(m.sent[0].key, m.sent[1].key, 'a different result is a different email');
+  assert.notEqual(r.row()!.finishedAt, first);
+  await tick(r);
+  assert.equal(m.sent.length, 2);
+
+  // A final failure, then the operator's retry, then it works: failed email, then ready email.
+  const f = await rig();
+  const n = withMailer(f);
+  failRender(f, 'ERR render_failed\n');
+  for (let i = 0; i < 3; i++) await tick(f);
+  assert.deepEqual(n.sent.map((x) => x.outcome), ['failed']);
+  const retried = await f.h.engine.retryVideo({ ownerId: OWNER });
+  assert.ok(retried.ok, JSON.stringify(retried));
+  assert.equal(f.row()!.notifiedAt, null);
+  f.sandboxes.opts.onRun = healthy(f);
+  await tick(f);
+  assert.deepEqual(n.sent.map((x) => x.outcome), ['failed', 'ready']);
+});
+
+test('email: a send that fails never fails the render; the next tick tries again, and only inside the window', async () => {
+  const r = await rig();
+  const m = withMailer(r);
+  m.mailer.fail = true;
+  const report = await r.run();
+  assert.equal(report.results[0].outcome, 'done');
+  assert.equal(r.row()!.state, 'done');
+  assert.equal((await r.h.store.getPack(OWNER))!.status, 'preview');
+  assert.deepEqual(report.notified, { sent: 0, failed: 1, skipped: 0 });
+  assert.equal(r.row()!.notifiedAt, null, 'notified_at is set only when the email went');
+  assert.equal(r.row()!.notifiedOutcome, null);
+  assert.ok(r.logs.some((l) => l.event === 'video_email_failed' && l.fields.packId === r.packId));
+
+  // A mailer that throws is the same.
+  m.mailer.throws = true;
+  await tick(r);
+  assert.equal(r.row()!.state, 'done');
+  assert.equal(r.row()!.notifiedAt, null);
+
+  // It comes back, and the next tick sends it, once.
+  m.mailer.throws = false;
+  m.mailer.fail = false;
+  await tick(r);
+  assert.deepEqual(m.sent.map((x) => x.outcome), ['ready']);
+  await tick(r);
+  assert.equal(m.sent.length, 1);
+
+  // A render that finished long ago is not emailed about any more: the window bounds the tries.
+  const late = await rig();
+  const n = withMailer(late);
+  n.mailer.fail = true;
+  await late.run();
+  late.advance((NOTIFY_WINDOW_MINUTES + 1) * 60_000);
+  n.mailer.fail = false;
+  await late.run();
+  assert.equal(n.sent.length, 0);
+  assert.equal(late.row()!.state, 'done', 'the video itself is fine');
+});
+
+test('email: the address comes from the pack owner only, and neither it, a company name nor the body is logged', async () => {
+  const r = await rig();
+  const m = withMailer(r);
+  m.emails.set('00000000-0000-4000-8000-00000000beef', 'someone.else@example.test');
+  await r.run();
+  assert.deepEqual([...new Set(m.lookups)], [OWNER], 'only the owner of the pack is looked up');
+  assert.deepEqual(m.sent.map((x) => x.to), ['owner@example.test']);
+  const logged = JSON.stringify(r.logs);
+  assert.ok(!logged.includes('example.test') && !logged.includes(SECRET_TEXT) && !/leads\/ads|Facebook/.test(logged));
+  for (const l of r.logs.filter((x) => x.event.startsWith('video_email'))) assert.deepEqual(Object.keys(l.fields).sort(), ['code', 'packId']);
+  // A mailer that throws with the address in its message: nothing of it reaches a log.
+  const t = await rig();
+  const n = withMailer(t);
+  n.mailer.throws = true;
+  await t.run();
+  assert.ok(!JSON.stringify(t.logs).includes('owner@example.test'));
+});
+
+test('email: no address on the account, a superseded render and a pack that moved on send nothing and are not looked at again', async () => {
+  const none = await rig();
+  const a = withMailer(none, null);
+  await none.run();
+  assert.equal(a.sent.length, 0);
+  assert.equal(none.row()!.notifiedOutcome, 'skipped');
+  const looked = a.lookups.length;
+  await tick(none);
+  assert.equal(a.lookups.length, looked, 'a skipped result is decided once');
+
+  const moved = await rig();
+  const b = withMailer(moved);
+  moved.h.store.packs.get(moved.packId)!.version = 2;
+  await moved.run();
+  assert.equal(moved.row()!.errorCode, 'superseded');
+  assert.equal(b.sent.length, 0);
+  assert.equal(moved.row()!.notifiedOutcome, 'skipped');
+  assert.equal(b.lookups.length, 0, 'no address is even read for a result nobody waits for');
+});
+
+test('email: a dry run sends nothing, reads no address and writes nothing', async () => {
+  const r = await rig();
+  const m = withMailer(r);
+  await r.run();
+  r.renders.rows.forEach((x) => { x.notifiedAt = null; x.notifiedOutcome = null; });
+  m.sent.length = 0;
+  m.lookups.length = 0;
+  r.renders.writes.length = 0;
+  const report = await r.run({ dry: true });
+  assert.equal(report.dry, true);
+  assert.equal(report.notified, undefined);
+  assert.equal(m.mailer.calls, 1, 'only the first run sent');
+  assert.deepEqual([m.sent.length, m.lookups.length, r.renders.writes.length], [0, 0, 0]);
+});
+
+test('email: without a mailer wired the worker behaves as before and records nothing', async () => {
+  const r = await rig();
+  const report = await r.run();
+  assert.equal(report.results[0].outcome, 'done');
+  assert.equal(report.notified, undefined);
+  assert.equal(r.row()!.notifiedAt, null);
+  assert.ok(!r.renders.writes.some((w) => w.startsWith('notify')));
+});
+
+test('email: the claim is atomic: a second claim of the same result loses, a requeued row cannot be claimed, a release only undoes its own claim', async () => {
+  const r = await rig();
+  await r.run();
+  const id = r.row()!.id;
+  assert.ok(await r.renders.claimNotify({ id, state: 'done', outcome: 'ready', atIso: 'T1' }));
+  assert.equal(await r.renders.claimNotify({ id, state: 'done', outcome: 'ready', atIso: 'T2' }), null);
+  await r.renders.releaseNotify(id, 'T-other');
+  assert.equal(r.row()!.notifiedAt, 'T1', 'another claim is left alone');
+  await r.renders.releaseNotify(id, 'T1');
+  assert.equal(r.row()!.notifiedAt, null);
+  // The row goes back to queued (a voice change) between judging and claiming: nothing is claimed.
+  r.row()!.state = 'queued';
+  assert.equal(await r.renders.claimNotify({ id, state: 'done', outcome: 'ready', atIso: 'T3' }), null);
+});
+
+test('email: the wording is plain, has the link on the site base URL and the house sign-off, and names no pack, version, render or check', () => {
+  const variants = [
+    { name: 'ready', copy: videoReadyCopy() },
+    { name: 'failed, retryable', copy: videoFailedCopy('render_failed') },
+    { name: 'failed, voice', copy: videoFailedCopy('voice_unavailable') },
+    { name: 'failed, no code', copy: videoFailedCopy(null) },
+  ];
+  for (const v of variants) {
+    const mail = renderRequestEmail(v.copy, 'https://site.test/');
+    const visible = `${mail.subject} ${mail.text} ${mail.html.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ')}`;
+    assert.ok(!/\b(packs?|versions?|render\w*|checks|queue|worker|sandbox|ffmpeg)\b/i.test(visible), `${v.name}: jargon in ${visible}`);
+    assert.ok(mail.text.includes('https://site.test/leads/ads'), v.name);
+    assert.ok(mail.html.includes('href="https://site.test/leads/ads"'), v.name);
+    assert.ok(mail.html.includes('Stayful Intelligence'), v.name);
+    assert.ok(!/brightstone|£|\d{2,}/i.test(mail.text), `${v.name}: no company, figure or number`);
+  }
+  assert.equal(videoReadyCopy().subject, 'Your video ad is ready');
+  const ready = renderRequestEmail(videoReadyCopy(), 'https://site.test').text;
+  assert.match(ready, /Your Facebook video ad is ready to watch\./);
+  assert.match(ready, /Open it here, check it looks right, then follow the steps to put your ads on Facebook\./);
+  assert.equal(videoFailedCopy('render_failed').subject, "We couldn't finish your video");
+  assert.match(renderRequestEmail(videoFailedCopy('render_failed'), 'https://site.test').text, /try again/);
+  assert.match(renderRequestEmail(videoFailedCopy('bad_brief'), 'https://site.test').text, /reply to this email/);
+  // The default base is the site's own URL helper, never a hard-coded host in the copy.
+  assert.ok(!JSON.stringify(videoReadyCopy()).includes('http'));
+});
+
+test('email: the idempotency key is per result: the same result repeats the key, a later result changes it', () => {
+  const a = videoEmailKey('render-1', 'ready', '2026-11-20T10:00:00.000Z');
+  assert.equal(a, videoEmailKey('render-1', 'ready', '2026-11-20T10:00:00.000Z'));
+  assert.notEqual(a, videoEmailKey('render-1', 'ready', '2026-11-20T10:05:00.000Z'));
+  assert.notEqual(a, videoEmailKey('render-1', 'failed', '2026-11-20T10:00:00.000Z'));
+  assert.notEqual(a, videoEmailKey('render-2', 'ready', '2026-11-20T10:00:00.000Z'));
 });

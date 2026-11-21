@@ -4,6 +4,7 @@ import { Sandbox } from '@vercel/sandbox';
 import { adPackFetchImage } from './files-server';
 import { enqueueRender as enqueueCore, loadRendererFiles, runRenderQueue as runCore, type EnqueueResult, type RenderDeps, type RenderReport, type SandboxFactory, type SandboxLike } from './render-core.ts';
 import { createLiveRenderStore, createLiveStorage, readRenderSettings, readSandboxCpuSecondPence } from './render-store-server.ts';
+import { createVideoNotifier } from './notify-server.ts';
 import { createLiveStore } from './store-server.ts';
 import { synthesise } from './voice-server';
 
@@ -107,6 +108,8 @@ function realDeps(): RenderDeps {
     sandboxCpuSecondPence: readSandboxCpuSecondPence,
     renderSettings: readRenderSettings,
     now: () => new Date(),
+    // The "your video ad is ready" / "we couldn't finish it" email (notify-core.ts), to the pack owner only.
+    notify: createVideoNotifier(),
     // A pack id, a code and seconds: never an address, a text or a body.
     log: (event, f) => console.error(`[ad-packs] ${event}`, f.packId ?? '-', f.code ?? '-', f.seconds ?? '-'),
   };

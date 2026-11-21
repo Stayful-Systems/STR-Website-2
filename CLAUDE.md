@@ -81,9 +81,15 @@ their own Meta account; Stayful runs nothing on Meta. Plan and defaults: `PLAN-b
   in a Vercel Sandbox from `ad-render/` (Python + ffmpeg), never in a request. Table `ad_pack_renders` (one row per
   pack version: queued, running, done, failed); files `notice-9x16.mp4`, `-4x5`, `-1x1` and `notice-poster.png` in the
   `ad-packs` bucket. Env: `ELEVENLABS_API_KEY`, `CRON_SECRET`, sandbox access (OIDC is automatic on Vercel).
+  The `ad-packs` bucket's `allowed_mime_types` (schema.sql) must list every type the code uploads (images, `video/mp4`,
+  `audio/mpeg` for the cached voice, `application/json` for its script): `bucket.test.ts` fails if one is missing, and a
+  failure to cache the voice never aborts a render. When a render ends done and approvable, or failed for good, the
+  account owner gets ONE email (`notify-core.ts`, `src/lib/email/ad-pack-video.ts`: "Your video ad is ready" / "We couldn't
+  finish your video"; claimed once via `ad_pack_renders.notified_at`/`notified_outcome`, reset by a voice change or retry,
+  outside the one-email-a-day cap like the other replies to something the operator started).
   Code `src/lib/ad-packs/{voices,voice-*,captions,render-*}.ts`; no Stayful asset under `ad-render/` (a test pins it).
 - **Screen.** Approve stays off until the video is ready (`PackView.approval`). One voice change before approving
   (`changeVoice`; free when the voice was unavailable) and `retryVideo`, both owner-only and pinned to the version on
   screen. While the video is made the screen asks `pollPackAction` every 8 s (read only, safe fields) and stops after
   15 minutes. The video plays from one-hour signed links (`videoUrlAction`). `/admin/ad-packs` has a Video column.
-- **Knowledge.** Six draft entries in `seed.ts` (`adpack_*`, incl. `adpack_video_voice`) and a block in `service-facts.ts`.
+- **Knowledge.** Seven draft entries in `seed.ts` (`adpack_*`, incl. `adpack_video_voice` and `adpack_video_email`) and a block in `service-facts.ts`.

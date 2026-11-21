@@ -1109,6 +1109,16 @@ export const SEED: readonly SeedEntry[] = [
     answer: 'Your tenant notice video has a voiceover and the words on screen, so it works with the sound off. Before you make your ads you pick a voice from a short list and can play a sample of each first. The video takes a few minutes to make, and you can leave the page and come back. Before you approve you can change the voice a set number of times, currently {ad_pack_voice_changes}, and the video is made again; after you approve the voice is fixed. If a voice isn’t available yet you choose another, at no cost to your allowance. You can approve once the video is ready.',
   },
   {
+    slug: 'adpack_video_email',
+    from: 'Batch 38b, landlord ad pack (one email to the account owner when the video is ready, or when it could not be finished; sent once per result, and again after a voice change or a try again)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Will you tell me when my video ad is ready?',
+    variants: ['Do I get an email when my video is done?', 'Can I close the page while my video is made?', 'I did not get an email about my video', 'What if my video could not be made?', 'Will you email me if my video fails?'],
+    answer: 'Yes. The video takes a few minutes, so you can close the page and we will email the account owner when it is ready to watch, with a link to your ads page. If we could not finish it, we email you that instead, and tell you what to do next: open the page and try again, or choose a different voice. You get one email for each result, and a new one if you change the voice or try again. If you do not see it, check your spam folder or look on your ads page.',
+  },
+  {
     slug: 'adpack_tagging',
     from: 'Batch 38, landlord ad pack (pack code in the ad name and link; Ad unknown when there is no code or the link was changed)',
     category: 'how_it_works',
