@@ -55,6 +55,12 @@ export function supabaseStore(): LeadDbStore {
       };
       const { data: rep } = await admin.from('website_reports').select('state, quality_ok').eq('lead_id', leadId).maybeSingle();
       const report = rep as { state: string; quality_ok: boolean | null } | null;
+      // Batch 35: a lead read from a Facebook lead-form sheet has no report; it goes lead-only.
+      let sheetLead = false;
+      if (!report) {
+        const { data: sheetRow } = await admin.from('ad_sheet_rows').select('lead_id').eq('lead_id', leadId).limit(1).maybeSingle();
+        sheetLead = Boolean(sheetRow);
+      }
       return {
         leadId: lead.id,
         ownerId: lead.user_id,
@@ -68,6 +74,7 @@ export function supabaseStore(): LeadDbStore {
         bedrooms: lead.bedrooms,
         result: lead.result,
         report: report ? { state: report.state, qualityOk: report.quality_ok } : null,
+        ...(sheetLead ? { sheetLead: true } : {}),
       };
     },
 

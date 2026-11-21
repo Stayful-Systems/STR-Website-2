@@ -287,3 +287,39 @@ test('source pin: leads.status and crm_pushed_at are never written, and no secre
     assert.doesNotMatch(src, /whsec_|SI_LEAD_PUSH_SECRET\s*=\s*['"]/, f);
   }
 });
+
+// ── Batch 35: a lead read from a Facebook lead-form sheet goes lead-only ──
+
+test('a sheet lead (no report) is queued and pushed lead-only; a lead with neither is still refused', async () => {
+  const sheet = world({ ctx: { report: null, sheetLead: true, result: null } });
+  assert.equal(await enqueueLeadDbPush(LEAD, sheet.deps), 'queued');
+  assert.equal(sheet.rows.size, 1);
+  const r = await runLeadDbDelivery(LEAD, sheet.deps);
+  assert.deepEqual(r, { ok: true, code: 'ok' });
+  assert.equal(sheet.posts.length, 1);
+  assert.equal(sheet.posts[0].si_lead_id, LEAD);
+  assert.equal('report' in sheet.posts[0], false);
+  assert.equal(sheet.row().status, 'sent');
+  assert.equal(sheet.row().report_sent_at, null);
+
+  // A held or archived sheet lead, or an unlinked owner, is skipped like any other.
+  assert.equal(await enqueueLeadDbPush(LEAD, world({ ctx: { report: null, sheetLead: true, status: 'held' } }).deps), 'skipped');
+  assert.equal(await enqueueLeadDbPush(LEAD, world({ link: null, ctx: { report: null, sheetLead: true } }).deps), 'skipped');
+
+  const neither = world({ ctx: { report: null, sheetLead: false } });
+  assert.equal(await enqueueLeadDbPush(LEAD, neither.deps), 'skipped');
+  await neither.deps.store.enqueue(LEAD, OWNER, { reportDone: false });
+  assert.deepEqual(await runLeadDbDelivery(LEAD, neither.deps), { ok: false, code: 'not_a_website_lead' });
+  assert.equal(neither.posts.length, 0);
+});
+
+test('website-lead behaviour is unchanged when the sheet flag is absent or set', async () => {
+  for (const flag of [undefined, true] as const) {
+    const w = world({ reportState: 'done', ctx: flag === undefined ? {} : { sheetLead: flag } });
+    assert.equal(await enqueueLeadDbPush(LEAD, w.deps), 'queued');
+    await runLeadDbDelivery(LEAD, w.deps);
+    assert.equal(w.posts.length, 1);
+    assert.ok(w.posts[0].report, 'a website lead with a finished report still carries it');
+    assert.equal(w.row().report_sent_at !== null, true);
+  }
+});

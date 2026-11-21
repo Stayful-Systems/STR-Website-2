@@ -54,6 +54,12 @@ export interface LeadContext {
   result: AnalysisResult | null;
   /** The website report's state and quality; null when this is not a website lead. */
   report: { state: string; qualityOk: boolean | null } | null;
+  /**
+   * Batch 35: the lead came from an operator's Facebook lead-form sheet (it has an
+   * `ad_sheet_rows` row). It has no report, and goes to the lead database lead-only.
+   * Optional: absent means false, so a website lead's context is unchanged.
+   */
+  sheetLead?: boolean;
 }
 
 export interface LinkState {
@@ -136,7 +142,7 @@ export async function runLeadDbDelivery(leadId: string, deps: LeadDbDeps): Promi
   const ctx = await store.context(leadId);
   if (!ctx) return fail('lead_gone', false);
   if (ctx.archivedAt) return fail('archived', false);
-  if (!ctx.report) return fail('not_a_website_lead', false);
+  if (!ctx.report && !ctx.sheetLead) return fail('not_a_website_lead', false);
   if (ctx.status === 'held') {
     // The customer chose to review it first. Nothing is sent and no attempt is used; the next run looks again.
     await store.finish(leadId, { status: 'pending', next_attempt_at: new Date(now.getTime() + 60 * 60_000).toISOString() }, attempts);
@@ -149,9 +155,9 @@ export async function runLeadDbDelivery(leadId: string, deps: LeadDbDeps): Promi
 
   let report: WebsiteLeadBody['report'] | undefined;
   let summary: ReportSummary | null = null;
-  const reportDue = ctx.report.state === 'done' && row.report_sent_at === null && ctx.result !== null;
+  const reportDue = ctx.report?.state === 'done' && row.report_sent_at === null && ctx.result !== null;
   if (reportDue && ctx.result) {
-    summary = buildSummary(ctx.result, ctx.report.qualityOk === true);
+    summary = buildSummary(ctx.result, ctx.report?.qualityOk === true);
     if (summary) {
       let pdf: Uint8Array | null = null;
       try {
@@ -241,10 +247,10 @@ export async function enqueueLeadDbPush(leadId: string, deps?: LeadDbDeps): Prom
   try {
     const d = deps ?? (await realDeps());
     const ctx = await d.store.context(leadId);
-    if (!ctx || !ctx.report || ctx.archivedAt || ctx.status === 'held') return 'skipped';
+    if (!ctx || (!ctx.report && !ctx.sheetLead) || ctx.archivedAt || ctx.status === 'held') return 'skipped';
     const link = await d.store.link(ctx.ownerId);
     if (!link || link.status !== 'active') return 'skipped';
-    await d.store.enqueue(leadId, ctx.ownerId, { reportDone: ctx.report.state === 'done' });
+    await d.store.enqueue(leadId, ctx.ownerId, { reportDone: ctx.report?.state === 'done' });
     return 'queued';
   } catch {
     console.error('[leaddb] enqueue failed for lead', leadId);
