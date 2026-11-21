@@ -18,7 +18,7 @@ const SLUG_RE = /^[a-z0-9-]+$/;
 
 export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   // Top-level routes under src/app (including the route groups' pages)
-  'academy', 'account', 'admin', 'api', 'auth', 'briefing', 'btl-report', 'd', 'deal', 'deals', 'demo-report', 'estimate', 'extension',
+  'academy', 'account', 'admin', 'api', 'auth', 'briefing', 'btl-report', 'd', 'deal', 'deals', 'demo-report', 'dev', 'estimate', 'extension',
   'f', 'home', 'intelligence', 'lead-form-sample', 'leads', 'm', 'markets', 'my-deals', 'p', 'picks', 'presentation', 'profile',
   'profiles', 'r', 'reports', 's', 'si', 'team', 'today', 'upgrade', 'welcome',
   'login', 'signup', 'forgot-password', 'reset-password',

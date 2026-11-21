@@ -13,7 +13,19 @@ import {
   screenshotUrl,
   screenshotView,
   stepNumberLabel,
-  uploadHint,
+  UPLOAD_STEP_ID,
+  adProgressLabel,
+  EMPTY_PROGRESS,
+  guideStorageKey,
+  nextAdToSetUp,
+  nextWording,
+  parseProgress,
+  serializeProgress,
+  stepPercent,
+  uploadHelp,
+  withDone,
+  withStep,
+  wordingLabel,
 } from './guide.ts';
 
 const sentences = (s: string) => s.split(/[.!?](?:\s+|$)/).filter((x) => x.trim() !== '');
@@ -71,24 +83,41 @@ test('the guide runs in the order Meta asks, and the name and link steps copy th
   assert.deepEqual(copying, ['paste-primary', 'paste-headline', 'paste-description', 'paste-ad-name', 'paste-link']);
 });
 
-test('the guide explains the pack code in the name and leaves the {{ad.id}} part alone', () => {
-  assert.match(guideStep('paste-ad-name')!.detail ?? '', /pack code/);
+test('the name and link steps say why they must be pasted exactly, and leave the {{ad.id}} part alone', () => {
+  assert.match(guideStep('paste-ad-name')!.detail ?? '', /exactly as it is, so we can show you which ad each enquiry came from/);
   const link = guideStep('paste-link')!.detail ?? '';
   assert.ok(link.includes('{{ad.id}}'));
-  assert.match(link, /Meta fills it in/);
-  assert.match(link, /Do not edit/);
+  assert.match(link, /Facebook fills it in/);
+  assert.match(link, /do not change anything/);
   assert.match(link, /which ad works/);
 });
 
-test('it covers the Traffic objective, no pixel, a Page and ad account, placements and the review wait', () => {
+test('a text step names the Facebook box it goes into and the name we use for it; the other steps name neither', () => {
+  const expected: Record<string, [string, string]> = {
+    'paste-primary': ['Primary text', 'Main text'],
+    'paste-headline': ['Headline', 'Headline'],
+    'paste-description': ['Description', 'Extra line'],
+    'paste-ad-name': ['Ad name', 'Ad name'],
+    'paste-link': ['Website URL', 'Website link'],
+  };
+  for (const s2 of GUIDE_STEPS) {
+    const e = expected[s2.id];
+    if (!e) {
+      assert.equal(s2.facebookFieldName, undefined, s2.id);
+      assert.equal(s2.ourName, undefined, s2.id);
+      continue;
+    }
+    assert.equal(s2.facebookFieldName, e[0], s2.id);
+    assert.equal(s2.ourName, e[1], s2.id);
+    assert.ok(s2.action.includes(`the box called ${e[0]} in Facebook`), `${s2.id}: ${s2.action}`);
+  }
+});
+
+test('it covers the Traffic goal, a page and ad account, the audience and the review wait', () => {
   assert.match(guideStep('choose-traffic')!.action, /Traffic/);
   assert.match(guideStep('open-ads-manager')!.action, /adsmanager\.facebook\.com/);
-  assert.match(guideStep('open-ads-manager')!.stuck, /Facebook Page/);
+  assert.match(guideStep('open-ads-manager')!.stuck, /Facebook page/);
   assert.match(guideStep('open-ads-manager')!.stuck, /ad account/);
-  assert.match(guideStep('upload-file')!.detail ?? '', /4:5/);
-  assert.match(guideStep('upload-file')!.detail ?? '', /9:16/);
-  assert.match(guideStep('upload-file')!.detail ?? '', /1:1/);
-  assert.match(guideStep('upload-file')!.detail ?? '', /Stories and Reels/);
   assert.match(guideStep('set-audience')!.detail ?? '', /30 to 65 and over/);
   assert.match(guideStep('publish')!.detail ?? '', /up to a day/);
   assert.match(guideStep('set-budget')!.action, /comfortable/);
@@ -104,31 +133,21 @@ test('the guide has no product name, no pound sign, no em dash, no promise, and 
   assert.doesNotMatch(text, /\b(?:optimize|color|center|organize|customize)/i);
 });
 
-test('the upload step says which file goes with which placement, for the video ad and for the two image ads', () => {
+test('the upload step says which file to add, for the video ad and for a picture ad', () => {
   const step = guideStep('upload-file')!;
+  assert.equal(step.id, UPLOAD_STEP_ID);
   assert.equal(sentences(step.action).length, 1);
   assert.doesNotMatch(step.action, /image file/, 'the notice ad is a video, so the step says "file"');
-  const detail = step.detail ?? '';
-  assert.match(detail, /9:16 video for Stories and Reels/);
-  assert.match(detail, /4:5 video for the Facebook and Instagram feed/);
-  assert.match(detail, /1:1 square video/);
-  assert.match(detail, /other two ads are images/);
-  assert.doesNotMatch(detail + (step.stuck), /arrives later|coming soon|later release/i);
-  const video = uploadHint(true);
-  const images = uploadHint(false);
-  assert.match(video, /9:16 video for Stories and Reels/);
-  assert.match(video, /4:5 video for the feed/);
-  assert.match(video, /1:1 video if Meta asks for a square one/);
-  assert.match(images, /4:5 images for the feed/);
-  assert.match(images, /9:16 images for Stories and Reels/);
-  assert.match(images, /1:1 images/);
-  for (const t of [video, images]) {
-    assert.equal(sentences(t).length, 2, t);
+  const video = uploadHelp(true, 0);
+  const pictures = uploadHelp(false, 5);
+  assert.match(video, /This ad is a video\. Use the Feed one for most people\./);
+  assert.match(video, /Full screen one too if Facebook asks for Stories and Reels/);
+  assert.match(pictures, /This ad has 5 pictures\. Add all of them, in order\. Use the Feed size for most people\./);
+  assert.match(uploadHelp(false, 1), /This ad has 1 picture\. Add it\./);
+  for (const t of [video, pictures]) {
+    assert.equal(sentences(t).length, t === video ? 3 : 3, t);
     assert.doesNotMatch(t, /stayful|£|—/i);
   }
-  // The hint is shown on the upload step only, by the guide's own screen.
-  const guideScreen = readFileSync(new URL('../../app/leads/ads/Guide.tsx', import.meta.url), 'utf8');
-  assert.match(guideScreen, /step\.id === "upload-file"[\s\S]*uploadHint\(ad\.isVideo\)/);
 });
 
 test('stepNumberLabel and the pager stay inside 1 to n', () => {
@@ -160,7 +179,7 @@ test('a screenshot is shown only when its file exists; otherwise a plain box wit
     assert.equal(have.alt, step.screenshot.alt);
   }
   const none = screenshotView(step, []);
-  assert.deepEqual(none, { kind: 'placeholder', text: `Screenshot to come: ${step.screenshot.alt}` });
+  assert.deepEqual(none, { kind: 'placeholder', text: `Picture to come: ${step.screenshot.alt}` });
   assert.equal(screenshotUrl('publish'), '/ad-packs/guide/publish.png');
 });
 
@@ -179,21 +198,85 @@ test('the ad picker shows on the copy steps and the upload step only', () => {
   assert.deepEqual(picking, ['upload-file', 'paste-primary', 'paste-headline', 'paste-description', 'paste-ad-name', 'paste-link']);
 });
 
-test('the screen wires the guide: server-side screenshot check, #guide kept, copy buttons reused, progress only in the browser', () => {
+test('the guide is its own page: owner only, approved ads only, screenshots checked on the server, copy logged without the text, progress kept in the browser only', () => {
   const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8');
   const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const page = code(read('../../app/leads/ads/page.tsx'));
-  const client = code(read('../../app/leads/ads/Guide.tsx'));
+  const page = code(read('../../app/leads/ads/guide/page.tsx'));
+  const wizard = code(read('../../app/leads/ads/guide/GuideWizard.tsx'));
   const server = code(read('./guide-server.ts'));
-  assert.match(page, /id="guide"/);
-  assert.match(page, /<Guide\b/);
+  assert.match(page, /ownerIdOrNull\(user\)/);
+  assert.match(page, /packEligibility\(user\.id, \{ admin \}\)/);
+  assert.match(page, /screen\.kind !== "approved"/);
   assert.match(page, /availableGuideShots\(\)/);
+  assert.match(page, /<GuideWizard\b/);
+  assert.doesNotMatch(page, /searchParams|params\b/, 'nothing in the address chooses whose ads are shown');
   assert.match(server, /^import 'server-only';/);
   assert.match(server, /existsSync/);
-  assert.match(client, /^"use client";/);
-  assert.match(client, /TextRow/);
-  assert.match(client, /<details/);
-  assert.match(client, /localStorage/);
-  assert.doesNotMatch(client, /from "node:fs"|from "fs"/);
-  assert.match(read('../../../next.config.ts'), /public\/ad-packs\/guide/);
+  assert.match(wizard, /^"use client";/);
+  assert.match(wizard, /localStorage/);
+  assert.match(wizard, /try \{[\s\S]*localStorage\.getItem[\s\S]*\} catch/);
+  assert.match(wizard, /try \{[\s\S]*localStorage\.setItem[\s\S]*\} catch/);
+  assert.match(wizard, /recordCopy\(adId, item\.kind, item\.index\)/);
+  assert.doesNotMatch(wizard, /recordCopy\([^)]*\.text/);
+  assert.doesNotMatch(wizard, /from "node:fs"|from "fs"/);
+  const config = read('../../../next.config.ts');
+  assert.match(config, /"\/leads\/ads\/guide": AD_PACK_GUIDE_SHOTS/);
+  assert.match(config, /public\/ad-packs\/guide/);
+});
+
+test('wording: the first text is the suggestion and "another wording" goes round and comes back', () => {
+  assert.equal(nextWording(0, 5), 1);
+  assert.equal(nextWording(4, 5), 0);
+  assert.equal(nextWording(0, 1), 0);
+  assert.equal(nextWording(0, 0), 0);
+  assert.equal(wordingLabel(0, 5), 'Wording 1 of 5');
+  assert.equal(wordingLabel(4, 5), 'Wording 5 of 5');
+  assert.equal(wordingLabel(0, 1), null);
+  const seen = new Set<number>();
+  let i = 0;
+  for (let k = 0; k < 5; k++) {
+    seen.add(i);
+    i = nextWording(i, 5);
+  }
+  assert.equal(seen.size, 5);
+  assert.equal(i, 0);
+});
+
+test('the progress bar never starts empty and ends full', () => {
+  assert.equal(stepPercent(0, 13), 8);
+  assert.equal(stepPercent(12, 13), 100);
+  assert.equal(stepPercent(99, 13), 100);
+  assert.equal(stepPercent(0, 0), 0);
+});
+
+test('progress is kept for each ad, read safely, and offers the next ad that is not done', () => {
+  const ids = ['a', 'b', 'c'];
+  const N = GUIDE_STEPS.length;
+  assert.equal(guideStorageKey('p1'), 'ad-guide:v2:p1');
+  let p = withStep(EMPTY_PROGRESS, 'a', 4, N);
+  assert.deepEqual(p.ads.a, { step: 4, done: false });
+  assert.equal(p.last, 'a');
+  assert.equal(adProgressLabel(p, 'a', N), `You are on step 5 of ${N}`);
+  assert.equal(adProgressLabel(p, 'b', N), 'Not started');
+  assert.equal(adProgressLabel(withStep(p, 'b', 0, N), 'b', N), 'Not started');
+  p = withDone(p, 'a', N);
+  assert.equal(adProgressLabel(p, 'a', N), 'Done');
+  assert.equal(nextAdToSetUp(p, ids, 'a'), 'b');
+  p = withDone(withDone(p, 'b', N), 'c', N);
+  assert.equal(nextAdToSetUp(p, ids, 'c'), null);
+  assert.equal(nextAdToSetUp(EMPTY_PROGRESS, [], null), null);
+  // Round trip, and anything unreadable, unknown or out of range is dropped.
+  assert.deepEqual(parseProgress(serializeProgress(p), ids, N), p);
+  assert.deepEqual(parseProgress(null, ids, N), EMPTY_PROGRESS);
+  assert.deepEqual(parseProgress('not json', ids, N), EMPTY_PROGRESS);
+  assert.deepEqual(parseProgress('[1]', ids, N), { ads: {}, last: null });
+  const odd = parseProgress(JSON.stringify({ ads: { a: { step: 999, done: false }, zzz: { step: 1, done: true }, b: 'x' }, last: 'zzz' }), ids, N);
+  assert.deepEqual(odd, { ads: { a: { step: N - 1, done: false } }, last: null });
+});
+
+test('the guide uses no internal word: no pack, version, code, regenerate or checks, and "Primary text" only as the Facebook box name', () => {
+  // What the operator reads: not the file paths (they live under ad-packs).
+  const text = JSON.stringify(GUIDE_STEPS.map((st) => ({ id: st.id, title: st.title, action: st.action, detail: st.detail, ourName: st.ourName, stuck: st.stuck, alt: st.screenshot.alt }))).replace(/box called Primary text( in Facebook)?/g, '');
+  assert.doesNotMatch(text, /\b(?:packs?|versions?|regenerat\w*|checks|render\w*|codes?|allowance|hash|type-only)\b/i);
+  assert.doesNotMatch(text, /primary text/i);
 });

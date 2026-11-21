@@ -194,7 +194,7 @@ export function createLiveRenderStore(): RenderStore {
       // An existing row is reset in place, but only while no worker has it (conditional on state <> running).
       const { data, error } = await admin()
         .from('ad_pack_renders')
-        .update({ state: 'queued', ...(keepAttempts === true ? {} : { attempts: 0 }), error_code: null, files: null, voice_key: voiceKey, lease_until: null, started_at: null, finished_at: null, updated_at: nowIso })
+        .update({ state: 'queued', ...(keepAttempts === true ? {} : { attempts: 0 }), error_code: null, files: null, voice_key: voiceKey, lease_until: null, started_at: null, finished_at: null, notified_at: null, notified_outcome: null, updated_at: nowIso })
         .eq('pack_id', packId)
         .eq('version', version)
         .neq('state', 'running')
@@ -208,6 +208,40 @@ export function createLiveRenderStore(): RenderStore {
       const { data: inserted, error: insertError } = await admin().from('ad_pack_renders').insert({ pack_id: packId, version, voice_key: voiceKey }).select(RENDER_COLUMNS).maybeSingle();
       if (insertError) fail('ad_pack_renders insert', insertError);
       return inserted ? toRenderRow(inserted as Record<string, unknown>) : null;
+    },
+
+    async listUnnotified(sinceIso, limit) {
+      const { data, error } = await admin()
+        .from('ad_pack_renders')
+        .select(RENDER_COLUMNS)
+        .in('state', ['done', 'failed'])
+        .is('notified_at', null)
+        .gte('finished_at', sinceIso)
+        .order('finished_at', { ascending: true })
+        .limit(limit);
+      if (error) fail('ad_pack_renders read', error);
+      return ((data ?? []) as Record<string, unknown>[]).map(toRenderRow);
+    },
+
+    async claimNotify({ id, state, outcome, atIso }) {
+      if (!UUID.test(id)) return null;
+      // One conditional update decides who sends: only while notified_at is still null and the row is still in the state we judged.
+      const { data, error } = await admin()
+        .from('ad_pack_renders')
+        .update({ notified_at: atIso, notified_outcome: outcome })
+        .eq('id', id)
+        .eq('state', state)
+        .is('notified_at', null)
+        .select(RENDER_COLUMNS)
+        .maybeSingle();
+      if (error) fail('ad_pack_renders notify claim', error);
+      return data ? toRenderRow(data as Record<string, unknown>) : null;
+    },
+
+    async releaseNotify(id, atIso) {
+      if (!UUID.test(id)) return;
+      const { error } = await admin().from('ad_pack_renders').update({ notified_at: null, notified_outcome: null }).eq('id', id).eq('notified_at', atIso);
+      if (error) fail('ad_pack_renders notify release', error);
     },
 
     async setAdFiles(ownerId, packAdId, files) {

@@ -1,6 +1,6 @@
 /**
- * Batch 38 (Phase 8): which screen an operator's pack is on, and whether they
- * may regenerate it, as pure decisions over what the generator reports
+ * Batch 38 (Phase 8): which screen an operator's ads are on, and whether they
+ * may make new ones, as pure decisions over what the generator reports
  * (PackView). The page only asks; the tests pin the rules.
  *
  * Server side only (it uses generate-core.ts, which needs node:crypto): the
@@ -9,6 +9,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { brandHash, generateMessage, regenerateBlock, STALE_GENERATING_MS, type PackView } from '../../../lib/ad-packs/generate-core.ts';
+import { plainRefusal } from './view.ts';
 
 export type Screen =
   /** No pack yet (or a first attempt that failed): "Confirm your main area". */
@@ -21,7 +22,7 @@ export type Screen =
   /** The checks did not pass; nothing to show. */
   | { kind: 'checks_failed' };
 
-export const KEPT_NOTICE = 'We could not make your newer version, so this is still your earlier one. Nothing was lost.';
+export const KEPT_NOTICE = 'We could not make your new ads, so these are still your earlier ones. Nothing was lost.';
 
 /** Which screen the pack is on. A 'generating' pack older than ten minutes is taken as abandoned (the generator does the same). */
 export function packScreen(view: PackView | null, nowMs: number): Screen {
@@ -66,5 +67,5 @@ export function regenView(view: PackView, brand: { company: string; logoUrl: str
   const hash = brandHash({ ...brand, photos: pack.photos ?? [], areaKey: pack.areaKey ?? '' });
   // regenerateBlock wants the allowance, which is what has been used plus what is left.
   const block = regenerateBlock(pack, hash, { freeRegens: pack.regenCount + left });
-  return block === null ? { canRegenerate: true, left, reason: null } : { canRegenerate: false, left, reason: generateMessage(block) };
+  return block === null ? { canRegenerate: true, left, reason: null } : { canRegenerate: false, left, reason: plainRefusal(block, generateMessage(block)) };
 }

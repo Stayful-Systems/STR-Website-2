@@ -26,7 +26,7 @@ const AD_PACK_FONTS = ["src/lib/ad-packs/fonts/**/*"];
 
 /**
  * Batch 38: the setup guide checks at render time which of its screenshots
- * exist (src/lib/ad-packs/guide-server.ts), so the folder travels with /leads/ads.
+ * exist (src/lib/ad-packs/guide-server.ts), so the folder travels with /leads/ads/guide (the guide's own page since 38c).
  */
 const AD_PACK_GUIDE_SHOTS = ["public/ad-packs/guide/*.png"];
 
@@ -46,7 +46,8 @@ const nextConfig: NextConfig = {
     "/api/internal/crm-deliveries": PDF_ASSETS,
     // Batch 23: Stayful Intelligence's contact card embeds its photo.
     "/si/card": ["public/images/si-contact.png"],
-    "/leads/ads": [...AD_PACK_FONTS, ...AD_PACK_GUIDE_SHOTS],
+    "/leads/ads": AD_PACK_FONTS,
+    "/leads/ads/guide": AD_PACK_GUIDE_SHOTS,
     "/admin/ad-packs": AD_PACK_FONTS,
     "/api/internal/ad-pack-renders": AD_RENDER_FILES,
   },

@@ -38,7 +38,7 @@ export const PHOTO_MESSAGES = {
   too_big: 'That photo is bigger than 5 MB. Please choose a smaller one.',
   type: 'Please choose a JPG or PNG photo.',
   full: 'You have already uploaded a lot of photos. Please use the ones you have, or get in touch.',
-  limit: 'A pack can use up to 4 photos.',
+  limit: 'You can use up to 4 photos.',
   failed: 'We could not save that photo just now. Please try again.',
 } as const;
 

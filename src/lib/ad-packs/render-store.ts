@@ -73,7 +73,18 @@ export type RenderRow = {
   files: AdVideoReady | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * The completion email (notify-core.ts): when it was claimed (and, once sent, sent) and which result it was for.
+   * Null until then; a voice change or a retry that re-queues the row resets both so the new result emails again.
+   * Optional so a literal row without them (a test's) still types; toRenderRow always sets them.
+   */
+  notifiedAt?: string | null;
+  notifiedOutcome?: NotifyOutcome | null;
 };
+
+/** What the completion email was decided to be: the "ready" email, the "could not finish" email, or none ('skipped'). */
+export type NotifyOutcome = 'ready' | 'failed' | 'skipped';
+export const NOTIFY_OUTCOMES: readonly NotifyOutcome[] = ['ready', 'failed', 'skipped'];
 
 /** The error codes a render row may carry (short codes only; the column allows 60 characters). */
 export const RENDER_CODES = [
@@ -165,6 +176,19 @@ export interface RenderStore {
    * when there is none. Conditional: null when the row is `running` (a worker has it), and nothing is changed.
    */
   requeueRender(i: RenderRequeue): Promise<RenderRow | null>;
+  /**
+   * Finished renders (done or failed) that nobody has been told about yet and that finished at or after `sinceIso`,
+   * oldest first. The window is what bounds the tries of a send that keeps failing.
+   */
+  listUnnotified(sinceIso: string, limit: number): Promise<RenderRow[]>;
+  /**
+   * Claim the completion email of a finished render, atomically: one conditional update (notified_at is null AND the
+   * row is still in `state`) that sets notified_at = atIso and notified_outcome = outcome. Null when someone else
+   * claimed it, or the row was re-queued meanwhile. Returns the row as claimed.
+   */
+  claimNotify(i: { id: string; state: 'done' | 'failed'; outcome: NotifyOutcome; atIso: string }): Promise<RenderRow | null>;
+  /** Give a claim back after a failed send (only the claim made at `atIso`), so the next pass tries again. */
+  releaseNotify(id: string, atIso: string): Promise<void>;
 }
 
 // ── Settings (billing_settings, seeded by the Batch 38b block) ──
@@ -262,8 +286,10 @@ export function toRenderRow(r: Record<string, unknown>): RenderRow {
     files: video && video.status === 'ready' ? video : null,
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
+    notifiedAt: typeof r.notified_at === 'string' ? r.notified_at : null,
+    notifiedOutcome: (NOTIFY_OUTCOMES as readonly unknown[]).includes(r.notified_outcome) ? (r.notified_outcome as NotifyOutcome) : null,
   };
 }
 
 export const RENDER_COLUMNS =
-  'id, pack_id, version, voice_key, state, sandbox_id, attempts, lease_until, started_at, finished_at, cost_pence, error_code, files, created_at, updated_at';
+  'id, pack_id, version, voice_key, state, sandbox_id, attempts, lease_until, started_at, finished_at, cost_pence, error_code, files, created_at, updated_at, notified_at, notified_outcome';

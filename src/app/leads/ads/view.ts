@@ -1,19 +1,18 @@
 /**
- * Batch 38 (Phase 8): what the ad pack screen says, as pure view models. The
- * page and the client component only lay these out; every sentence an operator
- * reads, every length indicator and every grouping of files is decided (and
- * tested) here, so no internal code, snake_case word or database field can
- * reach the screen.
+ * Batch 38 (Phase 8, redesigned in 38c): what the Facebook ads screens say, as
+ * pure view models. The page and the client components only lay these out;
+ * every sentence an operator reads and every grouping of files is decided (and
+ * tested) here, so no internal word, code, snake_case name or database field
+ * can reach the screen. The words are written for a busy landlord on a phone:
+ * short sentences, everyday words.
  *
- * Client-safe on purpose (the client component imports it): it uses only the
- * small pure modules (limits, links, eligibility) and type-only imports, never
+ * Client-safe on purpose (the client components import it): it uses only the
+ * small pure modules (eligibility, links, voices) and type-only imports, never
  * generate-core.ts (which needs node:crypto) or checks.ts.
  *
  * Pure: no network, no database, no server-only.
  */
-import { AD_LIMITS, checkLength, type LengthKind, type LengthLevel } from '../../../lib/ad-packs/limits.ts';
-import { plainReason, type EligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
-import { ANGLE_LABELS } from '../../../lib/ad-packs/links.ts';
+import type { EligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
 import type { Angle } from '../../../lib/ad-packs/codes.ts';
 import type { CheckId } from '../../../lib/ad-packs/checks.ts';
 import type { AdFiles, AdTexts, PackStatus } from '../../../lib/ad-packs/store-types.ts';
@@ -21,41 +20,108 @@ import type { PackView, VideoView } from '../../../lib/ad-packs/generate-core.ts
 import { VOICES, voiceByKey, type VoiceKey } from '../../../lib/ad-packs/voices.ts';
 
 export const ADS_PATH = '/leads/ads';
+export const GUIDE_PATH = '/leads/ads/guide';
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** The name of the screen, and the one line under it. */
+export const PAGE_TITLE = 'Your Facebook ads';
+export const START_INTRO = 'We’ll make 3 ready-to-use ads in your company’s colours: two pictures and a short video.';
 
-// ── Not eligible ──
+// ── Plain sentences for every refusal the server can give ──
+
+const TRY_AGAIN = 'Something went wrong. Please try again.';
+const GET_IN_TOUCH = 'Please get in touch and we will sort it out.';
+
+/**
+ * One plain sentence for every code the generator, the approve step and the video actions can refuse with. The
+ * generator's own messages use words the operator never sees (and some say "pack"), so the screen only ever
+ * says these.
+ */
+export const PLAIN_CODES: Record<string, string> = {
+  invalid_input: TRY_AGAIN,
+  no_pack: 'We could not find your ads. Please reload the page and try again.',
+  not_preview: 'Your ads have moved on since you opened this page. Please reload the page and try again.',
+  after_approval: 'You can only change the voice before you move on to the Facebook steps.',
+  same_voice: 'Your video already has that voice. Please pick a different one.',
+  voice_limit_used: 'You have already used your voice change.',
+  video_running: 'Your video is being made right now. Please wait until it is ready, then change the voice.',
+  not_retryable: 'There is nothing to try again right now.',
+  store_failed: TRY_AGAIN,
+  in_progress: 'Your ads are being made. Please give it a few minutes.',
+  no_brand_change: 'Nothing has changed since your last ads. Change your logo, colours, company name, fee, area or photos first, then try again.',
+  regen_used: 'You have already used your free chance to make new ads.',
+  not_enough_data: 'We do not have enough information for that area yet. Please try a bigger area nearby.',
+  render_failed: TRY_AGAIN,
+  upload_failed: TRY_AGAIN,
+  generate_failed: TRY_AGAIN,
+  cost_cap: `We could not make this just now. ${GET_IN_TOUCH}`,
+  monthly_cap: 'We cannot make any more ads right now. Please try again later, or get in touch.',
+  spend_unknown: 'We could not finish that just now. Please try again in a few minutes.',
+  video_pending: 'Your video is still being made. This button works as soon as it is ready.',
+  video_failed: 'Your video is not ready yet. Please look at the video above first.',
+};
+
+/** Words that must never reach an operator's screen (pinned by plain-language.test.ts). */
+const INTERNAL_WORDS = /\b(?:packs?|versions?|regenerat\w*|checks?|render\w*|codes?|allowance|hash|type-only|ad_\w+)\b|[a-z]+_[a-z]+|\bat \S+:\d+|Error:|undefined|\[object/i;
+
+/**
+ * One sentence for a refusal. The sentence for the code wins; a message from the server is used only for a code we do
+ * not know, and only when it reads as a plain sentence. Anything else falls back to "try again".
+ */
+export function plainRefusal(code: unknown, message: unknown): string {
+  if (typeof code === 'string' && Object.prototype.hasOwnProperty.call(PLAIN_CODES, code)) return PLAIN_CODES[code];
+  const m = typeof message === 'string' ? message.trim() : '';
+  const sentence = m.length >= 8 && m.length <= 300 && /\s/.test(m) && !INTERNAL_WORDS.test(m);
+  return sentence ? m : TRY_AGAIN;
+}
+
+// ── Cannot use yet ──
 
 export type NextStep = { text: string; href?: string; label?: string };
 
 const WEBSITE_SETUP = '/leads/setup/website';
 
+const ELIGIBILITY_PLAIN: Record<EligibilityReason, string> = {
+  not_owner: 'Only the person who owns the account can make the ads. Please ask them to open this page.',
+  no_academy: 'These ads come with the Academy. Once your Academy purchase is linked to this account, they will show up here.',
+  academy_refunded: 'These ads come with the Academy, and your Academy purchase was refunded.',
+  no_site: 'You need a website first, because your ads send people to it.',
+  site_not_live: 'Your website is not live yet. Put it live, then come back for your ads.',
+  no_domain: 'Your website needs its own .co.uk address first, because your ads send people there.',
+  domain_not_live: 'Your website address is not live yet. This can take a little while. We will email you when it is ready.',
+  switch_off: 'Your Facebook ads are not open yet. We will tell you as soon as they are.',
+};
+
 const NEXT_STEP: Record<EligibilityReason, NextStep> = {
   not_owner: { text: 'Ask the account owner to open this page.' },
   no_academy: { text: 'If you have joined the Academy, check it is linked to this account. If it still does not show, get in touch and we will sort it out.' },
   academy_refunded: { text: 'If that is not right, get in touch and we will look into it.' },
-  no_site: { text: 'Set up your website first.', href: WEBSITE_SETUP, label: 'Set up your website' },
-  site_not_live: { text: 'Finish your website and put it live.', href: WEBSITE_SETUP, label: 'Continue with your website' },
-  no_domain: { text: 'Choose your .co.uk address on your website page.', href: WEBSITE_SETUP, label: 'Choose your address' },
-  domain_not_live: { text: 'There is nothing to do. We email you when your address is live. Come back here then.' },
-  switch_off: { text: 'There is nothing to do yet. We will tell you as soon as it is open.' },
+  no_site: { text: 'Set up your website first.', href: WEBSITE_SETUP, label: 'Set up my website' },
+  site_not_live: { text: 'Finish your website and put it live.', href: WEBSITE_SETUP, label: 'Go to my website' },
+  no_domain: { text: 'Choose your .co.uk address on your website page.', href: WEBSITE_SETUP, label: 'Choose my address' },
+  domain_not_live: { text: 'There is nothing to do. Come back when you get our email.' },
+  switch_off: { text: 'There is nothing to do yet.' },
 };
 
-export type EligibilityView = { title: string; sentences: string[]; next: NextStep[] };
+/** The plain sentence for one reason (no code, no jargon). */
+export const eligibilitySentence = (r: EligibilityReason): string => ELIGIBILITY_PLAIN[r] ?? 'Your Facebook ads are not available for this account yet.';
 
-/** Why the pack is not available, in plain sentences, and what to do next. No codes: only the sentences. */
+export type EligibilityView = { title: string; message: string; next: NextStep | null };
+
+/**
+ * Why the ads are not available yet, in ONE plain message (the most basic reason), and the one thing to do next.
+ * No codes: only sentences.
+ */
 export function eligibilityView(reasons: readonly EligibilityReason[]): EligibilityView {
-  const list = [...new Set(reasons)];
-  const title = list.length === 1 && list[0] === 'not_owner' ? 'Only the account owner can set up the ad pack' : 'Your ad pack is not ready yet';
-  const next: NextStep[] = [];
-  for (const r of list) {
-    const step = NEXT_STEP[r];
-    if (step && !next.some((n) => n.text === step.text)) next.push(step);
-  }
-  return { title, sentences: list.map(plainReason), next };
+  const first = reasons[0];
+  if (!first) return { title: 'Your Facebook ads are not ready yet', message: 'Your Facebook ads are not available for this account yet.', next: null };
+  return {
+    title: first === 'not_owner' ? 'Only the account owner can do this' : 'Your Facebook ads are not ready yet',
+    message: eligibilitySentence(first),
+    next: NEXT_STEP[first] ?? null,
+  };
 }
 
-// ── The brand an ad pack uses (read from the operator's website, never from the browser) ──
+// ── The brand the ads use (read from the operator's website, never from the browser) ──
 
 export type BrandProblem = 'company' | 'colour';
 
@@ -71,9 +137,8 @@ export type SiteBrandInput = {
 export type PackBrand = { company: string; logoUrl: string | null; brandColour: string | null; feePct: number | null; areas: string[]; photoUrl: string | null };
 
 /**
- * The brand a pack is made from, taken from the website's settings. A logo that
- * is not a secure (https) address counts as no logo. `problems` are the things
- * the operator cannot fix on this screen (the company name and the colour).
+ * The brand the ads are made from, taken from the website's settings. A logo that is not a secure (https) address
+ * counts as no logo. `problems` are the things the operator cannot fix on this screen (the company name and the colour).
  */
 export function brandOfSettings(s: SiteBrandInput): { brand: PackBrand; problems: BrandProblem[] } {
   const company = String(s.companyName ?? '').trim();
@@ -95,18 +160,29 @@ export function brandOfSettings(s: SiteBrandInput): { brand: PackBrand; problems
 }
 
 const PROBLEM_TEXT: Record<BrandProblem, string> = {
-  company: 'Your website has no company name yet, so we cannot put it on your ads. Get in touch and we will add it.',
-  colour: 'Your website has no brand colour yet, so we cannot colour your ads. Get in touch and we will add it.',
+  company: `Your website has no company name yet, so we cannot put it on your ads. ${GET_IN_TOUCH}`,
+  colour: `Your website has no brand colour yet, so we cannot colour your ads. ${GET_IN_TOUCH}`,
 };
 
 export function brandProblemText(p: BrandProblem): string {
   return PROBLEM_TEXT[p];
 }
 
-export const NO_LOGO_TEXT = 'You have no logo on your website. Your ads can show your company name in type instead.';
-export const LOGO_REFUSAL = 'Please tick the box to use your company name in type, or add a logo to your website first.';
+export const NO_LOGO_TEXT = 'Your website has no logo, so we’ll show your company name instead.';
+export const LOGO_REFUSAL = 'Please tick the box to show your company name instead of a logo, or add a logo to your website first.';
 
-// ── The area step ──
+// ── The start form ──
+
+export const AREA_LABEL = 'Where do you want to find landlords?';
+export const AREA_HINT = 'Pick the town or area you want your enquiries to come from.';
+export const AREA_PLACEHOLDER = 'Choose a place';
+export const VOICE_STEP_TITLE = 'Pick a voice for your video';
+export const VOICE_STEP_HELP = 'Tap the play button to hear each voice.';
+export const PHOTOS_TITLE = 'Add your own photos (optional)';
+export const PHOTOS_HELP = 'We put them behind the words on your ads. Use JPG or PNG, up to 4. Without photos, your ads use your colour and logo.';
+export const START_BUTTON = 'Make my ads';
+export const START_BUTTON_AGAIN = 'Try again';
+export const MAKING_ADS_TEXT = 'Making your ads… this takes about a minute. Please keep this page open.';
 
 export type AreaPreviewInput =
   | { error: 'not_enough_data'; message?: string }
@@ -114,59 +190,14 @@ export type AreaPreviewInput =
 
 export type AreaPreviewView = { ok: boolean; bedrooms: number | null; text: string };
 
-/** What the operator is told under the area pick list: the bedroom size we will use, and that they cannot change it. */
+/** What the operator is told under the area list: the home size we will show (we pick it, they do not need to). */
 export function areaPreviewView(r: AreaPreviewInput): AreaPreviewView {
-  if ('error' in r) return { ok: false, bedrooms: null, text: 'There is not enough data in that area yet. Try the wider area around it, or another area.' };
-  const base = `We will use a typical ${r.bedrooms}-bed. It is the most common size in ${r.areaLabel}, from ${plural(r.samples, 'report', 'reports')}. You do not need to choose this: we pick it for you.`;
-  return { ok: true, bedrooms: r.bedrooms, text: r.fellBack ? `There were too few reports for the exact area you picked, so your ads use the wider area, ${r.areaLabel}. ${base}` : base };
+  if ('error' in r) return { ok: false, bedrooms: null, text: PLAIN_CODES.not_enough_data };
+  const base = `Your ads will show a typical ${r.bedrooms}-bedroom home, the most common size in ${r.areaLabel}. We pick this for you.`;
+  return { ok: true, bedrooms: r.bedrooms, text: r.fellBack ? `We did not have enough information for the exact place you picked, so your ads use the wider area, ${r.areaLabel}. ${base}` : base };
 }
 
-// ── Text lengths ──
-
-export type LengthView = {
-  length: number;
-  level: LengthLevel;
-  /** "Good length", "A bit long", "Too long": words as well as a colour. */
-  word: string;
-  /** Tailwind classes for the small badge. */
-  badge: string;
-  /** "27 characters". */
-  counter: string;
-  /** Meta's recommendation and this pack's limit, always shown. */
-  limits: string;
-  /** Anything else worth saying about this text. */
-  notes: string[];
-};
-
-const LEVEL_WORD: Record<LengthLevel, string> = { green: 'Good length', amber: 'A bit long', red: 'Too long' };
-const LEVEL_BADGE: Record<LengthLevel, string> = {
-  green: 'bg-success/15 text-success',
-  amber: 'bg-warning/15 text-warning',
-  red: 'bg-destructive/15 text-destructive',
-};
-
-function limitsText(kind: LengthKind): string {
-  if (kind === 'headline') return `Meta recommends ${AD_LIMITS.headline.recommended} characters or fewer. This pack allows up to ${AD_LIMITS.headline.hard}.`;
-  if (kind === 'primary') return `Meta shows about the first ${AD_LIMITS.primary.visible} characters, then "See more". This pack allows up to ${AD_LIMITS.primary.hard}.`;
-  return `This pack allows up to ${AD_LIMITS.description.hard}. Meta may cut it off on some placements past ${AD_LIMITS.description.metaVisible} characters.`;
-}
-
-/** The live length indicator for one text: green, amber or red, with both limits. */
-export function lengthView(kind: LengthKind, text: string): LengthView {
-  const c = checkLength(kind, text);
-  return {
-    length: c.length,
-    level: c.level,
-    word: LEVEL_WORD[c.level],
-    badge: LEVEL_BADGE[c.level],
-    counter: `${c.length} ${c.length === 1 ? 'character' : 'characters'}`,
-    limits: limitsText(kind),
-    // The description's "cut off past 30" note is part of `limits` already.
-    notes: c.notes.filter((n) => !/cut off on some placements/i.test(n)),
-  };
-}
-
-// ── What can be copied ──
+// ── What can be copied (the guide) ──
 
 export const COPY_KINDS = ['name', 'link', 'primary', 'headline', 'description'] as const;
 export type CopyKind = (typeof COPY_KINDS)[number];
@@ -181,21 +212,20 @@ export type CopyItem = {
   label: string;
   /** Copied exactly as stored: no trimming, no changes. */
   text: string;
-  length: LengthView | null;
 };
 
 export type AdCopy = { name: CopyItem; link: CopyItem; primary: CopyItem[]; headlines: CopyItem[]; descriptions: CopyItem[] };
 
-/** Everything an operator copies from one ad, each with its own label and (for the three texts) its length indicator. */
+/** Everything an operator copies from one ad, each with the name we use for it on screen. */
 export function adCopyItems(ad: { adName: string; link: string; texts: Pick<AdTexts, 'primary' | 'headlines' | 'descriptions'> }): AdCopy {
-  const list = (kind: 'primary' | 'headline' | 'description', texts: readonly string[], noun: string): CopyItem[] =>
-    texts.map((text, index) => ({ key: `${kind}-${index}`, kind, index, label: texts.length > 1 ? `${noun} ${index + 1}` : noun, text, length: lengthView(kind, text) }));
+  const list = (kind: 'primary' | 'headline' | 'description', texts: readonly string[], label: string): CopyItem[] =>
+    texts.map((text, index) => ({ key: `${kind}-${index}`, kind, index, label, text }));
   return {
-    name: { key: 'name', kind: 'name', index: 0, label: 'Ad name', text: ad.adName, length: null },
-    link: { key: 'link', kind: 'link', index: 0, label: 'Link', text: ad.link, length: null },
-    primary: list('primary', ad.texts.primary ?? [], 'Primary text'),
+    name: { key: 'name', kind: 'name', index: 0, label: 'Ad name', text: ad.adName },
+    link: { key: 'link', kind: 'link', index: 0, label: 'Website link', text: ad.link },
+    primary: list('primary', ad.texts.primary ?? [], 'Main text'),
     headlines: list('headline', ad.texts.headlines ?? [], 'Headline'),
-    descriptions: list('description', ad.texts.descriptions ?? [], 'Description'),
+    descriptions: list('description', ad.texts.descriptions ?? [], 'Extra line'),
   };
 }
 
@@ -207,85 +237,104 @@ export function copyTargetExists(ad: { texts: Pick<AdTexts, 'primary' | 'headlin
   return index < (list ?? []).length;
 }
 
-// ── Image files ──
+// ── Picture files ──
 
-export type FileLabel = { name: string; size: string; width: number; height: number };
+export type SizeKey = '4x5' | '9x16' | '1x1';
+export type FileLabel = { name: string; size: string; ratio: SizeKey; width: number; height: number };
 export type CardFiles = { card: number; files: FileLabel[]; previewName: string };
 
-const SIZE_WORDS: Record<string, string> = { '1x1': 'Square 1:1', '4x5': 'Portrait 4:5', '9x16': 'Stories 9:16' };
+/** The three sizes in the order they are offered, in the words Facebook uses for where they show. */
+export const SIZE_INFO: Record<SizeKey, { label: string; hint: string; order: number }> = {
+  '4x5': { label: 'Feed', hint: 'Best for most people. Shows in the Facebook and Instagram feed.', order: 0 },
+  '9x16': { label: 'Full screen', hint: 'For Stories and Reels on a phone.', order: 1 },
+  '1x1': { label: 'Square', hint: 'Only if Facebook asks for a square one.', order: 2 },
+};
+
 const FILE_NAME = /^[a-z0-9]+-card(\d+)-(1x1|4x5|9x16)\.png$/i;
 
-/** An ad's image files grouped by card, each with a plain size label; the preview is the portrait 4:5 file when there is one. */
+/** An ad's picture files grouped by picture, each with a plain size word; the preview is the feed (4:5) file when there is one. */
 export function groupCardFiles(files: readonly { name: string; width: number; height: number }[]): CardFiles[] {
   const byCard = new Map<number, FileLabel[]>();
   for (const f of files) {
     const m = FILE_NAME.exec(f.name);
     if (!m) continue;
     const card = Number(m[1]);
+    const ratio = m[2].toLowerCase() as SizeKey;
     const list = byCard.get(card) ?? [];
-    list.push({ name: f.name, size: SIZE_WORDS[m[2].toLowerCase()] ?? m[2], width: f.width, height: f.height });
+    list.push({ name: f.name, size: SIZE_INFO[ratio].label, ratio, width: f.width, height: f.height });
     byCard.set(card, list);
   }
   return [...byCard.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([card, list]) => ({ card, files: list, previewName: (list.find((f) => /-4x5\.png$/i.test(f.name)) ?? list[0]).name }));
+    .map(([card, list]) => ({ card, files: list, previewName: (list.find((f) => f.ratio === '4x5') ?? list[0]).name }));
 }
 
-export const angleTitle = (angle: Angle): string => ANGLE_LABELS[angle] ?? 'Ad';
+// ── The three ads, by their plain names ──
 
-// ── A pack that did not pass its checks ──
+export const AD_TITLES: Record<Angle, { number: number; title: string; blurb: string }> = {
+  '5b': { number: 1, title: 'Your tenant has given notice', blurb: 'A short video for landlords whose tenant has given notice.' },
+  '3a': { number: 2, title: 'Moving abroad', blurb: 'Pictures for landlords who are moving away from their home.' },
+  '17': { number: 3, title: 'The renting rules have changed', blurb: 'Pictures that tell landlords the renting rules have changed.' },
+};
+
+export const adHeading = (angle: Angle): string => {
+  const t = AD_TITLES[angle];
+  return t ? `Ad ${t.number}: ${t.title}` : 'Your ad';
+};
+
+// ── What went wrong while making the ads ──
 
 const CHECK_PLAIN: Record<CheckId, string> = {
   brand: 'Your company name, logo or colour could not be placed on every ad.',
   source_brand: 'Something in the ads did not belong to your business.',
   figures: 'The example figure could not be shown with its label.',
-  length: 'One of the texts was too long for Meta.',
-  claims: 'A line sounded like a promise about what you will earn.',
-  links: 'A link could not be tagged to its ad.',
-  files: 'An image was not the right size.',
-  video: 'The video was not made properly.',
+  length: 'One of the texts was too long for Facebook.',
+  claims: 'One line sounded like a promise about what you will earn.',
+  links: 'A link could not be matched to its ad.',
+  files: 'A picture was not the right size.',
+  video: 'The video did not come out right.',
 };
 export const CHECK_PLAIN_IDS = Object.keys(CHECK_PLAIN) as CheckId[];
 
-export type ChecksFailedView = { title: string; lines: string[]; contact: string };
+export type ProblemView = { title: string; lines: string[]; contact: string };
 
-/** "We couldn't build your pack yet": the failed checks in plain English (one line each), never a code. */
-export function checksFailedView(checks: { failures: readonly { check: string }[] } | null | undefined): ChecksFailedView {
+/** "We couldn't finish your ads": what went wrong in plain English (one line each), never a code. */
+export function problemView(checks: { failures: readonly { check: string }[] } | null | undefined): ProblemView {
   const seen: string[] = [];
   for (const f of checks?.failures ?? []) if (!seen.includes(f.check)) seen.push(f.check);
   const lines = seen.map((id) => (CHECK_PLAIN as Record<string, string>)[id]).filter((l): l is string => typeof l === 'string');
   return {
-    title: "We couldn't build your pack yet",
-    lines: lines.length > 0 ? lines : ['Something in the pack did not pass our checks.'],
-    contact: 'Please contact support and we will sort it out. There is nothing you need to fix, and nothing has gone live.',
+    title: 'We could not finish your ads',
+    lines: lines.length > 0 ? lines : ['Something in your ads did not come out right.'],
+    contact: `${GET_IN_TOUCH} There is nothing you need to fix, and nothing has gone live.`,
   };
 }
 
-// ── The entry card on /leads ──
+// ── The card on /leads ──
 
 export type EntryCardView = { title: string; body: string; cta: string };
 
-/** The "Your ad pack" card: what it says for a pack in each state (null: no pack yet). */
+/** The "Your Facebook ads" card: what it says for the ads in each state (null: none made yet). */
 export function entryCardView(status: PackStatus | null): EntryCardView {
   switch (status) {
     case null:
     case 'draft':
-      return { title: 'Your ad pack', body: 'Three Facebook ads for landlords, in your own brand, ready to upload to your own Meta account.', cta: 'Make my ads' };
+      return { title: 'Your Facebook ads', body: 'We make 3 ready-to-use ads in your company’s colours: two pictures and a short video.', cta: 'Make my ads' };
     case 'generating':
-      return { title: 'Your ads are being made', body: 'This takes a few minutes. Open it to check.', cta: 'Open my ads' };
+      return { title: 'Your ads are being made', body: 'This takes a few minutes. Open it to see how it is going.', cta: 'See my ads' };
     case 'preview':
-      return { title: 'Your ads are ready to look at', body: 'Have a look, then approve them to get the images and texts.', cta: 'Look at my ads' };
+      return { title: 'Your ads are ready to look at', body: 'Have a look, then follow the steps to put them on Facebook.', cta: 'Look at my ads' };
     case 'approved':
-      return { title: 'Your ads are ready to use', body: 'Download the images and copy the texts for Facebook.', cta: 'Open my ads' };
+      return { title: 'Your ads are ready to use', body: 'Download your ads, then follow the steps to put them on Facebook.', cta: 'Open my ads' };
     case 'checks_failed':
     case 'failed':
-      return { title: 'Your ad pack needs a look', body: 'We could not finish it. Open it to see what to do next.', cta: 'Open my ads' };
+      return { title: 'Your ads need a look', body: 'We could not finish them. Open it to see what to do next.', cta: 'Open my ads' };
   }
 }
 
 // ── The example figure ──
 
-/** The labelled example figure a pack rests on (ad_packs.figures[0]), or null. Only the two sentences are ever read from it. */
+/** The labelled example figure the ads rest on (the first one), or null. Only the two sentences are ever read from it. */
 export function figureCallout(figures: readonly unknown[] | null | undefined): { label: string; sentence: string } | null {
   const f = Array.isArray(figures) ? figures[0] : null;
   if (!f || typeof f !== 'object') return null;
@@ -295,99 +344,35 @@ export function figureCallout(figures: readonly unknown[] | null | undefined): {
   return label !== '' ? { label, sentence } : null;
 }
 
-// ── One ad, ready to lay out ──
+// ── The voice step ──
 
-export type AdCardVm = { card: number; previewUrl: string | null; files: FileLabel[] };
-
-export type AdVm = {
-  id: string;
-  angle: Angle;
-  title: string;
-  code: string;
-  adName: string;
-  copy: AdCopy;
-  cards: AdCardVm[];
-  /** The notice ad's video (38b), null for an image ad. */
-  video: VideoVm | null;
-};
-
-/**
- * Everything the screen shows for one pack ad. `urlOf` turns a stored path into a view link (or null). `live` is the
- * 5b video's live state from the pack read (it follows the render row); without it the ad's own video slot decides.
- */
-export function adViewModel(
-  ad: { id: string; angle: Angle; code: string; adName: string; link: string; texts: Pick<AdTexts, 'primary' | 'headlines' | 'descriptions'>; files: AdFiles },
-  urlOf: (path: string) => string | null,
-  live?: Pick<VideoView, 'status' | 'code' | 'poll' | 'canRetry' | 'message'> | null,
-): AdVm {
-  const pathOf = (name: string) => ad.files.images.find((f) => f.name === name)?.path ?? null;
-  return {
-    id: ad.id,
-    angle: ad.angle,
-    title: angleTitle(ad.angle),
-    code: ad.code,
-    adName: ad.adName,
-    copy: adCopyItems(ad),
-    cards: groupCardFiles(ad.files.images).map((c) => {
-      const path = pathOf(c.previewName);
-      return { card: c.card, previewUrl: path ? urlOf(path) : null, files: c.files };
-    }),
-    video: ad.angle === '5b' ? videoVm(ad.files.video, live ?? videoViewOfSlot(ad.files.video), urlOf) : null,
-  };
-}
-
-// ── The voice step (38b) ──
-
-export const VOICE_STEP_TITLE = 'Pick the voice for your video';
-export const VOICE_STEP_HELP = 'Pick the voice for your video. Press play to hear it first.';
 export const VOICE_CHANGE_TITLE = 'Change the voice';
-export const VOICE_REMAKE_NOTE = 'Your video is made again with the new voice. That takes 3 to 6 minutes.';
+export const VOICE_CHANGE_BUTTON = 'Use this voice and make my video again';
+export const VOICE_REMAKE_NOTE = 'Your video is made again with the new voice. This takes about 5 to 10 minutes, and we’ll email you when it’s ready.';
 
 export type VoiceCardVm = { key: VoiceKey; label: string; description: string; previewUrl: string };
 
-/** The three voices, each with the free sample clip the operator plays before choosing. */
-export function voiceCards(): VoiceCardVm[] {
-  return VOICES.map((v) => ({ key: v.key, label: v.label, description: v.description, previewUrl: v.previewUrl }));
-}
-
-// ── Plain words for the video actions (38b) ──
-
-const TRY_AGAIN = 'Something went wrong. Please try again.';
-
-/** Every refusal changeVoice and retryVideo can give, as one plain sentence (the generator's own wording where it has some). */
-export const VIDEO_ACTION_TEXT: Record<string, string> = {
-  invalid_input: TRY_AGAIN,
-  no_pack: 'We could not find your pack. Please reload the page and try again.',
-  not_preview: 'Only a pack that is ready to look at can be changed. Please reload the page and look at it again.',
-  after_approval: 'You can change the voice before you approve your ads.',
-  same_voice: 'That is the voice your video already has. Choose a different one.',
-  voice_limit_used: 'You have already used your voice change.',
-  video_running: 'Your video is being made right now. Wait until it is finished, then change the voice.',
-  not_retryable: 'There is nothing to try again right now.',
-  store_failed: TRY_AGAIN,
-  cost_cap: 'This pack would cost more than the limit for one pack, so it was not made.',
-  monthly_cap: 'The limit for making packs this month has been reached. Try again next month.',
-  spend_unknown: 'We could not check this month’s limit just now. Try again shortly.',
+/** A few words for each voice, short enough to sit on one line of a phone. */
+const VOICE_SHORT: Record<VoiceKey, string> = {
+  jane: 'A warm woman, British',
+  olivia: 'A friendly woman, British',
+  oliver: 'A calm man, British',
 };
 
-/**
- * One sentence for a refusal. The generator's message is used when it reads as a sentence; anything that looks like an
- * internal code, a stack line or is not text at all falls back to the sentence for the code, then to "try again".
- */
-export function videoActionMessage(code: unknown, message: unknown): string {
-  const m = typeof message === 'string' ? message.trim() : '';
-  const sentence = m.length >= 8 && m.length <= 300 && /\s/.test(m) && !/[a-z]+_[a-z]+|\bat \S+:\d+|Error:|undefined|\[object/.test(m);
-  if (sentence) return m;
-  return (typeof code === 'string' ? VIDEO_ACTION_TEXT[code] : undefined) ?? TRY_AGAIN;
+/** The three voices, each with the free sample clip the operator plays before choosing. */
+export function voiceCards(): VoiceCardVm[] {
+  return VOICES.map((v) => ({ key: v.key, label: v.label, description: VOICE_SHORT[v.key], previewUrl: v.previewUrl }));
 }
 
-// ── The video's state, as the screen says it (38b) ──
+// ── The video's state, as the screen says it ──
 
-export const VIDEO_MAKING_TEXT = 'Making your video… this usually takes 3 to 6 minutes. You can leave this page and come back.';
-export const VIDEO_SLOW_TEXT = 'This is taking longer than usual. You can leave this page and come back later: your video keeps being made.';
-export const VOICE_UNAVAILABLE_TEXT = "That voice isn't available yet. Please choose another.";
-export const VIDEO_CONTACT_TEXT = 'We could not make your video. Please contact support and we will sort it out. Nothing has gone live.';
-export const VIDEO_MISSING_TEXT = 'There is no video with this pack yet. Please contact support and we will add it.';
+export const VIDEO_MAKING_TEXT = 'Your video is being made. This takes about 5 to 10 minutes. You can close this page: we’ll email you when it’s ready.';
+export const VIDEO_SLOW_TEXT = 'This is taking longer than usual. You can close this page: your video keeps being made, and we’ll email you when it’s ready.';
+export const VIDEO_FINISHING_TEXT = 'Your video is ready. Loading it now…';
+export const VOICE_UNAVAILABLE_TEXT = 'That voice is not available right now. Please pick another voice and we will make your video again.';
+export const VIDEO_RETRY_TEXT = 'This sometimes happens. Please try again.';
+export const VIDEO_CONTACT_TEXT = `${GET_IN_TOUCH} Nothing has gone live.`;
+export const VIDEO_MISSING_TEXT = `There is no video here yet. ${GET_IN_TOUCH}`;
 
 /** What the operator can do about the video: nothing, try again, choose another voice, or ask us. */
 export type VideoAction = 'none' | 'retry' | 'change_voice' | 'contact';
@@ -408,12 +393,12 @@ export function videoCardView(v: VideoLike): VideoCardView {
   switch (v.status) {
     case 'queued':
     case 'making':
-      return { state: v.status, heading: 'Making your video', message: VIDEO_MAKING_TEXT, poll: true, action: 'none' };
+      return { state: v.status, heading: 'Your video is being made', message: VIDEO_MAKING_TEXT, poll: true, action: 'none' };
     case 'ready':
       return { state: 'ready', heading: 'Your video', message: null, poll: false, action: 'none' };
     case 'failed':
-      if (v.code === 'voice_unavailable') return { state: 'failed', heading: 'Your video needs another voice', message: VOICE_UNAVAILABLE_TEXT, poll: false, action: 'change_voice' };
-      if (v.canRetry) return { state: 'failed', heading: 'We could not make your video', message: videoActionMessage(null, v.message), poll: false, action: 'retry' };
+      if (v.code === 'voice_unavailable') return { state: 'failed', heading: 'Please pick another voice', message: VOICE_UNAVAILABLE_TEXT, poll: false, action: 'change_voice' };
+      if (v.canRetry) return { state: 'failed', heading: 'We could not make your video', message: VIDEO_RETRY_TEXT, poll: false, action: 'retry' };
       return { state: 'failed', heading: 'We could not make your video', message: VIDEO_CONTACT_TEXT, poll: false, action: 'contact' };
     default:
       return { state: 'coming', heading: 'Your video', message: VIDEO_MISSING_TEXT, poll: false, action: 'contact' };
@@ -429,13 +414,13 @@ export function videoViewOfSlot(video: AdFiles['video']): VideoLike {
 
 // ── The video files ──
 
-export type VideoFileVm = { name: string; label: string; ratio: '9:16' | '4:5' | '1:1'; width: number; height: number };
+export type VideoFileVm = { name: string; label: string; ratio: '9:16' | '4:5' | '1:1'; size: SizeKey; width: number; height: number };
 
-/** The three sizes, in the order they are offered, named the way Meta names the placements. */
-export const VIDEO_FILE_LABELS: Record<string, { label: string; ratio: VideoFileVm['ratio']; order: number }> = {
-  'notice-9x16.mp4': { label: 'Stories and Reels (9:16)', ratio: '9:16', order: 0 },
-  'notice-4x5.mp4': { label: 'Feed (4:5)', ratio: '4:5', order: 1 },
-  'notice-1x1.mp4': { label: 'Square (1:1)', ratio: '1:1', order: 2 },
+/** The three video sizes, in the order they are offered. The full screen one plays first. */
+export const VIDEO_FILE_LABELS: Record<string, { label: string; ratio: VideoFileVm['ratio']; size: SizeKey; order: number }> = {
+  'notice-9x16.mp4': { label: 'Full screen', ratio: '9:16', size: '9x16', order: 0 },
+  'notice-4x5.mp4': { label: 'Feed', ratio: '4:5', size: '4x5', order: 1 },
+  'notice-1x1.mp4': { label: 'Square', ratio: '1:1', size: '1x1', order: 2 },
 };
 export const VIDEO_POSTER_NAME = 'notice-poster.png';
 export const isVideoFileName = (name: unknown): name is string => typeof name === 'string' && Object.prototype.hasOwnProperty.call(VIDEO_FILE_LABELS, name);
@@ -446,7 +431,7 @@ export function videoFilesOf(video: AdFiles['video']): { files: VideoFileVm[]; p
   const files = video.videos
     .filter((f) => isVideoFileName(f.name))
     .sort((a, b) => VIDEO_FILE_LABELS[a.name].order - VIDEO_FILE_LABELS[b.name].order)
-    .map((f): VideoFileVm => ({ name: f.name, label: VIDEO_FILE_LABELS[f.name].label, ratio: VIDEO_FILE_LABELS[f.name].ratio, width: f.width, height: f.height }));
+    .map((f): VideoFileVm => ({ name: f.name, label: VIDEO_FILE_LABELS[f.name].label, ratio: VIDEO_FILE_LABELS[f.name].ratio, size: VIDEO_FILE_LABELS[f.name].size, width: f.width, height: f.height }));
   return { files, poster: video.poster?.name === VIDEO_POSTER_NAME ? video.poster.name : null, seconds: video.durationSeconds > 0 ? Math.round(video.durationSeconds) : null };
 }
 
@@ -459,7 +444,7 @@ export type VideoVm = {
   seconds: number | null;
 };
 
-/** The 5b ad's video: its live state, and (when ready) its files with view links. */
+/** The notice ad's video: its live state, and (when ready) its files with view links. */
 export function videoVm(video: AdFiles['video'], live: VideoLike, urlOf: (path: string) => string | null): VideoVm {
   const card = videoCardView(live);
   const { files, poster, seconds } = card.state === 'ready' ? videoFilesOf(video) : { files: [], poster: null, seconds: null };
@@ -473,19 +458,88 @@ export function videoVm(video: AdFiles['video'], live: VideoLike, urlOf: (path: 
   return { card, files, poster, urls, seconds };
 }
 
-// ── Approve: why it may not be pressed yet ──
+// ── One ad, ready to lay out ──
+
+export type AdCardVm = { card: number; previewUrl: string | null; files: FileLabel[] };
+
+/** One size of one ad's files, to download in one tap. A picture ad has one file per picture; the video has one file. */
+export type DownloadGroup = { key: SizeKey; label: string; hint: string; files: string[] };
+
+export type AdVm = {
+  id: string;
+  angle: Angle;
+  /** 1, 2 or 3. */
+  number: number;
+  /** "Ad 1: Your tenant has given notice". */
+  heading: string;
+  blurb: string;
+  adName: string;
+  copy: AdCopy;
+  cards: AdCardVm[];
+  /** The notice ad's video, null for a picture ad. */
+  video: VideoVm | null;
+  /** What can be downloaded now, by size (empty while the video is still being made). */
+  downloads: DownloadGroup[];
+};
+
+/** The downloads of one ad by size: a picture ad's whole set of pictures per size, or the video's file per size. */
+export function downloadGroups(ad: { cards: readonly AdCardVm[]; video: VideoVm | null }): DownloadGroup[] {
+  const bySize = new Map<SizeKey, string[]>();
+  if (ad.video) {
+    for (const f of ad.video.files) bySize.set(f.size, [...(bySize.get(f.size) ?? []), f.name]);
+  } else {
+    for (const c of ad.cards) for (const f of c.files) bySize.set(f.ratio, [...(bySize.get(f.ratio) ?? []), f.name]);
+  }
+  return [...bySize.entries()]
+    .sort((a, b) => SIZE_INFO[a[0]].order - SIZE_INFO[b[0]].order)
+    .map(([key, files]) => ({ key, label: SIZE_INFO[key].label, hint: SIZE_INFO[key].hint, files }));
+}
+
+/**
+ * Everything the screen shows for one ad. `urlOf` turns a stored path into a view link (or null). `live` is the
+ * notice video's live state from the pack read (it follows the render row); without it the ad's own video slot decides.
+ */
+export function adViewModel(
+  ad: { id: string; angle: Angle; adName: string; link: string; texts: Pick<AdTexts, 'primary' | 'headlines' | 'descriptions'>; files: AdFiles },
+  urlOf: (path: string) => string | null,
+  live?: Pick<VideoView, 'status' | 'code' | 'poll' | 'canRetry' | 'message'> | null,
+): AdVm {
+  const pathOf = (name: string) => ad.files.images.find((f) => f.name === name)?.path ?? null;
+  const cards = groupCardFiles(ad.files.images).map((c) => {
+    const path = pathOf(c.previewName);
+    return { card: c.card, previewUrl: path ? urlOf(path) : null, files: c.files };
+  });
+  const video = ad.angle === '5b' ? videoVm(ad.files.video, live ?? videoViewOfSlot(ad.files.video), urlOf) : null;
+  const meta = AD_TITLES[ad.angle];
+  return {
+    id: ad.id,
+    angle: ad.angle,
+    number: meta?.number ?? 0,
+    heading: adHeading(ad.angle),
+    blurb: meta?.blurb ?? '',
+    adName: ad.adName,
+    copy: adCopyItems(ad),
+    cards,
+    video,
+    downloads: downloadGroups({ cards, video }),
+  };
+}
+
+// ── Looks good: why it may not be pressed yet ──
 
 export type ApprovalVm = { ok: true } | { ok: false; message: string };
 
-const VIDEO_PENDING_TEXT = 'Your video is still being made. It usually takes a few minutes.';
+export const APPROVE_BUTTON = 'Looks good, show me how to put them on Facebook';
+export const APPROVE_EXPLAIN = 'This keeps these ads as your final ones and opens the steps for putting them on Facebook.';
+const VIDEO_PENDING_TEXT = 'This button works as soon as your video is ready.';
 
-/** Approve is off, with the plain reason, until the video is ready and every check has passed. */
+/** "Looks good" is off, with the plain reason, until the video is ready and the ads are fine. */
 export function approvalVm(view: Pick<PackView, 'approval' | 'video'>): ApprovalVm {
   if (view.approval.ok) return { ok: true };
   const s = view.video.status;
   if (s === 'queued' || s === 'making') return { ok: false, message: VIDEO_PENDING_TEXT };
-  if (s === 'failed' || s === 'coming') return { ok: false, message: videoCardView(view.video).message ?? VIDEO_CONTACT_TEXT };
-  return { ok: false, message: videoActionMessage(view.approval.code, view.approval.message) };
+  if (s === 'failed' || s === 'coming') return { ok: false, message: PLAIN_CODES.video_failed };
+  return { ok: false, message: plainRefusal(view.approval.code, view.approval.message) };
 }
 
 // ── Change voice ──
@@ -495,7 +549,7 @@ export type VoiceVm = {
   currentLabel: string | null;
   canChange: boolean;
   changesLeft: number;
-  /** The change would not use the allowance (the first voice could not be used). */
+  /** The change would not use up the one change (the first voice could not be used). */
   free: boolean;
   /** How many changes are left, in a sentence. */
   note: string;
@@ -507,8 +561,8 @@ export function voiceVm(v: PackView['voice']): VoiceVm {
   const note = v.free
     ? 'The first voice could not be used, so this change is free.'
     : v.changesLeft > 0
-      ? `You can change the voice ${v.changesLeft === 1 ? 'once' : `${v.changesLeft} times`} before you approve.`
-      : 'You have used your voice change.';
+      ? `You can change the voice ${v.changesLeft === 1 ? 'once' : `${v.changesLeft} times`} before you move on.`
+      : 'You have already used your voice change.';
   return {
     current: v.key,
     currentLabel: voiceByKey(v.key)?.label ?? null,
@@ -516,7 +570,7 @@ export function voiceVm(v: PackView['voice']): VoiceVm {
     changesLeft: v.changesLeft,
     free: v.free,
     note,
-    blocked: v.blocked ? videoActionMessage(v.blocked.code, v.blocked.message) : null,
+    blocked: v.blocked ? plainRefusal(v.blocked.code, v.blocked.message) : null,
   };
 }
 
@@ -529,16 +583,71 @@ export type PollStep = 'wait' | 'settled' | 'give_up';
 
 /**
  * What the screen does after an answer from the server: keep waiting, reload the page because the video has
- * settled (ready, failed, or the pack moved on), or stop and say it is taking longer than usual.
+ * settled (ready, failed, or the ads moved on), or stop and say it is taking longer than usual.
  */
 export function pollStep(i: { startedMs: number; nowMs: number; poll: boolean; versionChanged?: boolean }): PollStep {
   if (!i.poll || i.versionChanged) return 'settled';
   return i.nowMs - i.startedMs >= POLL_GIVE_UP_MS ? 'give_up' : 'wait';
 }
 
-/** The lightweight answer to a poll: what the video, the approve button and the voice step need, nothing else. */
+/** The lightweight answer to a poll: what the video, the "looks good" button and the voice step need, nothing else. */
 export type PollView = { version: number; video: VideoCardView; approval: ApprovalVm; voice: VoiceVm };
 
 export function pollViewOf(view: PackView): PollView {
   return { version: view.pack.version, video: videoCardView(view.video), approval: approvalVm(view), voice: voiceVm(view.voice) };
+}
+
+// ── Which screen (client-safe, from what the page already decided) ──
+
+/**
+ * The stage the page is on, from the ads' state and the video's state:
+ *   start     no ads yet (or a first try that failed)
+ *   working   the pictures are being made right now
+ *   problem   the ads did not come out right
+ *   making    the pictures are ready; the video is being made (or needs a hand)
+ *   review    everything is ready to look at
+ *   approved  the operator said "looks good"
+ */
+export type Stage = 'start' | 'working' | 'problem' | 'making' | 'review' | 'approved';
+
+export function stageOf(screen: 'start' | 'working' | 'preview' | 'approved' | 'checks_failed', video: VideoVm['card']['state'] | null): Stage {
+  switch (screen) {
+    case 'start':
+      return 'start';
+    case 'working':
+      return 'working';
+    case 'checks_failed':
+      return 'problem';
+    case 'approved':
+      return 'approved';
+    case 'preview':
+      return video === 'ready' ? 'review' : 'making';
+  }
+}
+
+// ── "More options": new ads after a change ──
+
+export const MORE_OPTIONS_TITLE = 'More options';
+export const REGEN_TITLE = 'Make new ads';
+export const REGEN_BUTTON = 'Make new ads';
+export const REGEN_NOTE = 'Your video keeps its voice. If you want a different voice, change it first, above.';
+
+/** What the "make new ads" part says: the free chance, or why there is none left. */
+export function regenIntro(left: number, reason: string | null): string {
+  if (left > 0) {
+    return `You can make new ads ${left === 1 ? 'once' : `${left} times`} for free. First change your logo, colours, company name or fee on your website, or change the place or photos below.`;
+  }
+  return reason ?? PLAIN_CODES.regen_used;
+}
+
+/**
+ * The files a screen needs a view link for: one picture per card (the feed size, which is what is shown), and for a
+ * ready video its three files and the first frame (the player gets its first link at once).
+ */
+export function previewPathsOf(files: AdFiles): string[] {
+  const paths = groupCardFiles(files.images)
+    .map((c) => files.images.find((f) => f.name === c.previewName)?.path ?? null)
+    .filter((p): p is string => p !== null);
+  if (files.video && files.video.status === 'ready') paths.push(...files.video.videos.map((f) => f.path), files.video.poster.path);
+  return paths;
 }

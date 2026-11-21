@@ -33,6 +33,31 @@ begin
     raise exception 'a new render must be queued with 0 attempts and 0 spent';
   end if;
 
+  -- The completion email: nothing is claimed on a new row; a claim is one conditional update that only one caller wins;
+  -- the outcome vocabulary is closed; a reset (voice change, retry) clears it so the next result emails again.
+  if (select notified_at is not null or notified_outcome is not null from public.ad_pack_renders where id = r) then
+    raise exception 'a new render must have no email claimed';
+  end if;
+  update public.ad_pack_renders set state = 'done' where id = r;
+  update public.ad_pack_renders set notified_at = now(), notified_outcome = 'ready' where id = r and state = 'done' and notified_at is null;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'the first claim of the email must win (got %)', n; end if;
+  update public.ad_pack_renders set notified_at = now(), notified_outcome = 'ready' where id = r and state = 'done' and notified_at is null;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'a second claim of the same email must lose (got %)', n; end if;
+  foreach t in array array['ready', 'failed', 'skipped'] loop
+    update public.ad_pack_renders set notified_outcome = t where id = r;
+  end loop;
+  begin
+    update public.ad_pack_renders set notified_outcome = 'sent' where id = r;
+    raise exception 'an unknown email outcome must be refused';
+  exception when check_violation then null; end;
+  update public.ad_pack_renders set notified_at = null, notified_outcome = null where id = r;
+  if (select notified_at is not null or notified_outcome is not null from public.ad_pack_renders where id = r) then
+    raise exception 'a reset must clear the email claim';
+  end if;
+  update public.ad_pack_renders set state = 'queued' where id = r;
+
   -- A version is rendered once; the next version (a voice change) is a new row.
   begin
     insert into public.ad_pack_renders (pack_id, version, voice_key) values (p, 1, 'olivia');

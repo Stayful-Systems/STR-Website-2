@@ -3,9 +3,11 @@
  * mirrors what the SQL does (conditional claim, conditional finish, unique
  * (pack, version)). Nothing in the app imports it.
  */
+import { readFileSync } from 'node:fs';
+import nodePath from 'node:path';
 import type { MemoryAdPackStore } from './test-store.ts';
 import type { PackRow } from './store-types.ts';
-import { RENDER_STATES, type RenderCounts, type RenderDone, type RenderFinish, type RenderRequeue, type RenderRow, type RenderStore } from './render-store.ts';
+import { RENDER_STATES, type NotifyOutcome, type RenderCounts, type RenderDone, type RenderFinish, type RenderRequeue, type RenderRow, type RenderStore } from './render-store.ts';
 import type { SandboxLike, SandboxRun, StorageLike } from './render-core.ts';
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -47,6 +49,8 @@ export class MemoryRenderStore implements RenderStore {
       files: null,
       createdAt: now,
       updatedAt: now,
+      notifiedAt: null,
+      notifiedOutcome: null,
     };
     this.rows.set(row.id, row);
     return { inserted: true, row: clone(row) };
@@ -142,7 +146,7 @@ export class MemoryRenderStore implements RenderStore {
     if (!r) {
       this.writes.push('requeue:insert');
       const now = this.stamp();
-      const row: RenderRow = { id: `render-${++this.seq}`, packId: i.packId, version: i.version, voiceKey: i.voiceKey, state: 'queued', sandboxId: null, attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null, costPence: 0, errorCode: null, files: null, createdAt: now, updatedAt: now };
+      const row: RenderRow = { id: `render-${++this.seq}`, packId: i.packId, version: i.version, voiceKey: i.voiceKey, state: 'queued', sandboxId: null, attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null, costPence: 0, errorCode: null, files: null, createdAt: now, updatedAt: now, notifiedAt: null, notifiedOutcome: null };
       this.rows.set(row.id, row);
       return clone(row);
     }
@@ -156,8 +160,35 @@ export class MemoryRenderStore implements RenderStore {
     r.leaseUntil = null;
     r.startedAt = null;
     r.finishedAt = null;
+    r.notifiedAt = null;
+    r.notifiedOutcome = null;
     r.updatedAt = this.stamp();
     return clone(r);
+  }
+
+  async listUnnotified(sinceIso: string, limit: number) {
+    return [...this.rows.values()]
+      .filter((r) => (r.state === 'done' || r.state === 'failed') && !r.notifiedAt && r.finishedAt !== null && r.finishedAt >= sinceIso)
+      .sort((a, b) => (a.finishedAt ?? '').localeCompare(b.finishedAt ?? '') || a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async claimNotify(i: { id: string; state: 'done' | 'failed'; outcome: NotifyOutcome; atIso: string }) {
+    const r = this.rows.get(i.id);
+    if (!r || r.state !== i.state || r.notifiedAt) return null;
+    this.writes.push(`notify:${i.outcome}`);
+    r.notifiedAt = i.atIso;
+    r.notifiedOutcome = i.outcome;
+    return clone(r);
+  }
+
+  async releaseNotify(id: string, atIso: string) {
+    const r = this.rows.get(id);
+    if (!r || r.notifiedAt !== atIso) return;
+    this.writes.push('notify:release');
+    r.notifiedAt = null;
+    r.notifiedOutcome = null;
   }
 
   async getPack(packId: string): Promise<PackRow | null> {
@@ -231,15 +262,34 @@ export class FakeSandboxes {
   };
 }
 
+/**
+ * The ad-packs bucket's allowed_mime_types, read from supabase/schema.sql (the one statement that creates the bucket).
+ * A FakeStorage given these refuses a type the real bucket would refuse (Supabase answers a disallowed type with an error).
+ */
+export function adPacksBucketMimeTypes(schemaSql: string = readFileSync(nodePath.join(process.cwd(), 'supabase', 'schema.sql'), 'utf8')): string[] {
+  const m = /insert into storage\.buckets[^;]*?values\s*\(\s*'ad-packs'[^;]*?array\[([^\]]*)\]/.exec(schemaSql);
+  if (!m) return [];
+  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+}
+
 export class FakeStorage implements StorageLike {
   files = new Map<string, { bytes: Uint8Array; contentType: string }>();
   puts: string[] = [];
+  /** Every content type that was put (accepted or refused). */
+  putTypes: string[] = [];
   failPut: ((path: string) => boolean) | null = null;
+  /** When set, a put with any other content type is refused, as the private bucket does. */
+  allowedTypes: ReadonlySet<string> | null = null;
+  /** When set, a put throws instead of answering (a network error). */
+  throwOnPut: ((path: string) => boolean) | null = null;
   async get(path: string) {
     return this.files.get(path)?.bytes ?? null;
   }
   async put(path: string, bytes: Uint8Array, contentType: string) {
     this.puts.push(path);
+    this.putTypes.push(contentType);
+    if (this.throwOnPut?.(path)) throw new Error('network down');
+    if (this.allowedTypes && !this.allowedTypes.has(contentType)) return { ok: false };
     if (this.failPut?.(path)) return { ok: false };
     this.files.set(path, { bytes, contentType });
     return { ok: true };
