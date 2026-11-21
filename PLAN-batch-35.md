@@ -83,7 +83,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: `npm test`: ranking hidden below minimum; untagged in totals not ranking; note threshold; never another operator's data (fake store, two owners).
   Notes:
 
-- [ ] **Phase 10 — Admin** (needs 5, 6). Files: `src/app/admin/ad-sheets/page.tsx`, `actions.ts`, `AdSheetsPanel.tsx`, `src/app/admin/ad-packs/page.tsx` (one link line).
+- [x] **Phase 10 — Admin** (needs 5, 6). Files: `src/app/admin/ad-sheets/page.tsx`, `actions.ts`, `AdSheetsPanel.tsx`, `src/app/admin/ad-packs/page.tsx` (one link line).
   - Lists sheets: owner, state, last row read, last import, error code, untagged count, columns changed. Import Dry run / Run (Run confirms), Disconnect with its own Dry run. "Guide screenshots last checked: <date>, due" when >30 days, with "Mark checked". Never shows cell contents.
   - Check: `npm test` action test: admin-only; dry runs write nothing; no row contents in output.
   Notes:
