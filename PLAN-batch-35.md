@@ -50,7 +50,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: `npm test`: header variants, incomplete flagged with right missing, test rows, stable row key, code found inside "SI-3F9A2C-5B-1 · Tenant notice".
   Notes:
 
-- [ ] **Phase 4 — Attribution and same-landlord match** (needs 3). Files: `src/lib/ad-sheets/attribute.ts` (+test), `src/lib/leads/dedupe.ts` (+test), `src/lib/leads/store.ts` (minimal).
+- [x] **Phase 4 — Attribution and same-landlord match** (needs 3). Files: `src/lib/ad-sheets/attribute.ts` (+test), `src/lib/leads/dedupe.ts` (+test), `src/lib/leads/store.ts` (minimal).
   - `attributeRow`: matchLeadToAd with code found in ad name; if none, re-run with no code so Meta ad id fallback applies; foreign_code stays foreign; returns LinkRow and learns adId → packAdId into in-run map.
   - dedupe.ts: pure `sameLandlord(a, b, windowDays)`, `sameLandlordSince(now, days)`; store.ts: `findSameLandlordLead(ownerId, cand, days)` (owner-scoped, not archived); allow `captureLead` with null funnel and null email if needed. Existing website dedupe unchanged.
   - Check: `npm test`: renamed ad attributes via earlier id; unknown → untagged; foreign code → untagged + row foreign; 10-day-old website lead matches, >30 days not, different owner never.
