@@ -30,6 +30,7 @@ function row(n: number, over: Record<number, string> = {}): string[] {
 interface SavedRow extends NewRow {
   id: string;
   leadId: string | null;
+  createdAt: number;
 }
 interface FakeLead {
   id: string;
@@ -48,7 +49,8 @@ function world(init: { sheets: Record<string, string[][]>; links: ImportLink[]; 
   const packLinks = new Map<string, LinkRow>();
   const sends = { push: [] as string[], notify: [] as string[] };
   const counters = { writes: 0, reads: 0 };
-  const faults = { captureCall: 0, failCaptureAt: 0, google: null as string | null };
+  const faults = { captureCall: 0, failCaptureAt: 0, google: null as string | null, skipDelete: false, failActivate: false, captureAdvanceMs: 0 };
+  const clock = { t: NOW };
   let seq = 0;
 
   const store: ImportStore = {
@@ -76,11 +78,18 @@ function world(init: { sheets: Record<string, string[][]>; links: ImportLink[]; 
       const k = `${r.linkId}|${r.rowKey}`;
       if (rows.has(k)) return null;
       const id = `row-${++seq}`;
-      rows.set(k, { ...r, id, leadId: null });
+      rows.set(k, { ...r, id, leadId: null, createdAt: clock.t.getTime() });
       return id;
     },
     async existingRowKeys(linkId, keys) {
       return new Set(keys.filter((k) => rows.has(`${linkId}|${k}`)));
+    },
+    async claimOrphanRow(linkId, rowKey, olderThanIso) {
+      counters.writes++;
+      const r = rows.get(`${linkId}|${rowKey}`);
+      if (!r || r.state !== 'imported' || r.leadId !== null || r.createdAt >= Date.parse(olderThanIso)) return null;
+      r.createdAt = clock.t.getTime(); // the claim stamp
+      return r.id;
     },
     async updateRow(id, patch) {
       counters.writes++;
@@ -89,6 +98,7 @@ function world(init: { sheets: Record<string, string[][]>; links: ImportLink[]; 
       r.leadId = patch.leadId;
     },
     async deleteRow(id) {
+      if (faults.skipDelete) return; // a process that died cannot clean up
       counters.writes++;
       for (const [k, v] of rows) if (v.id === id) rows.delete(k);
     },
@@ -100,6 +110,7 @@ function world(init: { sheets: Record<string, string[][]>; links: ImportLink[]; 
       counters.writes++;
       faults.captureCall++;
       if (faults.failCaptureAt && faults.captureCall === faults.failCaptureAt) throw new Error('db down');
+      clock.t = new Date(clock.t.getTime() + faults.captureAdvanceMs);
       const id = `lead-${leads.length + 1}`;
       leads.push({ id, ownerId: input.ownerId, email: input.email, phone: input.phone, postcode: input.postcode, created_at: NOW.toISOString(), status: 'new' });
       return { id, reused: false };
@@ -112,6 +123,7 @@ function world(init: { sheets: Record<string, string[][]>; links: ImportLink[]; 
       packLinks.set(r.lead_id, r);
     },
     async activateLink(id, at) {
+      if (faults.failActivate) throw new Error('db down');
       counters.writes++;
       const l = links.get(id)!;
       if (l.state === 'waiting_test_row') {
@@ -152,11 +164,11 @@ function world(init: { sheets: Record<string, string[][]>; links: ImportLink[]; 
   };
 
   const run = async (opts: { dry?: boolean; linkId?: string } = {}) => {
-    const r = await runImport(opts, { store, client, now: () => NOW });
+    const r = await runImport(opts, { store, client, now: () => clock.t });
     await new Promise((res) => setImmediate(res)); // let the fire-and-forget sends land
     return r;
   };
-  return { run, store, client, links, rows, leads, packLinks, sends, counters, faults, init };
+  return { run, store, client, links, rows, leads, packLinks, sends, counters, faults, init, clock };
 }
 
 const link = (id: string, ownerId: string, over: Partial<ImportLink> = {}): ImportLink => ({
@@ -481,4 +493,114 @@ test('the engine and its server wiring never write leads.status or crm_pushed_at
   }
   assert.ok(!/server-only/.test(engine.replace(/\/\*[\s\S]*?\*\//g, '')));
   assert.ok(/const base = \{ linkId: link\.id, ownerId: link\.ownerId,/.test(engine), 'a row’s owner comes from the link');
+});
+
+// ── Batch 35 review fixes ──
+
+const MIN = 60 * 1000;
+
+test('a row stuck at imported with no lead gets its lead on a later run, once; a fresh one is left alone', async () => {
+  const w = world({ sheets: { 'sheet-l1': [FIXTURE_HEADERS, row(1)] }, links: [link('l1', A)], packs: { [A]: packA } });
+  w.faults.failCaptureAt = 1;
+  w.faults.skipDelete = true; // the worker died between the insert and the lead
+  const first = await w.run();
+  assert.equal(first.ok, false);
+  assert.equal(w.rows.size, 1);
+  assert.equal(w.leads.length, 0);
+  assert.equal([...w.rows.values()][0].leadId, null);
+
+  w.faults.skipDelete = false;
+  w.clock.t = new Date(NOW.getTime() + 2 * MIN); // younger than 5 minutes: another worker may still be on it
+  const fresh = await w.run();
+  assert.equal(w.leads.length, 0, 'a fresh orphan is left alone');
+  assert.equal(fresh.links[0].alreadySaved, 1);
+
+  w.clock.t = new Date(NOW.getTime() + 10 * MIN);
+  const later = await w.run();
+  assert.equal(later.links[0].imported, 1);
+  assert.equal(w.leads.length, 1);
+  const saved = [...w.rows.values()][0];
+  assert.equal(saved.leadId, 'lead-1');
+  assert.equal(saved.state, 'imported');
+  assert.equal(w.packLinks.get('lead-1')!.match, 'code');
+  assert.deepEqual(w.sends.push, ['lead-1']);
+  assert.deepEqual(w.sends.notify, ['lead-1']);
+
+  w.clock.t = new Date(NOW.getTime() + 30 * MIN);
+  await w.run();
+  assert.equal(w.leads.length, 1, 'never a second lead');
+  assert.equal(w.sends.push.length, 1);
+});
+
+test('a row whose lead was made but never tied to it joins that lead on recovery: no second lead', async () => {
+  const w = world({ sheets: { 'sheet-l1': [FIXTURE_HEADERS, row(1)] }, links: [link('l1', A)], packs: { [A]: packA } });
+  const realUpdate = w.store.updateRow;
+  w.store.updateRow = async () => {
+    throw new Error('died');
+  };
+  await w.run();
+  assert.equal(w.leads.length, 1);
+  assert.equal([...w.rows.values()][0].leadId, null);
+  w.store.updateRow = realUpdate;
+  w.clock.t = new Date(NOW.getTime() + 10 * MIN);
+  await w.run();
+  assert.equal(w.leads.length, 1);
+  const saved = [...w.rows.values()][0];
+  assert.equal(saved.leadId, 'lead-1');
+  assert.equal(saved.state, 'merged');
+});
+
+test('two overlapping runs over a stuck row still make one lead', async () => {
+  const w = world({ sheets: { 'sheet-l1': [FIXTURE_HEADERS, row(1)] }, links: [link('l1', A)], packs: { [A]: packA } });
+  w.faults.failCaptureAt = 1;
+  w.faults.skipDelete = true;
+  await w.run();
+  w.faults.skipDelete = false;
+  w.clock.t = new Date(NOW.getTime() + 10 * MIN);
+  await Promise.all([w.run(), w.run()]);
+  assert.equal(w.leads.length, 1);
+  assert.equal(w.sends.push.length, 1);
+});
+
+test('the time budget stops the loop cleanly at the last saved row and the next run continues with no loss or duplicates', async () => {
+  const sheet = [FIXTURE_HEADERS, row(1), row(2), row(3), row(4), row(5), row(6)];
+  const w = world({ sheets: { 'sheet-l1': sheet }, links: [link('l1', A)], packs: { [A]: packA } });
+  w.faults.captureAdvanceMs = 20_000; // each lead takes 20 s on this clock; the budget is 45 s
+  const first = await w.run();
+  assert.equal(first.ok, true, 'a budget stop is not an error');
+  assert.equal(first.links[0].budgetStopped, true);
+  assert.equal(first.links[0].imported, 3);
+  assert.equal(w.leads.length, 3);
+  assert.equal(w.links.get('l1')!.lastRowRead, 4, 'progress stays at the last row fully saved');
+  assert.equal(w.links.get('l1')!.lastErrorCode, null);
+
+  const second = await w.run();
+  assert.equal(second.links[0].alreadySaved, 3);
+  assert.equal(second.links[0].imported, 3);
+  assert.equal(w.leads.length, 6);
+  assert.equal(new Set([...w.rows.values()].map((r) => r.leadId)).size, 6);
+  assert.equal(w.links.get('l1')!.lastRowRead, 7);
+  assert.equal(w.links.get('l1')!.rowsImported, 6);
+  assert.equal(w.sends.push.length, 6);
+});
+
+test('a test row that arrives while activation had not succeeded still activates the link on a later run', async () => {
+  const w = world({ sheets: { 'sheet-l1': [FIXTURE_HEADERS, FIXTURE_ROW_TEST] }, links: [link('l1', A, { state: 'waiting_test_row' })], packs: { [A]: packA } });
+  w.faults.failActivate = true;
+  const first = await w.run();
+  assert.equal(first.ok, false);
+  assert.equal(w.links.get('l1')!.state, 'waiting_test_row');
+  assert.equal(w.rows.size, 1, 'the test row was saved');
+
+  w.faults.failActivate = false;
+  const dry = await w.run({ dry: true });
+  assert.equal(dry.links[0].activated, true, 'a dry run reports it too');
+  assert.equal(w.links.get('l1')!.state, 'waiting_test_row');
+
+  const second = await w.run();
+  assert.equal(second.links[0].alreadySaved, 1, 'the insert did not win');
+  assert.equal(second.links[0].activated, true);
+  assert.equal(w.links.get('l1')!.state, 'active');
+  assert.ok(w.links.get('l1')!.activatedAt);
+  assert.equal(w.leads.length, 0);
 });

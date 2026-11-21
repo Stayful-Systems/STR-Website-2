@@ -123,6 +123,22 @@ export function supabaseImportStore(pending: Promise<unknown>[] = []): ImportSto
       return found;
     },
 
+    async claimOrphanRow(linkId, rowKey, olderThanIso) {
+      // One atomic update: created_at doubles as the claim stamp, so a second worker finds nothing to claim.
+      const { data, error } = await db()
+        .from('ad_sheet_rows')
+        .update({ created_at: new Date().toISOString() })
+        .eq('link_id', linkId)
+        .eq('row_key', rowKey)
+        .eq('state', 'imported')
+        .is('lead_id', null)
+        .lt('created_at', olderThanIso)
+        .select('id');
+      if (error) fail('ad_sheet_rows', error.code);
+      const rows = (data ?? []) as { id: string }[];
+      return rows.length > 0 ? rows[0].id : null;
+    },
+
     async updateRow(rowId, patch) {
       const { error } = await db().from('ad_sheet_rows').update({ state: patch.state, lead_id: patch.leadId }).eq('id', rowId);
       if (error) fail('ad_sheet_rows', error.code);

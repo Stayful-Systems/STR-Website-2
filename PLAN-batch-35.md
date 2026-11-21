@@ -93,8 +93,8 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: `npm test`: seed tests (placeholders resolve, no typed figure); daily email test line at N>0, absent at 0.
   Notes:
 
-- [ ] **Phase 12 — Final checks and review** (needs all). `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` (failures only). Review checklist: [ ] service account never reads an unlinked sheet / rows never land with another owner; [ ] no address/PII in logs; [ ] idempotent "-- Batch 35" schema; [ ] ACCESS_COLUMNS untouched; [ ] dry runs on cron and every admin action; [ ] daily cap unchanged. Then push, open draft PR, watch CI.
-  Notes:
+- [x] **Phase 12 — Final checks and review** (needs all). `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` (failures only). Review checklist: [x] service account never reads an unlinked sheet / rows never land with another owner; [x] no address/PII in logs; [x] idempotent "-- Batch 35" schema; [x] ACCESS_COLUMNS untouched; [x] dry runs on cron and every admin action; [x] daily cap unchanged. Then push, open draft PR, watch CI.
+  Notes: All checks green at the end (4772 tests, typecheck clean, lint 0 errors, build ok). Fresh reviewer found 4 real problems, all fixed: orphaned row with no lead (5 min claim + 45 s time budget), test row activation, leaddb sweep for sheet leads, API stage meeting stamp. Left as is (low): reminder line, StageTaps and YourAds do not check ad_sheets_enabled (they only show what already exists). Daily email line sits in its own section of the daily email, not a "leads section" (buildDaily has none); it only shows when the email is already going. Your ads is owner-only.
 
 ## Remaining risks (one-line rollback)
 - Website-after-sheet makes a second lead (accepted). Rollback: none; a later batch can add the check to the website route.

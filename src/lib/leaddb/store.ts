@@ -5,6 +5,7 @@ import { getFunnel } from '../funnels';
 import { renderReportPdf, pdfBrandForFunnel } from '../pdf/render';
 import { leadDbConfig, leadDbPushLead } from './client';
 import { leadDbBadge } from './messages';
+import { pickUnqueued } from './sweep';
 import type { DeliveryRow, FinishPatch, LeadContext, LeadDbDeps, LeadDbStore, LinkState } from './deliver';
 import { realLinkClient, type LinkDeps, type LinkRecord, type LinkStore } from './links';
 import type { AnalysisResult } from '../types';
@@ -156,11 +157,35 @@ export function supabaseStore(): LeadDbStore {
           .gte('created_at', since)
           .order('created_at', { ascending: true })
           .limit(limit);
-        const ids = ((leads ?? []) as { id: string }[]).map((r) => r.id);
-        if (ids.length === 0) continue;
-        const { data: have } = await admin.from('leaddb_deliveries').select('lead_id').in('lead_id', ids);
+        const websiteIds = ((leads ?? []) as { id: string }[]).map((r) => r.id);
+        // Batch 35: a lead read from a lead-form sheet has no report, so the join above never sees it. An ad_sheet_rows
+        // row (imported or merged) names it; it goes lead-only, as `context` marks it `sheetLead`.
+        const { data: sheetRows } = await admin
+          .from('ad_sheet_rows')
+          .select('lead_id')
+          .eq('owner_id', l.owner_id)
+          .in('state', ['imported', 'merged'])
+          .not('lead_id', 'is', null)
+          .gte('created_at', since)
+          .order('created_at', { ascending: true })
+          .limit(limit);
+        const rowLeadIds = [...new Set(((sheetRows ?? []) as { lead_id: string }[]).map((r) => r.lead_id))];
+        let sheetIds: string[] = [];
+        if (rowLeadIds.length > 0) {
+          const { data: sheetLeads } = await admin
+            .from('leads')
+            .select('id')
+            .in('id', rowLeadIds)
+            .eq('user_id', l.owner_id)
+            .is('archived_at', null)
+            .neq('status', 'held');
+          sheetIds = ((sheetLeads ?? []) as { id: string }[]).map((r) => r.id);
+        }
+        const all = [...new Set([...websiteIds, ...sheetIds])];
+        if (all.length === 0) continue;
+        const { data: have } = await admin.from('leaddb_deliveries').select('lead_id').in('lead_id', all);
         const haveSet = new Set(((have ?? []) as { lead_id: string }[]).map((r) => r.lead_id));
-        for (const id of ids) if (!haveSet.has(id) && out.length < limit) out.push({ leadId: id, ownerId: l.owner_id });
+        for (const id of pickUnqueued(websiteIds, sheetIds, haveSet, limit - out.length)) out.push({ leadId: id, ownerId: l.owner_id });
       }
       return out;
     },

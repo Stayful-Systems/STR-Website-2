@@ -18,6 +18,14 @@
  *     landlord as a recent lead -> merged; otherwise a new lead.
  *   - `last_row_read` moves only over rows that were saved, so a failure in
  *     the middle re-reads the rest next time (the insert makes that safe).
+ *   - A row saved as `imported` with no lead (a crash or timeout between the
+ *     insert and the lead) is picked up by a later run once it is older than
+ *     ORPHAN_AFTER_MS: `claimOrphanRow` is one atomic update, so only the run
+ *     whose update wins makes the lead.
+ *   - Any test row seen on a waiting link activates it, whether or not that
+ *     run's insert won (the first run may have saved the row and not activated).
+ *   - One run stops cleanly at its time budget; `last_row_read` stays at the
+ *     last row fully saved and the next run continues.
  *   - A dry run reads and counts; it writes nothing and sends nothing.
  *
  * Never writes `leads.status` or `leads.crm_pushed_at` (they mean "went to
@@ -109,6 +117,12 @@ export interface ImportStore {
   insertRow(row: NewRow): Promise<string | null>;
   /** Dry runs: which of these keys are already saved. */
   existingRowKeys(linkId: string, keys: string[]): Promise<Set<string>>;
+  /**
+   * Atomic claim of a row stuck at `imported` with no lead: one update of that (link, key) `where state = 'imported' and
+   * lead_id is null and created_at < olderThanIso`, which also stamps created_at to now (so a second worker, or this one
+   * again within the window, finds nothing). The row's id when this call won, null otherwise.
+   */
+  claimOrphanRow(linkId: string, rowKey: string, olderThanIso: string): Promise<string | null>;
   updateRow(rowId: string, patch: { state: RowState; leadId: string | null }): Promise<void>;
   /** Takes back a row whose lead could not be made, so the next run tries it again. */
   deleteRow(rowId: string): Promise<void>;
@@ -140,6 +154,8 @@ export interface ImportDeps {
   store: ImportStore;
   client: SheetClient;
   now?: () => Date;
+  /** Time budget of one whole run in ms (default 45 s of the route's 60 s). */
+  budgetMs?: number;
 }
 
 export interface LinkImportResult {
@@ -164,6 +180,8 @@ export interface LinkImportResult {
   /** A waiting link became active (dry: would). */
   activated: boolean;
   columnsChanged: boolean;
+  /** Set only when the run's time budget ended this link early (not an error; the next run continues). */
+  budgetStopped?: boolean;
 }
 
 export interface ImportResult {
@@ -181,6 +199,10 @@ const CHUNK_ROWS = 500;
 /** At most this many rows of one sheet per run; last_row_read moves on and the next run continues. */
 const MAX_CHUNKS = 10;
 const DEFAULT_DEDUPE_DAYS = 30;
+/** A row left at `imported` with no lead is only taken over after this long, so a running worker is never raced. */
+export const ORPHAN_AFTER_MS = 5 * 60 * 1000;
+/** One run's time budget: stops cleanly well before the route's 60 s limit. */
+export const DEFAULT_BUDGET_MS = 45 * 1000;
 
 // ── Reading ────────────────────────────────────────────────────────────────
 
@@ -273,8 +295,11 @@ export async function runImport(opts: { dry?: boolean; linkId?: string } = {}, d
     return { ok: false, code: 'error', dry, links: [] };
   }
 
+  const deadline = now().getTime() + (deps.budgetMs ?? DEFAULT_BUDGET_MS);
   for (const link of links) {
-    const res = await importLink(link, { dry, store, client, now, days });
+    // Links left unread are the ones with the oldest last_import_at, so the next run starts with them.
+    if (!dry && now().getTime() >= deadline) break;
+    const res = await importLink(link, { dry, store, client, now, days, deadline });
     if (res === 'not_configured') return { ok: false, code: 'not_configured', dry, links: [] };
     out.links.push(res);
     if (!res.ok) {
@@ -287,9 +312,9 @@ export async function runImport(opts: { dry?: boolean; linkId?: string } = {}, d
 
 async function importLink(
   link: ImportLink,
-  ctx: { dry: boolean; store: ImportStore; client: SheetClient; now: () => Date; days: number },
+  ctx: { dry: boolean; store: ImportStore; client: SheetClient; now: () => Date; days: number; deadline: number },
 ): Promise<LinkImportResult | 'not_configured'> {
-  const { dry, store, client, now, days } = ctx;
+  const { dry, store, client, now, days, deadline } = ctx;
   const res: LinkImportResult = {
     linkId: link.id,
     ok: true,
@@ -407,8 +432,13 @@ async function importLink(
   // The last row number fully dealt with (progress is never claimed past it).
   let lastDone = 1;
   let stopped: string | null = null;
+  let budgetStopped = false;
 
   for (const sr of sheetRows) {
+    if (!dry && now().getTime() >= deadline) {
+      budgetStopped = true;
+      break;
+    }
     res.rowsRead += 1;
     if (isBlank(sr.cells)) {
       lastDone = sr.number;
@@ -419,6 +449,7 @@ async function importLink(
       if (dry) {
         if (existing?.has(key)) {
           res.alreadySaved += 1;
+          if (state === 'waiting_test_row' && isTestLead(toCandidate(sr.cells, hm))) res.activated = true;
         } else {
           const cand = toCandidate(sr.cells, hm);
           const d = classify(cand, await attribute(cand));
@@ -456,22 +487,28 @@ async function importLink(
         } else {
           res.saved += 1;
           res[d.kind] += 1;
-          if (d.kind === 'test' && state === 'waiting_test_row') {
-            await store.activateLink(link.id, nowIso());
-            state = 'active';
-            res.activated = true;
-          }
+        }
+        // Any test row seen on a waiting link activates it, also one an earlier run saved without activating.
+        if (d.kind === 'test' && state === 'waiting_test_row') {
+          await store.activateLink(link.id, nowIso());
+          state = 'active';
+          res.activated = true;
         }
         lastDone = sr.number;
         continue;
       }
 
       // A complete row: saved first; only the insert's winner makes a lead.
-      const rowId = await store.insertRow({ ...base, state: 'imported', missing: [], answers: keepAnswers });
+      let rowId = await store.insertRow({ ...base, state: 'imported', missing: [], answers: keepAnswers });
       if (rowId === null) {
-        res.alreadySaved += 1;
-        lastDone = sr.number;
-        continue;
+        // Saved before. If an earlier run stopped between the insert and the lead, this row has no lead: one atomic claim
+        // decides which run makes it (a row younger than ORPHAN_AFTER_MS is left to the run that may still be on it).
+        rowId = await store.claimOrphanRow(link.id, key, new Date(now().getTime() - ORPHAN_AFTER_MS).toISOString());
+        if (rowId === null) {
+          res.alreadySaved += 1;
+          lastDone = sr.number;
+          continue;
+        }
       }
       res.saved += 1;
 
@@ -539,7 +576,7 @@ async function importLink(
   const code = stopped ?? readStopped;
   const patch: LinkPatch = {
     ...headerPatch,
-    lastRowRead: code ? Math.max(lastDone, link.lastRowRead) : reached,
+    lastRowRead: code || budgetStopped ? Math.max(lastDone, link.lastRowRead) : reached,
     rowsImported: link.rowsImported + res.imported,
     untaggedCount: link.untaggedCount + res.untagged,
     lastImportAt: nowIso(),
@@ -547,6 +584,7 @@ async function importLink(
     ...(res.saved > 0 ? { lastRowAt: nowIso() } : {}),
     ...(code === 'not_shared' || code === 'not_found' ? { state: 'error' as const } : {}),
   };
+  if (budgetStopped) res.budgetStopped = true;
   try {
     await store.saveLink(link.id, patch);
   } catch {

@@ -57,3 +57,17 @@ test('the stage taps replace the select on the card and the lead page', () => {
   assert.match(detail, /<StageTaps/);
   assert.doesNotMatch(detail, /<select/);
 });
+
+test('the API stage setter stamps once through the same helper, scoped by owner, never clearing and never touching status', () => {
+  const src = readFileSync(new URL('../api/leads-write.ts', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export async function setLeadStage'));
+  assert.match(src, /from '\.\.\/leads\/meeting-stamp'/);
+  assert.match(fn, /meetingStampFor\(null, stage, new Date\(\)\)/);
+  assert.match(fn, /meeting_reached_at: stamp/);
+  assert.match(fn, /\.is\('meeting_reached_at', null\)/);
+  const stampBlock = fn.slice(fn.indexOf('meeting_reached_at: stamp'));
+  assert.match(stampBlock.slice(0, 200), /\.eq\('user_id', userId\)/);
+  assert.doesNotMatch(fn, /meeting_reached_at: null/);
+  assert.doesNotMatch(fn, /crm_pushed_at/);
+  assert.doesNotMatch(fn, /\bstatus\b\s*:/);
+});
