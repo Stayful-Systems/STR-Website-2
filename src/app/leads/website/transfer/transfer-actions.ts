@@ -120,7 +120,8 @@ export async function transferScreenAction(): Promise<TransferScreen> {
   }
   if (own === 'unavailable') return { kind: 'unavailable' };
 
-  if (own && !own.cancelledAt) {
+  // An ended transfer (the overlap is over) no longer blocks a new one: the owner may come back and start again.
+  if (own && !own.cancelledAt && !own.overlapEndedAt) {
     return {
       kind: 'status',
       overlapDays: settings.overlapDays,

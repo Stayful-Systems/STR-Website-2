@@ -132,8 +132,9 @@ async function loadSites(now: Date, websiteIds?: readonly string[]): Promise<Gra
     const [live, open, moved] = await Promise.all([
       admin.from('websites').select('id').eq('status', 'live').limit(5000),
       admin.from('website_grace').select('website_id').is('cancelled_at', null).is('deleted_at', null).limit(5000),
-      // Batch 37: a site with a transfer row that is not cancelled is the operator's: no warning, no switch-off, no deletion.
-      admin.from('website_transfers').select('website_id').is('cancelled_at', null).limit(5000),
+      // Batch 37: a site with an OPEN transfer (not cancelled, overlap not ended) is the operator's: no warning, no switch-off, no deletion.
+      // Once the overlap has ended the row stays (the exported form keeps working), but a site that comes back to setup is ours again.
+      admin.from('website_transfers').select('website_id').is('cancelled_at', null).is('overlap_ended_at', null).limit(5000),
     ]);
     if (live.error) throw new Error(live.error.message);
     if (open.error) throw new Error(open.error.message);

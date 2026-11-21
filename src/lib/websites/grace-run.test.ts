@@ -737,7 +737,7 @@ test('the cron loader skips every website with a transfer row that is not cancel
   const server = readFileSync(new URL('./grace-server.ts', import.meta.url), 'utf8');
   const start = server.indexOf('async function loadSites(');
   const loader = server.slice(start, server.indexOf('\n}\n', start));
-  assert.match(loader, /from\('website_transfers'\)\.select\('website_id'\)\.is\('cancelled_at', null\)/);
+  assert.match(loader, /from\('website_transfers'\)\.select\('website_id'\)\.is\('cancelled_at', null\)\.is\('overlap_ended_at', null\)/);
   assert.match(loader, /if \(moved\.error\) throw new Error/);
   assert.match(loader, /\.filter\(\(id\) => !transferred\.has\(id\)\)/);
   // Only the cron's own candidate list is filtered: a screen asking for one site by id is unchanged.
