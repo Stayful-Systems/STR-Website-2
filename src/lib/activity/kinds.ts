@@ -98,6 +98,8 @@ export const ACTIVITY_KINDS = {
   ad_text_copied: recordOnly('Copied an ad text'),
   // Batch 35: the owner's Facebook lead form sheet became active (a test row was read). Record only; extras: the link id.
   ad_sheet_connected: recordOnly('Connected their Facebook lead form sheet'),
+  // Batch 35: opened "Your ads" (which ad brought the meetings and signings). Record only; extras: counts, never a lead.
+  ad_ranking_viewed: recordOnly('Looked at which of their ads brought leads'),
 
   // Money
   topup: inApp('Topped up'),

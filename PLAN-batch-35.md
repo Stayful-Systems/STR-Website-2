@@ -78,7 +78,7 @@ One coordinator, one subagent per phase, replies <=150 words, tick + commit "Pha
   - Check: `npm test`: tap records lead_action {action:'stage'}; stamp set once and survives later Lost; paused seat / capability without access refused.
   Notes:
 
-- [ ] **Phase 9 — "Your ads"** (needs 1, 5, 8; after 7 because both insert into page.tsx). Files: `src/lib/ad-sheets/ranking.ts` (+test), `ranking-server.ts`, `src/app/leads/ads/YourAds.tsx`, `page.tsx` (one insert), `src/lib/activity/kinds.ts` (+test).
+- [x] **Phase 9 — "Your ads"** (needs 1, 5, 8; after 7 because both insert into page.tsx). Files: `src/lib/ad-sheets/ranking.ts` (+test), `ranking-server.ts`, `src/app/leads/ads/YourAds.tsx`, `page.tsx` (one insert), `src/lib/activity/kinds.ts` (+test).
   - ranking-server reads only `ad_pack_lead_links` and `leads` with owner_id = scope.ownerId. Per ad: leads, meetings (meeting_reached_at not null), signed. Untagged shown separately, in totals only. Ads with >= `ad_sheet_min_leads` ranked by signed, then meetings, then leads; others "Not enough data yet". Note "Outcomes aren't being marked" when under 50% of leads older than 14 days are past New. No spend, no cost per lead, no benchmarks. Opening logs new record-only kind `ad_ranking_viewed`.
   - Check: `npm test`: ranking hidden below minimum; untagged in totals not ranking; note threshold; never another operator's data (fake store, two owners).
   Notes:

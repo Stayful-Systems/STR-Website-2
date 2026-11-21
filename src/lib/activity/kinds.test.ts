@@ -208,3 +208,11 @@ test("Batch 35: connecting the Facebook lead form sheet is recorded, and is reco
   assert.equal(isCounted('ad_sheet_connected'), false);
   assert.ok(!QUALIFYING_KINDS.includes('ad_sheet_connected' as never));
 });
+
+test("Batch 35: opening the ad ranking is recorded, and is record only", () => {
+  assert.equal(isActivityKind('ad_ranking_viewed'), true);
+  assert.equal(kindLabel('ad_ranking_viewed'), 'Looked at which of their ads brought leads');
+  assert.equal(isQualifying('ad_ranking_viewed'), false);
+  assert.equal(isCounted('ad_ranking_viewed'), false);
+  assert.ok(!QUALIFYING_KINDS.includes('ad_ranking_viewed' as never));
+});
