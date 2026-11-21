@@ -12,6 +12,7 @@ import { ownUploadRef } from "@/lib/ad-packs/photos";
 import { availableGuideShots } from "@/lib/ad-packs/guide-server";
 import { AdSection } from "./AdSection";
 import { Guide } from "./Guide";
+import { ConnectSheet } from "./ConnectSheet";
 import { ApproveForm, GenerateForm, type PhotoItem } from "./AdPackClient";
 import { packScreen, regenView } from "./state";
 import { adViewModel, approvalVm, areaPreviewView, brandOfSettings, brandProblemText, checksFailedView, eligibilityView, figureCallout, voiceVm, type AreaPreviewView } from "./view";
@@ -230,6 +231,8 @@ export default async function AdsPage() {
           </div>
         </section>
       ) : null}
+
+      {approved ? <ConnectSheet forms={adVms.map((a, i) => ({ id: a.id, title: a.title, questions: ads[i].leadForm }))} /> : null}
 
       {regenerateForm}
     </Frame>

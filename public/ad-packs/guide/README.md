@@ -26,3 +26,14 @@ Step ids, one file each:
 - `paste-ad-name.png`
 - `paste-link.png`
 - `publish.png`
+
+## Lead form (Google Sheets) guide, Batch 35
+
+Six more screenshots for the "Switch to lead forms" card on `/leads/ads`, same rules as above:
+
+- `sheet-1.png` (create the instant form)
+- `sheet-2.png` (connect the form to a Google Sheet in Meta)
+- `sheet-3.png` (share the sheet with the Stayful service account)
+- `sheet-4.png` (paste the sheet link)
+- `sheet-5.png` (send a test lead with Meta's testing tool)
+- `sheet-6.png` (point each ad at the instant form)
