@@ -35,7 +35,7 @@ import { ADS_PATH, type AdCopy, type CopyItem, type DownloadGroup } from "../vie
  * Batch 38c: "Put your ads on Facebook", one small step on each screen.
  *
  *   1. Which ad are you setting up? (three cards with the picture)
- *   2. Thirteen steps: a short instruction, the real Facebook screenshot (tap to make it bigger) and, for the
+ *   2. Thirteen steps (the audience step carries a numbered list of seven settings): a short instruction, the real Facebook screenshot (tap to make it bigger) and, for the
  *      text steps, the exact words with a big Copy button. Back and Next stick to the bottom of a phone.
  *   3. Done: "Set up my next ad".
  *
@@ -353,6 +353,13 @@ export function GuideWizard({ ads, shots, packId, initial }: { ads: GuideAd[]; s
       <div aria-live="polite">
         <h2 className={`text-2xl font-bold leading-snug ${INK}`}>{step.action}</h2>
         {step.detail ? <p className={`mt-2 text-lg leading-relaxed ${SOFT}`}>{step.detail}</p> : null}
+        {step.checklist ? (
+          <ol className={`mt-3 list-decimal space-y-2 pl-6 text-lg leading-relaxed ${INK}`}>
+            {step.checklist.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ol>
+        ) : null}
       </div>
 
       {step.id === UPLOAD_STEP_ID ? <UploadBlock ad={ad} /> : null}

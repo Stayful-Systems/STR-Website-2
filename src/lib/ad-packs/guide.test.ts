@@ -27,6 +27,7 @@ import {
   withStep,
   wordingLabel,
 } from './guide.ts';
+import { INTERESTS, LAST_CHECKED, OBJECTIVE_PROPOSED, RECIPE_ITEMS, recipeLine } from './targeting-recipe.ts';
 
 const sentences = (s: string) => s.split(/[.!?](?:\s+|$)/).filter((x) => x.trim() !== '');
 const allText = () => JSON.stringify(GUIDE_STEPS);
@@ -118,7 +119,7 @@ test('it covers the Traffic goal, a page and ad account, the audience and the re
   assert.match(guideStep('open-ads-manager')!.action, /adsmanager\.facebook\.com/);
   assert.match(guideStep('open-ads-manager')!.stuck, /Facebook page/);
   assert.match(guideStep('open-ads-manager')!.stuck, /ad account/);
-  assert.match(guideStep('set-audience')!.detail ?? '', /30 to 65 and over/);
+  assert.equal(guideStep('set-audience')!.title, 'Set up your audience');
   assert.match(guideStep('publish')!.detail ?? '', /up to a day/);
   assert.match(guideStep('set-budget')!.action, /comfortable/);
 });
@@ -279,4 +280,69 @@ test('the guide uses no internal word: no pack, version, code, regenerate or che
   const text = JSON.stringify(GUIDE_STEPS.map((st) => ({ id: st.id, title: st.title, action: st.action, detail: st.detail, ourName: st.ourName, stuck: st.stuck, alt: st.screenshot.alt }))).replace(/box called Primary text( in Facebook)?/g, '');
   assert.doesNotMatch(text, /\b(?:packs?|versions?|regenerat\w*|checks|render\w*|codes?|allowance|hash|type-only)\b/i);
   assert.doesNotMatch(text, /primary text/i);
+});
+
+// ── The audience recipe (Batch 55, A9) ──
+
+const audience = () => guideStep('set-audience')!;
+const audienceText = () => JSON.stringify({ title: audience().title, action: audience().action, detail: audience().detail, checklist: audience().checklist, stuck: audience().stuck, alt: audience().screenshot.alt });
+
+test('the audience step lists the seven settings in order, built from the recipe', () => {
+  const list = audience().checklist ?? [];
+  assert.equal(list.length, 7);
+  assert.deepEqual(list, RECIPE_ITEMS.map(recipeLine));
+  assert.deepEqual(RECIPE_ITEMS.map((r) => r.id), ['location', 'age-gender', 'advantage-audience', 'interests', 'placements', 'campaign-budget', 'exclusions']);
+  assert.match(list[0], /^Location: United Kingdom, living in or recently in\./);
+  assert.match(list[0], /narrow this to your own area/);
+  assert.match(list[0], /wider setting gives Meta more to learn from/);
+  assert.match(list[1], /^Age and gender: 18 to 65\+, all genders\./);
+  assert.match(list[2], /^Advantage\+ audience: On\./);
+  assert.match(list[3], /^Interests: /);
+  assert.match(list[4], /^Placements: Advantage\+ placements\./);
+  assert.match(list[5], /^Campaign budget: On\./);
+  assert.match(list[5], /Do not type an amount/);
+  assert.match(list[6], /^Exclusions and lookalikes: Leave both empty\./);
+  assert.match(list[6], /add your own list if you have one/);
+  // The other steps carry no checklist, and the old 30 to 65 age is gone for everyone.
+  assert.deepEqual(GUIDE_STEPS.filter((s) => s.checklist).map((s) => s.id), ['set-audience']);
+  assert.doesNotMatch(allText(), /30 to 65/);
+  assert.doesNotMatch(allText(), /Leave Interests empty/);
+});
+
+test('the interests are Real property, Landlord and Airbnb, and the step says them', () => {
+  assert.deepEqual([...INTERESTS], ['Real property (property)', 'Landlord', 'Airbnb (lodging)']);
+  const line = audience().checklist![3];
+  for (const i of INTERESTS) assert.ok(line.includes(i), `${i} in ${line}`);
+});
+
+test('the audience step has one-sentence action, a short Stuck answer, and still one screenshot named after its id', () => {
+  assert.equal(sentences(audience().action).length, 1);
+  assert.match(audience().action, /\.$/);
+  const n = sentences(audience().stuck).length;
+  assert.ok(n >= 1 && n <= 3, `stuck has ${n} sentences`);
+  assert.equal(audience().screenshot.file, 'public/ad-packs/guide/set-audience.png');
+  assert.equal(GUIDE_STEPS.length, 13);
+});
+
+test('no audience text names the product, an account, spend or a result, or has a pound sign or an exclamation mark', () => {
+  for (const text of [audienceText(), JSON.stringify(RECIPE_ITEMS)]) {
+    assert.doesNotMatch(text, /stayful/i);
+    assert.doesNotMatch(text, /account/i);
+    assert.doesNotMatch(text, /spend|spent/i);
+    assert.doesNotMatch(text, /results?\b/i);
+    assert.doesNotMatch(text, /£|\\u00a3/);
+    assert.doesNotMatch(text, /!/);
+    assert.doesNotMatch(text, /—|\\u2014/);
+    assert.doesNotMatch(text, /\d[\d,]*\s?(?:pounds|GBP|pence|p\b)/i);
+  }
+});
+
+test('the recipe is dated, and the proposed campaign goal is recorded but not shown in the guide', () => {
+  assert.equal(LAST_CHECKED, '2026-11-23');
+  assert.equal(OBJECTIVE_PROPOSED.status, 'proposed');
+  assert.equal(OBJECTIVE_PROPOSED.goal, 'Leads');
+  assert.equal(OBJECTIVE_PROPOSED.destination, 'Website');
+  assert.equal(OBJECTIVE_PROPOSED.optimiseFor, 'Maximise number of landing page views');
+  assert.doesNotMatch(allText(), /landing page views/i);
+  assert.match(guideStep('choose-traffic')!.action, /Traffic/);
 });

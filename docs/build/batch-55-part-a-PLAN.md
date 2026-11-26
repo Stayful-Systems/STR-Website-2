@@ -36,10 +36,10 @@ Every phase's check: `npm test && npm run typecheck && npm run lint` (failures o
 - Notes: Block sits AFTER Batch 37's (the schema tests stop a section at the next Batch marker). The reports-per-day setting has its own key and parser in `websites/settings.ts` plus `calc-settings-server.ts` (`readAdCalcReportsPerDay()`), not in `WebsiteSettings`, because the admin save loop writes every `WEBSITE_KEYS` entry. CI step for the smoke script added to `.github/workflows/ci.yml`. Block ran twice on a throwaway Postgres 16 with no errors.
 
 ## Phase A2: account state and stop rule (depends on A1)
-- [ ] `src/lib/leaddb/ad-account.ts` (pure: `adRouteStopped`, `adRouteVerdict`, state parsing, stale rule) + test.
-- [ ] `src/lib/leaddb/ad-account-server.ts` (`applyState`, reads).
+- [x] `src/lib/leaddb/ad-account.ts` (pure: `adRouteStopped`, `adRouteVerdict`, state parsing, stale rule) + test.
+- [x] `src/lib/leaddb/ad-account-server.ts` (`applyState`, reads).
 - Check: `ad-account.test.ts` covers active, pending cancel before/after the date, paused (works), lapsed, past due, no card, stale push ignored.
-- Notes:
+- Notes: Verdict order no_account, account_stopped, no_card, not_allowed. `past_due` with a card on file is NOT stopped by itself (assumption: the lead database must clear the card, lapse or cancel). Server: readAdAccount, readAdAccountByCustomerId, applyAdAccountState, createAdAccount, setAdAccountAllowed.
 
 ## Phase A3: signed inbound endpoints (depends on A1, A2)
 - [ ] `src/lib/leaddb/inbound.ts` (`verifyInbound`: 404 unset/short secret, 401 bad signature).
@@ -79,9 +79,9 @@ Every phase's check: `npm test && npm run typecheck && npm run lint` (failures o
 - Notes:
 
 ## Phase A9: targeting recipe in the guide (no dependencies)
-- [ ] `src/lib/ad-packs/targeting-recipe.ts` (values plus `LAST_CHECKED = '2026-11-23'`), `guide.ts`, `guide.test.ts`, `GuideWizard.tsx` comment, `public/ad-packs/guide/README`.
+- [x] `src/lib/ad-packs/targeting-recipe.ts` (values plus `LAST_CHECKED = '2026-11-23'`), `guide.ts`, `guide.test.ts`, `GuideWizard.tsx` comment, `public/ad-packs/guide/README`.
 - Check: `guide.test.ts`, `plain-language.test.ts`.
-- Notes:
+- Notes: Campaign goal (Leads / landing page views) is recorded only as OBJECTIVE_PROPOSED, not shown: it clashes with the existing choose-traffic step (Traffic). Zac to decide. GuideWizard renders a new step.checklist as a numbered list.
 
 ## Phase A10: knowledge, CLAUDE.md, PR (depends on all)
 - [ ] `seed.ts` drafts `adpack_ld_calculator`, `adpack_ld_rounds`, `adpack_audience`; `placeholders.ts` `{ad_calc_reports_per_day}`, `{ad_pack_ld_round_days}`; `service-facts.ts` block.

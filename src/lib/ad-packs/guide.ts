@@ -21,6 +21,8 @@
  * checks which screenshots exist in guide-server.ts).
  */
 
+import { RECIPE_ITEMS, recipeLine } from './targeting-recipe.ts';
+
 /** What a step's Copy button copies from the ad being set up. */
 export type GuideCopyKind = 'ad_name' | 'link' | 'primary' | 'headline' | 'description' | 'none';
 
@@ -31,6 +33,8 @@ export type GuideStep = {
   action: string;
   /** Extra help for the step, a few short sentences at most. */
   detail?: string;
+  /** An ordered list of short settings to work down (the audience step only). */
+  checklist?: readonly string[];
   copy: { kind: GuideCopyKind };
   /** The name of the box in Facebook this text goes into (text steps only). */
   facebookFieldName?: string;
@@ -92,14 +96,14 @@ export const GUIDE_STEPS: readonly GuideStep[] = [
   },
   {
     id: 'set-audience',
-    title: 'Choose who sees it',
-    action: 'Set the place to your area and the towns around it.',
-    detail:
-      'Set the age from 30 to 65 and over. Leave the part called Placements on the automatic choice, so Facebook can show the ad where it works best. Leave Interests empty: Facebook finds the right people from the ad itself.',
+    title: 'Set up your audience',
+    action: 'Set each of the seven choices below, in this order.',
+    detail: 'You find these in the audience section on Facebook. Set each one as shown, then move to the next.',
+    checklist: RECIPE_ITEMS.map(recipeLine),
     copy: { kind: 'none' },
     stuck:
-      'Type your town into the Locations box and pick it from the list, then add the towns around it the same way. If Facebook asks whether to include or exclude a place, choose include.',
-    screenshot: shot('set-audience', 'The audience section with places, age range and automatic placements'),
+      'If you cannot find a choice, scroll down the audience section, because Facebook shows them one under another. If you cannot see Interests, look for a link called Detailed targeting and open it, then search for each interest by name. Choose the options exactly as written here, even if Facebook suggests others.',
+    screenshot: shot('set-audience', 'The audience section with location, age, interests, placements and budget set as listed'),
   },
   {
     id: 'choose-page',
