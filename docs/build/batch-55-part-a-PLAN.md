@@ -55,22 +55,22 @@ Every phase's check: `npm test && npm run typecheck && npm run lint` (failures o
 - Notes: Funnel is created `active: false` (store-server.test pins website funnels as inactive); `approved_at` stays null. The privacy page still answers in calculator mode (the form consent links to it); fees, about, faq and areas 404. A stopped calculator 404s at the page; the lead, report and autocomplete APIs are covered in A6.
 
 ## Phase A5: brand editing for calculator sites (depends on A4)
-- [ ] `src/app/leads/setup/website/page.tsx` and `actions.ts`: calculator mode shows only name, logo, colour, areas, fee, contact details.
+- [x] `src/app/leads/setup/website/page.tsx` and `actions.ts`: calculator mode shows only name, logo, colour, areas, fee, contact details.
 - Check: existing tests plus a test that calculator mode exposes only those fields.
-- Notes:
+- Notes: One brand screen (`CalculatorBrand.tsx`) and server-side refusal of every other website flow (`calculatorActor`, new `calculator_site` denial). No management or plan gate for a calculator owner. The new actions live in `calculator-actions.ts` because `website-setup.test.ts` pins every export of `actions.ts`.
 
 ## Phase A6: report flow for calculator sites (depends on A4)
-- [ ] Step 1 enforces `ad_calc_reports_per_day` per owner per UK day (neutral "try again tomorrow", no lead row).
-- [ ] `report-server.ts` calculator mode skips free claim, `held_cap`, `decideStep2`/`held_credit`, `chargeReport`.
-- [ ] `enqueueLeadDbPush` skips calculator sites.
+- [x] Step 1 enforces `ad_calc_reports_per_day` per owner per UK day (neutral "try again tomorrow", no lead row).
+- [x] `report-server.ts` calculator mode skips free claim, `held_cap`, `decideStep2`/`held_credit`, `chargeReport`.
+- [x] `enqueueLeadDbPush` skips calculator sites.
 - Check: tests for each; site-mode tests unchanged.
-- Notes:
+- Notes: The stop rule is also enforced at the lead route, report-request route and address autocomplete (a stopped calculator 404s there, but a report already running is never cut off). Daily limit: UK day, count-then-insert, 429 with a plain message and no lead row. A calculator owner testing their own calculator is no longer held as `held_self`; the house pays for that run. A calculator lead already queued by anything else is failed with code `calculator_site` and never posted.
 
 ## Phase A7: eligibility, link and generation route (depends on A2, A4)
-- [ ] `eligibility.ts` / `eligibility-server.ts`: `route: 'academy' | 'leaddb'`, facts and reasons; Academy byte-identical (pinned).
-- [ ] `links.ts` `adLink` accepts `{sitePath: slug}`; `checks.ts`; `ops.ts` generateOp uses the calculator site and sets `ad_packs.route='leaddb'`.
+- [x] `eligibility.ts` / `eligibility-server.ts`: `route: 'academy' | 'leaddb'`, facts and reasons; Academy byte-identical (pinned).
+- [x] `links.ts` `adLink` accepts `{sitePath: slug}`; `checks.ts`; `ops.ts` generateOp uses the calculator site and sets `ad_packs.route='leaddb'`.
 - Check: eligibility matrix, adLink both shapes, checks link-shape test.
-- Notes:
+- Notes: Route chosen by `chooseAdRoute({hasAdAccount, hasSiteWebsite})`: leaddb only with an ad account and no site-mode website. Academy output pinned byte for byte by `eligibility-academy-pin.test.ts`. `has_website` cannot come out of `packEligibility` today (the route choice already excludes it). `PackRow.route` is required; `generate-core.ts` threads route and slug through (caps untouched). A leaddb owner who later gets a site-mode website flips to the Academy route and their old leaddb pack is refused by the route-match guard.
 
 ## Phase A8: creative cap, backstop, allowed flag, admin (depends on A1, A7)
 - [ ] `generate-core.ts` cap section; `store-server.ts`.
