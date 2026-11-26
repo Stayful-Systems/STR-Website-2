@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { createAdminClient } from '../supabase/admin';
+import { adAccountAdminRow, type AdAccountAdminRow } from './ad-account-admin';
 import {
   rowToAdAccount,
   shouldApplyState,
@@ -126,4 +127,27 @@ export async function setAdAccountAllowed(ownerId: string, allowed: boolean, adm
     throw new Error(`ad_account_allow_failed:${error.code ?? 'error'}`);
   }
   return (data ?? []).length > 0;
+}
+
+/**
+ * The admin screen's list (phase A8): every ad account's last state, newest first, with how many extra rounds each has
+ * not used. Flags and states only (no email or name). Throws (a code only) when a read fails, so the page can say so
+ * instead of showing an empty list.
+ */
+export async function listAdAccounts(now: Date = new Date()): Promise<AdAccountAdminRow[]> {
+  const { data, error } = await db().from('leaddb_ad_accounts').select(COLUMNS).order('created_at', { ascending: false }).limit(500);
+  if (error) {
+    console.error('[leaddb-ad-account] list failed:', error.code ?? 'error');
+    throw new Error(`ad_account_list_failed:${error.code ?? 'error'}`);
+  }
+  const rows = (data ?? []) as LeadDbAdAccountRow[];
+  if (rows.length === 0) return [];
+  const grants = await db().from('ad_pack_round_grants').select('owner_id').is('used_at', null).in('owner_id', rows.map((r) => r.owner_id));
+  if (grants.error) {
+    console.error('[leaddb-ad-account] grants list failed:', grants.error.code ?? 'error');
+    throw new Error(`ad_account_list_failed:${grants.error.code ?? 'error'}`);
+  }
+  const unused = new Map<string, number>();
+  for (const g of (grants.data ?? []) as { owner_id: string }[]) unused.set(g.owner_id, (unused.get(g.owner_id) ?? 0) + 1);
+  return rows.map((r) => adAccountAdminRow(rowToAdAccount(r), r.allowed_at ?? null, unused.get(r.owner_id) ?? 0, now));
 }
