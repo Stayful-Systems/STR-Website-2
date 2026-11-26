@@ -11,6 +11,7 @@
  */
 import { normaliseCode, parseCode } from './codes.ts';
 import type { Angle } from './codes.ts';
+import { siteUrl } from '../url.ts';
 
 export const AD_ID_PLACEHOLDER = '{{ad.id}}';
 /** A Meta ad id is a long run of digits; this is the most we keep. */
@@ -34,19 +35,54 @@ function bareHost(domain: string): string {
   return host;
 }
 
+/** A website slug as the link carries it: 3 to 40 lowercase letters, digits and hyphens, none at either end. */
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+
+/** The bare host of this app, the one members use (NEXT_PUBLIC_SITE_URL, else the live address). */
+export function appHost(): string {
+  return bareHost(siteUrl());
+}
+
+export type AdLinkInput =
+  | { domain: string; sitePath?: undefined; code: string; operatorCode: string }
+  | {
+      /** The slug of a site that lives on this app's own address (the calculator site): the link goes to /s/<slug>. */
+      sitePath: string;
+      /** The bare host to use. Left out, it is this app's own host (appHost()). */
+      domain?: string;
+      code: string;
+      operatorCode: string;
+    };
+
 /**
- * https://<domain>/?ad=<CODE>&utm_source=facebook&utm_medium=paid_social
- *   &utm_campaign=SI-<operator>&utm_content={{ad.id}}
+ * Two shapes, one tail:
+ *
+ *   own domain (the Academy route)
+ *     https://<domain>/?ad=<CODE>&utm_source=facebook&utm_medium=paid_social
+ *       &utm_campaign=SI-<operator>&utm_content={{ad.id}}
+ *   this app's own address (the lead database route, `{ sitePath: slug }`)
+ *     https://<app host>/s/<slug>?ad=<CODE>&utm_source=facebook&utm_medium=paid_social
+ *       &utm_campaign=SI-<operator>&utm_content={{ad.id}}
+ *
+ * The bare-host shape is byte for byte what it always was.
  */
-export function adLink(input: { domain: string; code: string; operatorCode: string }): string {
-  const host = bareHost(input.domain);
+export function adLink(input: AdLinkInput): string {
   const code = normaliseCode(input.code);
   if (!code) throw new Error('adLink: the code is not a pack code');
   const op = String(input.operatorCode ?? '').toUpperCase();
   if (!/^[0-9A-F]{6}$/.test(op)) throw new Error('adLink: the operator code must be 6 hex characters');
   if (parseCode(code)?.operatorCode !== op) throw new Error('adLink: the code does not belong to this operator');
+  let base: string;
+  if (input.sitePath === undefined) {
+    base = `https://${bareHost(input.domain)}/`;
+  } else {
+    const slug = String(input.sitePath).trim();
+    if (!SLUG_RE.test(slug)) throw new Error('adLink: the site path must be a website slug such as my-calculator');
+    const host = input.domain === undefined ? appHost() : bareHost(input.domain);
+    base = `https://${host}/s/${slug}`;
+  }
   return (
-    `https://${host}/?ad=${encodeURIComponent(code)}` +
+    `${base}?ad=${encodeURIComponent(code)}` +
     `&utm_source=facebook&utm_medium=paid_social&utm_campaign=SI-${op}` +
     `&utm_content=${AD_ID_PLACEHOLDER}`
   );

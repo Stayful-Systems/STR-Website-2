@@ -60,6 +60,11 @@ export interface LeadContext {
    * Optional: absent means false, so a website lead's context is unchanged.
    */
   sheetLead?: boolean;
+  /**
+   * Batch 55 (Part A): the lead came from a CALCULATOR site (websites.mode = 'calculator'). It is never pushed as an
+   * `si_website` lead: Phase 2 sends these as `si_ad`. Optional: absent means false, so a site-mode lead is unchanged.
+   */
+  calculator?: boolean;
 }
 
 export interface LinkState {
@@ -142,6 +147,8 @@ export async function runLeadDbDelivery(leadId: string, deps: LeadDbDeps): Promi
   const ctx = await store.context(leadId);
   if (!ctx) return fail('lead_gone', false);
   if (ctx.archivedAt) return fail('archived', false);
+  // Batch 55: a calculator lead is never an si_website push, whoever queued it (a stray row, a retry). Failed for good, with a code.
+  if (ctx.calculator) return fail('calculator_site', false);
   if (!ctx.report && !ctx.sheetLead) return fail('not_a_website_lead', false);
   if (ctx.status === 'held') {
     // The customer chose to review it first. Nothing is sent and no attempt is used; the next run looks again.
@@ -240,7 +247,8 @@ export async function runLeadDbDelivery(leadId: string, deps: LeadDbDeps): Promi
  * call it fire-and-forget, and a failure here must cost the landlord nothing.
  *
  * Acts only for a website lead (it has a website report row) that is not held,
- * whose owner has an ACTIVE link. Anything else is a quiet no-op: plenty of
+ * whose owner has an ACTIVE link. A lead of a calculator site (Batch 55) is never
+ * pushed here. Anything else is a quiet no-op: plenty of
  * operators will never connect a lead database.
  */
 export async function enqueueLeadDbPush(leadId: string, deps?: LeadDbDeps): Promise<'queued' | 'skipped'> {
@@ -248,6 +256,7 @@ export async function enqueueLeadDbPush(leadId: string, deps?: LeadDbDeps): Prom
     const d = deps ?? (await realDeps());
     const ctx = await d.store.context(leadId);
     if (!ctx || (!ctx.report && !ctx.sheetLead) || ctx.archivedAt || ctx.status === 'held') return 'skipped';
+    if (ctx.calculator) return 'skipped'; // Batch 55: a calculator site's lead is not an si_website lead
     const link = await d.store.link(ctx.ownerId);
     if (!link || link.status !== 'active') return 'skipped';
     await d.store.enqueue(leadId, ctx.ownerId, { reportDone: ctx.report?.state === 'done' });
