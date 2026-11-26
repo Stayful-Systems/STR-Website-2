@@ -29,11 +29,11 @@ Every phase's check: `npm test && npm run typecheck && npm run lint` (failures o
 `/deal/[token]`, the lead-database repo (Part B).
 
 ## Phase A1: schema and settings (no dependencies)
-- [ ] `supabase/schema.sql` new "Batch 55 (Part A)" block at the end: `websites.mode` (`site`|`calculator`), `ad_packs.route` (`academy`|`leaddb`), table `leaddb_ad_accounts`, table `ad_pack_round_grants` (RLS on, anon/authenticated revoked), seeds `ad_calc_reports_per_day=50`, `ad_pack_ld_round_days=30`, `ad_pack_ld_monthly_cap_pence=25000`.
-- [ ] `src/lib/ad-packs/settings.ts` and `src/lib/websites/settings.ts` (+ tests pinning defaults to the seeds).
-- [ ] `supabase/tests/batch55-smoke.sql`.
+- [x] `supabase/schema.sql` new "Batch 55 (Part A)" block at the end: `websites.mode` (`site`|`calculator`), `ad_packs.route` (`academy`|`leaddb`), table `leaddb_ad_accounts`, table `ad_pack_round_grants` (RLS on, anon/authenticated revoked), seeds `ad_calc_reports_per_day=50`, `ad_pack_ld_round_days=30`, `ad_pack_ld_monthly_cap_pence=25000`.
+- [x] `src/lib/ad-packs/settings.ts` and `src/lib/websites/settings.ts` (+ tests pinning defaults to the seeds).
+- [x] `supabase/tests/batch55-smoke.sql`.
 - Check: settings tests.
-- Notes:
+- Notes: Block sits AFTER Batch 37's (the schema tests stop a section at the next Batch marker). The reports-per-day setting has its own key and parser in `websites/settings.ts` plus `calc-settings-server.ts` (`readAdCalcReportsPerDay()`), not in `WebsiteSettings`, because the admin save loop writes every `WEBSITE_KEYS` entry. CI step for the smoke script added to `.github/workflows/ci.yml`. Block ran twice on a throwaway Postgres 16 with no errors.
 
 ## Phase A2: account state and stop rule (depends on A1)
 - [ ] `src/lib/leaddb/ad-account.ts` (pure: `adRouteStopped`, `adRouteVerdict`, state parsing, stale rule) + test.
