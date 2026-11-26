@@ -73,10 +73,10 @@ Every phase's check: `npm test && npm run typecheck && npm run lint` (failures o
 - Notes: Route chosen by `chooseAdRoute({hasAdAccount, hasSiteWebsite})`: leaddb only with an ad account and no site-mode website. Academy output pinned byte for byte by `eligibility-academy-pin.test.ts`. `has_website` cannot come out of `packEligibility` today (the route choice already excludes it). `PackRow.route` is required; `generate-core.ts` threads route and slug through (caps untouched). A leaddb owner who later gets a site-mode website flips to the Academy route and their old leaddb pack is refused by the route-match guard.
 
 ## Phase A8: creative cap, backstop, allowed flag, admin (depends on A1, A7)
-- [ ] `generate-core.ts` cap section; `store-server.ts`.
-- [ ] `/admin/ad-packs`: lead database accounts list with "Allowed" toggle; "Grant an extra round" (reason required); audit line ids only.
+- [x] `generate-core.ts` cap section; `store-server.ts`.
+- [x] `/admin/ad-packs`: lead database accounts list with "Allowed" toggle; "Grant an extra round" (reason required); audit line ids only.
 - Check: second round in 30 days refused, failed run not counted, grant allows one more, backstop refuses, Academy free-regen unchanged.
-- Notes:
+- Notes: Pure rules in `round-limit.ts` (`decideLeadDbRound`, `overBackstop`, `sumRunSpend`, `cleanGrantReason`). New codes `round_limit` and `backstop` (plain sentences added to `PLAIN_CODES`). On the lead database route an operator run is refused by the round rule instead of the Academy free-regen rule; each route's month now sums only its own runs (`monthSpendPence(since, route)`, also in the render worker and voice change / retry). Admin: `ld-admin-run.ts` (injectable runner, admin gate first), `leaddb-actions.ts` (a separate file because `actions.ts`'s exports are pinned), `LeadDbAccounts.tsx`. Tests: `round-limit.test.ts`, `ld-admin.test.ts`.
 
 ## Phase A9: targeting recipe in the guide (no dependencies)
 - [x] `src/lib/ad-packs/targeting-recipe.ts` (values plus `LAST_CHECKED = '2026-11-23'`), `guide.ts`, `guide.test.ts`, `GuideWizard.tsx` comment, `public/ad-packs/guide/README`.
