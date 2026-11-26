@@ -134,3 +134,36 @@ and `/admin/ad-sheets`.
   phone or row. Admin screens show states and counts, never cell contents.
 - **Knowledge.** Five draft entries in `seed.ts` (`adsheet_*`: what, connect, attribution, outcomes, your_ads), six
   placeholders in `placeholders.ts` (`{ad_sheet_*}`), and a FACEBOOK LEAD FORMS block in `service-facts.ts`.
+
+# Deal feed (queue Batch 1): tabs, stale-deal credit, duplicates, weekly count
+
+Fills the gaps in the `/deals` marketplace; billing is unchanged (the open ladder and the optional full report).
+Plan and Zac's to-do list: `docs/build/batch-01-deal-feed-PLAN.md` and `-BLOCKERS.md`. Schema: the "Deal feed" block in
+`supabase/schema.sql` (before Batch 37's). Code: `src/lib/marketplace/`.
+
+- **Tabs.** All / Rent-to-rent / Buy-to-let on `/deals`: plain links built by `categorySearch` (`grid.ts`; `kind=rent`,
+  `kind=sale`, `type=all`). The Buy-to-let tab is **every sale** (Short-let, BRRR and Buy to let), so `browseFilters` maps an
+  old `kind=sale` link to all three sale types. `KIND_LABELS.sale` is "Buy-to-let".
+- **Settings** (`billing_settings`, read by `deal-feed-settings.ts`; a test pins the defaults to the seeds): `deal_stale_credit_enabled`
+  (off), `deal_stale_credit_days` (7), `deal_dedupe_enabled` (off), `deal_dedupe_price_pct` (2). Switched on the "Deal feed" panel
+  on `/admin/deals`.
+- **Stale-deal credit.** `/api/internal/deal-stale-credits` (`17 * * * *`, `?dry=1` lists and grants nothing, and lists even
+  while the switch is off). An open is due when its deal went `sold | under_offer | let_agreed | removed` within the days of the
+  open. The amount is read from the ledger's own debits (the open's transaction plus the debits of the user's completed
+  `analysis_purchases` for that deal, less refunds), never the list price; nothing is credited when nothing was spent (the open
+  is settled at 0). Granted as an `adjustment` with `source_ref = 'stale:<open id>'`, so once only. The admin "Grant stale credit"
+  button uses the same function and ignores the window. `ledger.ts` and the credit SQL are called, never changed. Logs carry an
+  open id and pence only.
+- **Duplicates.** `dedupe.ts` (`findDupe`, `planDupes`) sets `marketplace_deals.dupe_of` to the earliest-seen live twin (same UPRN
+  and kind, or same kind, beds, type and full postcode within the price percent). `refreshDupes` runs at the end of the sweep
+  and the hourly recheck and keeps the pointers whether or not the switch is on (so `/admin/deals` can show "Hidden as
+  duplicates" before it is turned on); only the grid query honours `deal_dedupe_enabled`. `retireDeal` frees a retired
+  original's twins at once. An opened deal and `/deals/[id]` ignore `dupe_of`. The full postcode is read from the stored
+  listing (`sourced_listings.snapshot`), only for rows that have a possible twin.
+- **Weekly count.** `weekly-sales.ts` (last 8 UK weeks, Rent-to-rent / Buy-to-let, opens and complete full reports) and
+  "reports this month vs 50" on `/admin/deals`.
+- **Rent-to-rent notice.** `r2r-notice.ts`, shown on a rental's deal sheet and in the full-analysis panel, never on a sale.
+- **Not touched.** `/p/[token]` and `/deal/[token]` (member share links that show the address: a separate issue), leads, ad
+  packs, ad sheets and the lead database.
+- **Knowledge.** Four draft entries in `seed.ts` (`deal_feed_categories`, `deal_stale_credit`, `deal_r2r_permission`,
+  `deal_duplicates`), the `{deal_stale_credit_days}` placeholder and a DEAL FEED block in `service-facts.ts`.
