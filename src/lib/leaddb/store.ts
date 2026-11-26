@@ -5,7 +5,7 @@ import { getFunnel } from '../funnels';
 import { renderReportPdf, pdfBrandForFunnel } from '../pdf/render';
 import { leadDbConfig, leadDbPushLead } from './client';
 import { leadDbBadge } from './messages';
-import { pickUnqueued, withoutCalculatorLeads } from './sweep';
+import { pickUnqueued, reportSiteIdsOf, withoutCalculatorLeads, type ReportedLead } from './sweep';
 import { isCalculatorMode } from '../websites/calculator';
 import type { DeliveryRow, FinishPatch, LeadContext, LeadDbDeps, LeadDbStore, LinkState } from './deliver';
 import { realLinkClient, type LinkDeps, type LinkRecord, type LinkStore } from './links';
@@ -23,14 +23,6 @@ const DELIVERY_COLUMNS = 'lead_id, owner_id, attempts, lead_sent_at, report_sent
 const SWEEP_WINDOW_DAYS = 14;
 
 const db = () => createAdminClient();
-
-/** A lead row read with its report's site id (the report row embeds as an object; an array is tolerated). */
-type ReportedLead = { id: string; website_reports?: { website_id?: string } | { website_id?: string }[] | null };
-const reportSiteIdsOf = (r: ReportedLead): string[] => {
-  const w = r.website_reports;
-  const list = Array.isArray(w) ? w : w ? [w] : [];
-  return list.map((x) => x.website_id).filter((x): x is string => typeof x === 'string');
-};
 
 export function supabaseStore(): LeadDbStore {
   return {

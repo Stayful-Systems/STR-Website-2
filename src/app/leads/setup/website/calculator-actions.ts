@@ -1,13 +1,12 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { recordActivity } from '@/lib/activity/log';
 import { LOGO_MAX_BYTES } from '@/lib/funnels/brand';
 import { deleteLogoIfOurs, uploadLogo } from '@/lib/funnels/storage';
 import { settingsPatchFor } from '@/lib/websites/calculator-setup';
 import { saveSettings } from '@/lib/websites/store-server';
-import { calculatorActor, type CalculatorActor } from './context';
 import type { WebsiteState } from './actions';
+import { calculatorActor, type CalculatorActor } from './context';
 import { validateAreas, validateCompany, validateContact } from './steps';
 
 /**
@@ -26,8 +25,8 @@ import { validateAreas, validateCompany, validateContact } from './steps';
  * the save goes through settingsPatchFor, which refuses a calculator change to
  * any other field (the photo, the about text) however it got here.
  *
- * Nothing here logs a name, email, phone or address: the one activity row
- * carries the field names only.
+ * Nothing here logs or records a name, email, phone or address, and no setup
+ * step is logged: a calculator has no setup to finish.
  */
 
 const DENIAL = {
@@ -64,7 +63,6 @@ export async function saveCalculatorBrandAction(_prev: WebsiteState, formData: F
   if (!gate.ok) return { error: gate.message };
   const saved = await saveSettings(actor.userId, gate.patch);
   if (!saved.ok) return { error: 'We could not save that just now. Please try again.' };
-  await recordActivity(actor.userId, 'funnel_setup_step', { extras: { calculator: true, fields: Object.keys(gate.patch).join(',') } });
   refresh();
   return { saved: true };
 }
