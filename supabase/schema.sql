@@ -10534,3 +10534,32 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Deal feed (queue Batch 1): duplicate hiding and the stale-deal credit
+-- =========================
+-- Safe to re-run. Both tables stay server-only: no grants for anon or authenticated.
+--
+-- marketplace_deals.dupe_of: the canonical_url of an earlier-seen live deal this row
+--   duplicates (same UPRN, or same kind, bedrooms, type and full postcode at a price
+--   within deal_dedupe_price_pct). The grid hides a row with dupe_of set while
+--   deal_dedupe_enabled is on; an opened deal and /deals/[id] ignore it. When the
+--   original goes the pointer is cleared and the twin comes back.
+-- marketplace_deals.uprn: the portal feed's property id, kept so a relist can match.
+-- deal_opens.stale_credit_at / stale_credit_pence: set once when a deal that went off
+--   the market within deal_stale_credit_days of the open was credited back (the credit
+--   grant's source_ref is 'stale:<open id>', so it can only ever happen once).
+alter table public.marketplace_deals add column if not exists uprn text;
+alter table public.marketplace_deals add column if not exists dupe_of text references public.marketplace_deals(canonical_url) on delete set null;
+create index if not exists marketplace_deals_dupe_of_idx on public.marketplace_deals (dupe_of) where dupe_of is not null;
+alter table public.deal_opens add column if not exists stale_credit_at timestamptz;
+alter table public.deal_opens add column if not exists stale_credit_pence numeric;
+
+insert into public.billing_settings (key, value) values
+  ('deal_stale_credit_enabled', 'false'::jsonb),
+  ('deal_stale_credit_days', '7'::jsonb),
+  ('deal_dedupe_enabled', 'false'::jsonb),
+  ('deal_dedupe_price_pct', '2'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
