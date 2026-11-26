@@ -11,3 +11,6 @@ Plain English. Nothing here has been done by the build; each item is yours.
 6. **Review and merge the draft PR.** The build stops there.
 7. **Run Part B Phase 1 in the lead-database session.** It must call `provision`, `state` and `signin`; see `batch-55-part-a-CONTRACT.md`.
 8. **Confirm the proposed campaign objective** in the audience step (Leads, website destination, "Maximise number of landing page views"). It is marked PROPOSED.
+9. **Check where a brand-new lead database customer lands after the sign-in link.** `/auth/confirm` sends a new login through `postAuthPath`, which only skips the welcome quiz for `/team/join` and `/reset-password`. A first sign-in may land on `/welcome` instead of `/leads/ads`. Try one test customer end to end before the first real one.
+10. **Decide the campaign goal wording.** The proposed goal (Leads, website destination, landing page views) clashes with the existing "choose Traffic" step in the upload guide, so it is recorded in code but not shown to operators.
+11. **Confirm `past_due` handling with Part B.** On this side a past-due account with a card on file keeps working; the lead database must clear the card, lapse or cancel the account to stop it.

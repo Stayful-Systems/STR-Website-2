@@ -42,17 +42,17 @@ Every phase's check: `npm test && npm run typecheck && npm run lint` (failures o
 - Notes: Verdict order no_account, account_stopped, no_card, not_allowed. `past_due` with a card on file is NOT stopped by itself (assumption: the lead database must clear the card, lapse or cancel). Server: readAdAccount, readAdAccountByCustomerId, applyAdAccountState, createAdAccount, setAdAccountAllowed.
 
 ## Phase A3: signed inbound endpoints (depends on A1, A2)
-- [ ] `src/lib/leaddb/inbound.ts` (`verifyInbound`: 404 unset/short secret, 401 bad signature).
-- [ ] Routes `src/app/api/internal/si/ad-route/{provision,state,signin}/route.ts`.
-- [ ] `docs/build/batch-55-part-a-CONTRACT.md` for Part B.
+- [x] `src/lib/leaddb/inbound.ts` (`verifyInbound`: 404 unset/short secret, 401 bad signature).
+- [x] Routes `src/app/api/internal/si/ad-route/{provision,state,signin}/route.ts`.
+- [x] `docs/build/batch-55-part-a-CONTRACT.md` for Part B.
 - Check: route source-pin tests, `inbound.test.ts`.
-- Notes:
+- Notes: Same signing scheme as Batch 32 (`x-stayful-signature: t=<unix>,v1=<hex>`, 300 s tolerance). Provision is split into a pure engine (`provision-run.ts`) and live wiring (`provision-server.ts`). No welcome credit or welcome email is added for the new member. Contract doc written for Part B.
 
 ## Phase A4: calculator site (depends on A1, A2)
-- [ ] `ensureCalculatorSite` in `store-server.ts`; `src/lib/websites/calculator.ts` (pure) + test.
-- [ ] `src/app/s/[slug]/site-data.ts`, `page.tsx`; `[page]` and `areas/[area]` 404 in calculator mode.
+- [x] `ensureCalculatorSite` in `store-server.ts`; `src/lib/websites/calculator.ts` (pure) + test.
+- [x] `src/app/s/[slug]/site-data.ts`, `page.tsx`; `[page]` and `areas/[area]` 404 in calculator mode.
 - Check: `calculator.test.ts`.
-- Notes:
+- Notes: Funnel is created `active: false` (store-server.test pins website funnels as inactive); `approved_at` stays null. The privacy page still answers in calculator mode (the form consent links to it); fees, about, faq and areas 404. A stopped calculator 404s at the page; the lead, report and autocomplete APIs are covered in A6.
 
 ## Phase A5: brand editing for calculator sites (depends on A4)
 - [ ] `src/app/leads/setup/website/page.tsx` and `actions.ts`: calculator mode shows only name, logo, colour, areas, fee, contact details.
