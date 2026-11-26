@@ -8,6 +8,7 @@ import { linkMissingLeads } from './attribution-server';
 import { generatePack } from './generate-server';
 import { adPackAdminRunner, type AdPackAdminRunner, type RegenSource } from './admin-run.ts';
 import { ADMIN_PACK_LIMIT, buildAdminView, type AdminAdInput, type AdminLinkInput, type AdminOwnerInput, type AdminRenderInput, type AdminView } from './admin-view.ts';
+import { appHost } from './links.ts';
 import { PACK_COLUMNS, toPackRow } from './rows.ts';
 import type { PackRow } from './store-types.ts';
 
@@ -124,6 +125,36 @@ export async function readRegenSource(packId: string): Promise<RegenSource> {
 
   const site = (pack.websiteId ? await siteById(pack.websiteId) : null) ?? (await ownSite(pack.ownerId));
   if (!site || site.userId !== pack.ownerId) return { ok: false, code: 'no_site' };
+
+  // Batch 55: a lead database pack is rebuilt from the owner's calculator site and this app's own host (no domain row exists).
+  // The Academy path below is unchanged.
+  if (pack.route === 'leaddb') {
+    if (site.mode !== 'calculator') return { ok: false, code: 'no_site' };
+    let host: string;
+    try {
+      host = appHost();
+    } catch {
+      return { ok: false, code: 'unreadable' };
+    }
+    const c = site.settings;
+    return {
+      ok: true,
+      ownerId: pack.ownerId,
+      company: c.companyName,
+      wasApproved: pack.approvedAt !== null,
+      input: {
+        areaKey: pack.areaKey,
+        photos: pack.photos ?? [],
+        brand: { company: c.companyName, logoUrl: c.logoUrl, brandColour: c.brandColour, feePct: c.managementFeePct, areas: c.areas, photoUrl: c.photoUrl },
+        domain: host,
+        websiteId: site.id,
+        route: 'leaddb',
+        sitePath: site.slug,
+        typeOnly: c.logoUrl === null,
+      },
+    };
+  }
+
   const domain = await domainOfSite(site.id);
   if (!domain || domain.status !== 'live' || !(await domainIsLiveFor(site.id, domain.name))) return { ok: false, code: 'no_domain' };
 
