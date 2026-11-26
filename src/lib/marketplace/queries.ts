@@ -22,6 +22,7 @@ import { reactionFilter, type ReactionFilter } from './reactions';
 import { dealTypesOf, type DealType, type TypedDeal } from '../profile/deal-types';
 import { parseBtlCard, type BtlCard } from '../btl/card';
 import { parseProjectCard, type ProjectCardData } from '../project/headline';
+import { readDealFeedSettings } from './deal-feed-settings-server';
 
 export interface DealPage {
   cards: DealCard[];
@@ -81,9 +82,37 @@ export function btlColumnsMissing(): boolean {
 }
 
 /** A read built by `run`, run again without the project or buy-to-let columns when one was the failure (twice: one each). */
+/**
+ * Deal feed: marketplace_deals.dupe_of, and the switch that hides a row pointing at an
+ * earlier twin (deal_dedupe_enabled, off until Zac turns it on). The setting is read
+ * with a short cache before each grid read; until the schema block is run the first
+ * failure naming the column is remembered and every read after goes without it.
+ */
+let dupeColumnMissing = false;
+let dedupeHide = false;
+let dedupeReadAt = 0;
+const DEDUPE_CACHE_MS = 60_000;
+
+async function dedupeReady(): Promise<void> {
+  if (Date.now() - dedupeReadAt < DEDUPE_CACHE_MS) return;
+  dedupeReadAt = Date.now();
+  dedupeHide = (await readDealFeedSettings()).dedupeEnabled;
+}
+
+export function isMissingDupeColumn(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  const message = error.message ?? '';
+  const hit = /dupe_of/.test(message) && (error.code === '42703' || error.code === 'PGRST204' || /does not exist|could not find/i.test(message));
+  if (hit && !dupeColumnMissing) {
+    dupeColumnMissing = true;
+    console.warn('[marketplace] marketplace_deals.dupe_of is not there yet (the Deal feed schema block not run?): reading without it');
+  }
+  return hit;
+}
+
 async function tolerant<R extends { error: { code?: string; message?: string } | null }>(run: () => PromiseLike<R>): Promise<R> {
   let res = await run();
-  for (let i = 0; i < 2 && res.error && (isMissingProjectColumn(res.error) || isMissingBtlColumn(res.error)); i += 1) res = await run();
+  for (let i = 0; i < 2 && res.error && (isMissingProjectColumn(res.error) || isMissingBtlColumn(res.error) || isMissingDupeColumn(res.error)); i += 1) res = await run();
   return res;
 }
 
@@ -127,6 +156,8 @@ function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, op
   } else if (ownFilter) q = q.or(ownFilter);
   else if (visibility.cutoffIso) q = q.lte('live_since', visibility.cutoffIso);
   if (f.kind !== 'both') q = q.eq('kind', f.kind);
+  // Deal feed: a twin of an earlier-seen deal is hidden from the grid (an opened deal and /deals/[id] never read this).
+  if (dedupeHide && !dupeColumnMissing) q = q.is('dupe_of', null);
   // Batch 17: the deal types shown (Browse's type filter, Today's per-type pools). Batch 28: a
   // buy-to-let-only row matches Buy to let and nothing else.
   const types = typeClauseFor(f.types ?? [], !projectColumnMissing, f.brrrLightOnly === true, !btlColumnMissing);
@@ -180,6 +211,7 @@ const pastTheEnd = (error: { code?: string } | null): boolean => error?.code ===
  */
 export async function listDeals(f: DealFilters, visibility: DealVisibility, member: { userId: string | null } = { userId: null }): Promise<DealPage> {
   if (!hasServiceRole()) return EMPTY;
+  await dedupeReady();
   const admin = createAdminClient();
   let reaction = reactionFilter(f.view, member.userId);
   const run = (page: number) => {
@@ -220,6 +252,7 @@ export async function listDeals(f: DealFilters, visibility: DealVisibility, memb
 /** How many deals match these filters in another view (e.g. how many of them this member passed). Null when it cannot be read. */
 export async function countDeals(f: DealFilters, visibility: DealVisibility, member: { userId: string | null }): Promise<number | null> {
   if (!hasServiceRole()) return null;
+  await dedupeReady();
   const { count, error } = await tolerant(() => dealsQuery(createAdminClient(), f, visibility, { reaction: reactionFilter(f.view, member.userId), countOnly: true }));
   if (error) {
     console.warn('[marketplace] countDeals failed:', error.message);
@@ -251,6 +284,7 @@ export async function earlyAccessCountAcross(filters: readonly DealFilters[], vi
 export async function earlyAccessCount(f: DealFilters, visibility: DealVisibility): Promise<number | null> {
   const cutoff = visibility.cutoffIso;
   if (!hasServiceRole() || !cutoff) return null;
+  await dedupeReady();
   const { count, error } = await tolerant(() => dealsQuery(createAdminClient(), f, visibility, { reaction: null, countOnly: true, earlyAfter: cutoff }));
   if (error) {
     console.warn('[marketplace] earlyAccessCount failed:', error.message);
@@ -282,6 +316,7 @@ function withBtlLens<T extends { btl?: unknown; btl_pass?: unknown }>(row: T): O
  */
 export async function rankingPool(f: DealFilters, visibility: DealVisibility, member: { userId: string | null }, limit: number): Promise<RankingRow[]> {
   if (!hasServiceRole()) return [];
+  await dedupeReady();
   const admin = createAdminClient();
   const filters: DealFilters = { ...f, view: 'all', sort: 'profit', page: 1 };
   let reaction = reactionFilter('all', member.userId);
@@ -313,6 +348,7 @@ export async function rankingPool(f: DealFilters, visibility: DealVisibility, me
  */
 export async function browsePool(f: DealFilters, visibility: DealVisibility, limit: number, extraColumns: string): Promise<DealCard[] | null> {
   if (!hasServiceRole()) return null;
+  await dedupeReady();
   const filters: DealFilters = { ...f, view: 'all', sort: 'profit', page: 1 };
   const res = await tolerant(() => dealsQuery(createAdminClient(), filters, visibility, { reaction: null, countOnly: false, extraColumns, withProject: true }).range(0, Math.max(0, limit - 1)));
   if (res.error) {

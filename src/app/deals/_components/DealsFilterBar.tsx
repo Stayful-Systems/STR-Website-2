@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
-import { filtersToSearch, kindOfTypes, SORT_LABELS, type DealFilters, type DealSort } from "@/lib/marketplace/grid";
+import { CATEGORY_LABELS, DEAL_CATEGORIES, categoryOf, categorySearch, filtersToSearch, kindOfTypes, SORT_LABELS, type DealFilters, type DealSort } from "@/lib/marketplace/grid";
 import { AVAILABLE_DEAL_TYPES, DEAL_TYPE_LABELS, type DealType } from "@/lib/profile/deal-types";
 import type { AreaCount } from "@/lib/marketplace/queries";
 
@@ -26,7 +26,25 @@ export function DealsFilterBar({ filters, counts, total, ownTypes, showAll = fal
   const narrowed = shown.length < AVAILABLE_DEAL_TYPES.length;
   const isOwn = sameTypes(filters.types, ownTypes);
   const countKind = filters.kind !== "both" ? filters.kind : kindOfTypes(filters.types);
+  const category = categoryOf(filters);
   return (
+    <>
+    {/* Deal feed: one-tap category tabs. Plain links, so no JavaScript; 44px tall; they scroll sideways on a phone. */}
+    <nav aria-label="Deal category" className="-mx-4 mb-3 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+      <ul className="flex w-max min-w-full gap-2 sm:w-auto">
+        {DEAL_CATEGORIES.map((c) => (
+          <li key={c}>
+            <Link
+              href={`/deals${categorySearch(filters, c)}${showAll ? (categorySearch(filters, c) ? "&all=1" : "?all=1") : ""}`}
+              aria-current={category === c ? "page" : undefined}
+              className={`flex min-h-11 min-w-24 items-center justify-center whitespace-nowrap rounded-full border px-5 text-sm font-semibold ${category === c ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-foreground hover:bg-muted"}`}
+            >
+              {CATEGORY_LABELS[c]}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </nav>
     <form method="get" action="/deals" className="rounded-xl border border-border bg-card p-3">
       {/* Batch 22e: marks a change made here (logged as browse_filter), and keeps "every deal" when that is what is shown. */}
       <input type="hidden" name="f" value="1" />
@@ -112,6 +130,7 @@ export function DealsFilterBar({ filters, counts, total, ownTypes, showAll = fal
         </p>
       )}
     </form>
+    </>
   );
 }
 

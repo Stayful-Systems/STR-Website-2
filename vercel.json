@@ -203,6 +203,10 @@
 			"schedule": "30 * * * *"
 		},
 		{
+			"path": "/api/internal/deal-stale-credits",
+			"schedule": "17 * * * *"
+		},
+		{
 			"path": "/api/internal/activity-retention",
 			"schedule": "35 2 * * *"
 		},

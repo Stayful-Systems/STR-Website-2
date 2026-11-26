@@ -26,6 +26,7 @@ import type { CheckResult } from "@/lib/deal-quality/checks";
 import { ukDayStart } from "@/lib/deal-quality/checks";
 import { readBtlSettings, btlScreenEnabled } from "@/lib/btl/settings-server";
 import { BTL_SCREEN_KIND } from "@/lib/btl/screen-server";
+import { DealFeedPanel } from "./DealFeedPanel";
 
 const RUN_COOKIE = "sf_deals_run";
 
@@ -63,6 +64,18 @@ const MESSAGES: Record<string, string> = {
   bad_deal_checks: "Those settings did not parse: whole numbers, checks a day 0–500, daily cap 0–100,000p, each stream's slots 0–500, calls a check 1–10, a check good for 1–730 days, shortlist 1–60 days (low entry 1–60), re-check ceiling 0–100,000p, Project photo checks 0–100 a day, Project spend 0–100,000p a day, buy-to-let valuations 0–500 a day, buy-to-let spend 0–100,000p a day.",
   project_checks_saved: "Project-check settings saved. The next pass uses them within a minute.",
   bad_project_checks: "Those settings did not parse: whole numbers, sold-price lookups 0–200 a day, give up after 1–30 days, 1–20 photos, reuse 0–365 days, effort low, medium or high.",
+  deal_feed_saved: "Deal feed settings saved. The grid and the hourly credit use them within a minute.",
+  bad_deal_feed: "Those did not parse: the credit window is whole days from 1 to 90, the price match is a percentage from 0 to 20.",
+  stale_granted: "Credited back. It is on the member's usage page as an adjustment.",
+  stale_nothing: "Nothing was taken for that open (a free pick, or already refunded), so nothing was credited. It is marked done.",
+  stale_missing: "No open with that id.",
+  stale_not_open: "That open is not paid up yet (it is still pending).",
+  stale_already_credited: "That open has already been credited.",
+  stale_not_retired: "That deal is still on the market.",
+  stale_not_a_gone_reason: "That deal went for another reason (not sold, under offer, let agreed or removed), so it does not earn the credit.",
+  stale_outside_window: "That deal went too long after the open.",
+  stale_bad_dates: "That open or deal has no usable date.",
+  stale_failed: "The credit did not go through. Nothing was changed; try again.",
   bad_url: "That is not a listing URL.",
   failed: "That did not work.",
 };
@@ -251,6 +264,8 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
         <Stat label={`Opens, ${DAYS} days`} value={opens.length} sub={`${picks} as daily picks · ${checkingRes.count ?? 0} waiting on a check`} />
         <Stat label="Charged" value={gbp(pence)} sub={`${openers} members opened something`} />
       </div>
+
+      <DealFeedPanel />
 
       <section className="mt-8 rounded-xl border border-border bg-card p-5">
         <h2 className="text-base font-semibold text-foreground">Ladder tuning</h2>

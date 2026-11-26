@@ -67,7 +67,17 @@ export const MAX_PAGE = 500;
 export const DEFAULT_FILTERS: DealFilters = { kind: 'both', types: [], areas: [], beds: 'any', minPrice: null, maxPrice: null, minProfit: null, minUplift: null, sort: 'best', view: 'all', page: 1 };
 
 export const SORT_LABELS: Record<DealSort, string> = { best: 'Best for you', profit: 'Highest profit', uplift: 'Highest uplift', newest: 'Newest', price: 'Lowest price' };
-export const KIND_LABELS: Record<DealKindFilter, string> = { both: 'Buy or rent', sale: 'To buy', rent: 'Rent-to-rent' };
+export const KIND_LABELS: Record<DealKindFilter, string> = { both: 'Buy or rent', sale: 'Buy-to-let', rent: 'Rent-to-rent' };
+
+/**
+ * Deal feed (queue Batch 1): the one-tap category tabs above the filters. A tab is a
+ * plain link (no JavaScript) that sets the deal kind: "Rent-to-rent" is the rentals,
+ * "Buy-to-let" is every sale (Short-let, BRRR and Buy to let alike: Zac's decision),
+ * "All" is every type.
+ */
+export type DealCategory = 'all' | 'rent' | 'sale';
+export const DEAL_CATEGORIES: readonly DealCategory[] = ['all', 'rent', 'sale'];
+export const CATEGORY_LABELS: Record<DealCategory, string> = { all: 'All', rent: KIND_LABELS.rent, sale: KIND_LABELS.sale };
 
 const AREA_CODES = new Set(AREA_META.map((a) => a.code));
 
@@ -109,10 +119,35 @@ export function typesParam(v: string | string[] | undefined): DealType[] {
  */
 export function browseFilters(parsed: DealFilters, typeInUrl: boolean, profileTypes: readonly DealType[]): DealFilters {
   if (typeInUrl) return parsed;
-  if (parsed.kind === 'sale') return { ...parsed, kind: 'both', types: ['buy_str', 'brrr'] };
+  // Deal feed: the Buy-to-let tab is every sale, so an old to-buy link takes the buy-to-let deals too.
+  if (parsed.kind === 'sale') return { ...parsed, kind: 'both', types: TYPE_VALUES.filter((t) => t !== 'r2r') };
   if (parsed.kind === 'rent') return { ...parsed, kind: 'both', types: ['r2r'] };
   const own = TYPE_VALUES.filter((t) => profileTypes.includes(t));
   return { ...parsed, types: own.length === TYPE_VALUES.length ? [] : own };
+}
+
+/**
+ * Which tab a (browse-folded) filter is on: "All" for every type (none chosen, or all of
+ * them), "Rent-to-rent" or "Buy-to-let" when the types are only rentals or only sales,
+ * and null for a mixed pick (Short-let and Rent-to-rent, say), which highlights no tab.
+ */
+export function categoryOf(f: Pick<DealFilters, 'kind' | 'types'>): DealCategory | null {
+  if (f.kind === 'rent') return 'rent';
+  if (f.kind === 'sale') return 'sale';
+  if (f.types.length === 0 || TYPE_VALUES.every((t) => f.types.includes(t))) return 'all';
+  const kind = kindOfTypes(f.types);
+  return kind === 'rent' ? 'rent' : kind === 'sale' ? 'sale' : null;
+}
+
+/**
+ * The search string a tab links to: every other filter kept, the page back to 1. The
+ * rentals and the sales go by `kind` (so the link stays short and an old link means the
+ * same); "All" is `type=all`, which no profile default can narrow.
+ */
+export function categorySearch(f: Partial<DealFilters>, category: DealCategory): string {
+  const base = { ...f, page: 1 };
+  if (category === 'all') return filtersToSearch({ ...base, kind: 'both', types: [...TYPE_VALUES] });
+  return filtersToSearch({ ...base, kind: category, types: [] });
 }
 
 /** The listing kind these types cover, for figures kept by kind (the area counts). */

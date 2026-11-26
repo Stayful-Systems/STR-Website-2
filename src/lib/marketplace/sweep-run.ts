@@ -24,6 +24,8 @@ import { runMetered, newActionId } from '../credit/context';
 import { pmiAccount, pmiConfigured } from '../broker/providers/pmi';
 import { COST_PENCE } from '../broker/config';
 import { absorbListings, cohortLoader, emptyAbsorbCounters, type AbsorbCounters } from './absorb';
+import { refreshDupes } from './dedupe-server';
+import { readDealFeedSettings } from './deal-feed-settings-server';
 import { recordScanDays } from '../home/scan-record';
 import { loadScreenContext, recordRun, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
 import { HISTORY_DAYS, planPass, sweepAreaLimit, sweepEnabled, sweepHistory, sweepMaxQueries, sweepQueries, type SweepHistory, type SweepRunRecord } from './sweep-plan';
@@ -197,6 +199,8 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
     }
   }
 
+  // Deal feed: mark new twins (kept whether or not the grid hides them yet).
+  summary.dupes = await refreshDupes(admin, (await readDealFeedSettings()).dedupePricePct, 'marketplace-sweep');
   summary.ms = elapsed();
   // Batch 22e: "properties scanned" (recounted, so a second pass cannot double a day).
   await recordScanDays(admin, startedAt);

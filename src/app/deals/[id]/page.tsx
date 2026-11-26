@@ -31,6 +31,8 @@ import { readBtlBenchmark, readBtlSettingsCached } from "@/lib/btl/settings-serv
 import { regionForArea } from "@/lib/market/regions";
 import { dealTypeFor, dealTypeOf } from "@/lib/profile/deal-types";
 import { BuyToLetSection } from "../_components/BuyToLetSection";
+import { R2rPermissionNotice } from "../_components/R2rPermissionNotice";
+import { r2rNoticeFor } from "@/lib/marketplace/r2r-notice";
 import { BtlReportButton } from "@/components/report/BtlReportButton";
 import { latestBtlReportId, quoteBtlReport } from "@/lib/btl/report-server";
 import { kindWordFor, projectNumbersFor, projectSummary } from "@/lib/project/display";
@@ -450,11 +452,14 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 {/* Batch 7: the next step, for the member's own opened deal only. At Kept it leads with the Full analysis. */}
                 {!consentStep && <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={stepLead} />}
 
+                {/* Deal feed: a rent-to-rent deal is an ordinary let; short lets need permission. Plain text, rentals only. */}
+                <R2rPermissionNotice kind={deal.kind} className="mt-4" />
+
                 {/* Batch 14, Part E: "Knowing the numbers" puts the Full analysis first. */}
                 {analysisFirst && (
                   <div className="mt-4">
                     <p className="mb-1.5 text-xs text-muted-foreground">{ANALYSIS_LEAD_LINE}</p>
-                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} pack={packPanel} />
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} pack={packPanel} r2rNotice={r2rNoticeFor(deal.kind)} />
                   </div>
                 )}
 
@@ -483,7 +488,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 )}
                 {canBuy && !analysisFirst && !btlOnly && (
                   <div className="mt-3">
-                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} pack={packPanel} />
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} pack={packPanel} r2rNotice={r2rNoticeFor(deal.kind)} />
                   </div>
                 )}
                 {report && pmiLabel && (packPanel.deepTopUp ? <p className="mt-2 text-[11px] text-muted-foreground"><Link href="/account/billing/choose?pick=topup" className="font-medium text-primary hover:underline">{PACK_COPY.deepTopUp}</Link> · {PACK_COPY.deepTopUpWhy}</p> : <p className="mt-2 text-[11px] text-muted-foreground">No second opinion on it yet? Add one from PMI on the report · {priceText(pmiLabel) || "free"}.</p>)}

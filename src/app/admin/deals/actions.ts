@@ -23,6 +23,8 @@ import { runProjectChecks } from '@/lib/project/check-run';
 import { runProjectBackfill } from '@/lib/project/live-backfill-run';
 import { parseBtlAllowance } from '@/lib/btl/config';
 import { runBtlScreen } from '@/lib/btl/screen-server';
+import { grantStaleCreditById } from '@/lib/marketplace/stale-credit-server';
+import { DEAL_FEED_SETTING_KEYS, parseDealFeedSettings } from '@/lib/marketplace/deal-feed-settings';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const RUN_COOKIE = 'sf_deals_run';
@@ -339,4 +341,38 @@ export async function updateR2rBarAction(formData: FormData): Promise<void> {
   if (parseR2rBar(pounds) !== pounds) redirect('/admin/deals?msg=bad_r2r_bar');
   await updateBillingSetting('r2r_qualified_profit', pounds);
   redirect('/admin/deals?msg=r2r_saved');
+}
+
+/**
+ * Deal feed: credits one open back by hand (the "Grant stale credit" button). The same function the hourly job uses,
+ * with the time window ignored (and the switch not needed). Once only per open; nothing is credited when nothing was spent.
+ */
+export async function grantStaleCreditAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const out = await grantStaleCreditById(createAdminClient(), String(formData.get('open_id') ?? '').trim());
+  redirect(`/admin/deals?msg=${out.ok ? (out.granted ? 'stale_granted' : 'stale_nothing') : `stale_${out.code}`}`);
+}
+
+/**
+ * Deal feed: the two switches (stale-deal credit, duplicate hiding) and their numbers. A value that does not parse is
+ * refused rather than saved as a default. Dedupe off takes effect for the grid within a minute (its settings cache).
+ */
+export async function saveDealFeedSettingsAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const k = DEAL_FEED_SETTING_KEYS;
+  const raw = [
+    { key: k.staleCreditEnabled, value: formData.get('stale_enabled') === 'on' },
+    { key: k.staleCreditDays, value: Number(formData.get('stale_days')) },
+    { key: k.dedupeEnabled, value: formData.get('dedupe_enabled') === 'on' },
+    { key: k.dedupePricePct, value: Number(formData.get('dedupe_pct')) },
+  ];
+  const parsed = parseDealFeedSettings(raw);
+  // The parser falls back to a default for a bad number; a bad number here is an error instead.
+  if (parsed.staleCreditDays !== raw[1].value || parsed.dedupePricePct !== raw[3].value) redirect('/admin/deals?msg=bad_deal_feed');
+  await updateBillingSetting(k.staleCreditEnabled, parsed.staleCreditEnabled);
+  await updateBillingSetting(k.staleCreditDays, parsed.staleCreditDays);
+  await updateBillingSetting(k.dedupeEnabled, parsed.dedupeEnabled);
+  await updateBillingSetting(k.dedupePricePct, parsed.dedupePricePct);
+  revalidateDeals();
+  redirect('/admin/deals?msg=deal_feed_saved');
 }

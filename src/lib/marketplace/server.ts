@@ -204,6 +204,8 @@ export function recordColumns(l: SourcedListing, rec: DealRecord): Record<string
     annual_profit: rec.annualProfit,
     uplift_pct: rec.upliftPct,
     listed_date: l.listedDate ?? null,
+    // Deal feed: the portal's property id, kept so a relist on another portal can be matched (dedupe.ts). Never blanked by a snapshot without one.
+    ...(l.uprn ? { uprn: l.uprn } : {}),
     // Batch 16, Part F. Written through writeWithoutMissing, so a database without the column still takes the row.
     stream: rec.stream,
   };
@@ -246,7 +248,13 @@ export async function retireDeal(admin: Admin, canonicalUrl: string, reason: Ret
     .from('marketplace_deals')
     .update({ status: 'retired', retired_reason: reason, retired_at: nowIso, check_requested_at: null, next_check_due_at: null, updated_at: nowIso })
     .eq('canonical_url', canonicalUrl);
-  if (error) console.error('[marketplace] retire failed:', error.message);
+  if (error) {
+    console.error('[marketplace] retire failed:', error.message);
+    return;
+  }
+  // Deal feed: a twin that was hidden behind this deal comes back at once (the next refresh then points it at any other original).
+  const freed = await admin.from('marketplace_deals').update({ dupe_of: null }).eq('dupe_of', canonicalUrl);
+  if (freed.error && missingColumnOf(freed.error) === null) console.error('[marketplace] freeing twins failed:', freed.error.code ?? 'error');
 }
 
 export type LiveOutcome =

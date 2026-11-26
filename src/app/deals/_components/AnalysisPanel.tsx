@@ -38,6 +38,8 @@ export interface AnalysisPanelProps {
    * the button becomes the Starter / top-up offer and nothing is charged.
    */
   pack?: { deepTopUp: boolean; capLine: string | null };
+  /** Deal feed: the rent-to-rent permission notice (r2rNoticeFor), for a rental only; null or absent for a sale. */
+  r2rNotice?: string | null;
 }
 
 const CHOOSE_STARTER = "/account/billing/choose?pick=starter";
@@ -57,7 +59,7 @@ const WHAT_YOU_GET = [
 
 type Phase = { kind: "idle" } | { kind: "starting" } | { kind: "running"; progress: number; message: string } | { kind: "error"; message: string; offer?: "starter" | "topup" };
 
-export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensDeal, recommendPmi = false, sampleHref, variant = "primary", from = null, pack }: AnalysisPanelProps) {
+export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensDeal, recommendPmi = false, sampleHref, variant = "primary", from = null, pack, r2rNotice = null }: AnalysisPanelProps) {
   const capLine = pack?.capLine ?? null;
   const deepTopUp = Boolean(pack?.deepTopUp);
   const [open, setOpen] = useState(initialOpen);
@@ -191,6 +193,11 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
               <li key={w}>{w}</li>
             ))}
           </ul>
+          {r2rNotice && (
+            <p role="note" className="mt-3 rounded-md border border-border bg-muted/40 p-2 text-xs text-foreground">
+              {r2rNotice}
+            </p>
+          )}
           <p className="mt-2 text-xs">
             <Link href={sampleHref} target="_blank" className="font-medium text-primary underline-offset-4 hover:underline">
               See a sample report

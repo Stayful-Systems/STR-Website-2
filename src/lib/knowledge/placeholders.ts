@@ -592,6 +592,11 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const n = whole(g, 'ad_sheet_dedupe_days', 1);
     return n === null ? null : String(n);
   }),
+  // Deal feed (queue Batch 1): the stale-deal credit window (billing_settings.deal_stale_credit_days, seeded in schema.sql's Deal feed block)
+  deal_stale_credit_days: g_('Days after opening within which a deal that goes off the market is credited back', 'billing_settings.deal_stale_credit_days', (g) => {
+    const n = whole(g, 'deal_stale_credit_days', 1);
+    return n === null || n > 90 ? null : String(n);
+  }),
 
   // The member's own (view and chat only, never a call)
   balance: m_('Their exact credit balance', 'the member’s credit', (m) => money(m.balancePence)),

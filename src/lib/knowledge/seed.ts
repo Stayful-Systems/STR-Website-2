@@ -1301,6 +1301,47 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['Can I return to a Stayful website after a transfer?', 'I moved my website, can I start again?', 'Will my exported form stop if I come back?', 'How do I set up a new website after transferring?'],
     answer: 'Yes. You can come back at any time: ask the team at {team_email} and an admin starts a new setup for you. The form on your exported website keeps working in the meantime and afterwards.',
   },
+  // ── Deal feed (queue Batch 1): category tabs, the stale-deal credit, the rent-to-rent permission notice and duplicates (drafts for Zac to approve; every figure is a setting) ──
+  {
+    slug: 'deal_feed_categories',
+    from: 'Deal feed (queue Batch 1), the All / Rent-to-rent / Buy-to-let tabs on Deals (billing is unchanged: the open ladder and the Full analysis price)',
+    category: 'deals',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What are the Rent-to-rent and Buy-to-let tabs on Deals?',
+    variants: ['How do I see only rent-to-rent deals?', 'How do I see only buy-to-let deals?', 'What do the tabs on Deals mean?'],
+    answer: 'Deals has three tabs: All, Rent-to-rent and Buy-to-let. Rent-to-rent shows properties you would rent from a landlord and run as a short let. Buy-to-let shows every property for sale, whichever way it is screened. One tap switches between them, and you can still narrow by area, bedrooms and price inside a tab. Opening a deal for its address, photos and listing costs between {open_cost_min} and {open_cost_max}, depending on how profitable it is, and a Full analysis of a property is {full_analysis_cost}.',
+  },
+  {
+    slug: 'deal_stale_credit',
+    from: 'Deal feed (queue Batch 1), the stale-deal credit (deal_stale_credit_days; on only when Zac switches deal_stale_credit_enabled on)',
+    category: 'deals',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What if a deal I opened goes off the market?',
+    variants: ['Do I get my money back if the property is sold?', 'What happens if a deal I paid for is no longer available?', 'Will I be refunded if the listing is removed?', 'What does Gone off market mean on my opened deals?', 'Why was credit added back to my balance?'],
+    answer: 'If a deal you opened is sold, goes under offer, is let agreed or is taken off the market within {deal_stale_credit_days} days of you opening it, we put back what you actually spent on it: the open, and the Full analysis too if you bought one. It is added to your credit as an adjustment, once, and My opened deals says “credited back”. If a deal had cost you nothing, nothing is added. A deal that goes off the market later than that is still yours to look at, but there is no credit.',
+  },
+  {
+    slug: 'deal_r2r_permission',
+    from: 'Deal feed (queue Batch 1), the rent-to-rent permission notice on the deal sheet and the Full analysis panel (the same words are shown there)',
+    category: 'deals',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Is permission required to run a rent-to-rent deal as a short let?',
+    variants: ['Is a rent-to-rent property already allowed to be a short let?', 'What permission does rent-to-rent require?', 'Can I Airbnb a rent-to-rent property?', 'Why does a rent-to-rent deal say it is an ordinary let?'],
+    answer: 'A rent-to-rent deal is an ordinary let. You still need the landlord’s written permission for short lets, and the lender’s and freeholder’s where they apply. Stayful describes the deal and its numbers; it can’t give legal advice or tell you that permission will be given, so get it in writing before you commit.',
+  },
+  {
+    slug: 'deal_duplicates',
+    from: 'Deal feed (queue Batch 1), duplicate hiding across portals (on only when Zac switches deal_dedupe_enabled on)',
+    category: 'deals',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Why do I only see a property once when it is on several portals?',
+    variants: ['Why is a deal I saw on Rightmove not listed twice?', 'Does Deals show the same property twice?'],
+    answer: 'When the same property is listed on more than one portal we show it once, from the listing we saw first. A deal you have already opened stays yours either way.',
+  },
 ];
 
 /**
