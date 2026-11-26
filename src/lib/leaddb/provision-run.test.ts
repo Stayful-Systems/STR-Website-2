@@ -162,7 +162,8 @@ test('parseProvisionBody: strict about every field', () => {
   assert.ok(parseProvisionBody(BODY));
   assert.equal(parseProvisionBody(BODY)?.email, 'op@example.com');
   assert.equal(parseProvisionBody({ ...BODY, phone: null })?.phone, null);
-  const { phone: _p, ...noPhone } = BODY;
+  const noPhone: Record<string, unknown> = { ...BODY };
+  delete noPhone.phone;
   assert.equal(parseProvisionBody(noPhone)?.phone, null);
   assert.equal(parseProvisionBody({ ...BODY, phone: '  ' })?.phone, null);
   for (const bad of [
