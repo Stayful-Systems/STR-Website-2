@@ -4,6 +4,7 @@ import { postcodeAreaOf } from '@/lib/listing/normalise';
 import { currentReportState, runWebsiteReport, type WebsiteReportState } from '@/lib/websites/report-server';
 import { readStepToken } from '@/lib/websites/step-token';
 import { liveSiteBySlug } from '@/lib/websites/store-server';
+import { calculatorStopped } from '@/lib/websites/calculator-server';
 
 /**
  * Step 2 of a customer website's form: POST /api/s/<slug>/report.
@@ -111,6 +112,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   // ── 1. A live site only. ──
   const site = await liveSiteBySlug(slug);
   if (!site) return new Response('Not found', { status: 404 });
+  // Batch 55: a calculator site with a stopped owner starts no new report. (A report already running is not cut off: it never comes through here.)
+  if (await calculatorStopped(site)) return new Response('Not found', { status: 404 });
 
   let body: unknown;
   try {
