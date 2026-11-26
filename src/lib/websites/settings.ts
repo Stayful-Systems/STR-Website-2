@@ -82,5 +82,6 @@ export const AD_CALC_REPORTS_PER_DAY_MAX = 10_000;
 
 /** The per-day calculator report limit from a raw billing_settings value; anything unreadable is the default. */
 export function parseAdCalcReportsPerDay(raw: unknown): number {
+  if (typeof raw !== 'number' && typeof raw !== 'string') return DEFAULT_AD_CALC_REPORTS_PER_DAY; // not an array or object (Number([]) is 0)
   return wholeIn(raw, 0, AD_CALC_REPORTS_PER_DAY_MAX, DEFAULT_AD_CALC_REPORTS_PER_DAY);
 }
