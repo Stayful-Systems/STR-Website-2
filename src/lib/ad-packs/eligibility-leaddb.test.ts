@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { adRouteVerdict, type LeadDbAdAccount } from '../leaddb/ad-account.ts';
 import {
   AD_ROUTES,
@@ -158,4 +159,22 @@ test('mapping: adRouteVerdict’s reason is the first eligibility reason, over e
     assert.equal(v.eligible, verdict.ok, JSON.stringify(a));
     if (!verdict.ok) assert.equal(v.reasons[0], LEADDB_REASON_OF_VERDICT[verdict.reason], JSON.stringify(a));
   }
+});
+
+test('eligibility-server (source pin): the route is chosen by chooseAdRoute from the ad account and the owner’s own site; a calculator site is not an own website', () => {
+  const src = readFileSync(new URL('./eligibility-server.ts', import.meta.url), 'utf8');
+  assert.match(src, /readAdAccount\(ownerId\)/);
+  assert.match(src, /chooseAdRoute\(\{ hasAdAccount: adAccount !== null, hasSiteWebsite: ownedSite !== null && !isCalculator \}\)/);
+  assert.match(src, /evaluateLeadDbEligibility\(/);
+  assert.match(src, /leadDbAccountFacts\(adAccount, new Date\(\), isCalculator\)/);
+  // The Academy branch still reads the Academy purchase, the domain and the domain's live word, in that branch.
+  const academy = src.slice(src.indexOf('The Academy route, exactly as it was'));
+  assert.match(academy, /domainOfSite\(website\.id\)/);
+  assert.match(academy, /domainIsLiveFor\(website\.id, domainRow\.name\)/);
+  assert.match(academy, /evaluateEligibility\(/);
+  // The lead database branch never reads a domain.
+  const leaddb = src.slice(src.indexOf("if (route === 'leaddb')"), src.indexOf('The Academy route, exactly as it was'));
+  assert.doesNotMatch(leaddb, /domainOfSite|domainIsLiveFor|academyOf/);
+  // Never writes anything.
+  assert.doesNotMatch(src, /\.(insert|update|upsert|delete)\(/);
 });

@@ -649,8 +649,6 @@ test('generate, Academy route: no route or slug is sent, so the request is exact
   assert.deepEqual(await generateOp(s.deps, input), { ok: true });
   assert.ok(!('route' in s.calls.generated[0].input));
   assert.ok(!('sitePath' in s.calls.generated[0].input));
-  s.eligible({ ...ELIGIBLE, route: 'academy' });
-  await s.h.store.getPack(OWNER_A);
   const pack = await s.h.store.getPack(OWNER_A);
   assert.equal(pack?.route, 'academy');
   assert.ok((await s.h.store.listAds(OWNER_A, pack!.id)).every((a) => a.link.startsWith('https://brightstone.co.uk/?ad=')));
