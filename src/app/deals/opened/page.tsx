@@ -8,6 +8,7 @@ import { listOpened } from "@/lib/marketplace/open";
 import { priceLine } from "../_components/DealCard";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { readDealFeedSettings } from "@/lib/marketplace/deal-feed-settings-server";
 import { formatPence } from "@/lib/credit/deal-pricing";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { rangeCaption, rangeFromScreening } from "@/lib/marketplace/profit-range";
@@ -17,6 +18,7 @@ import { btlCardsFor, projectCardsFor } from "@/lib/marketplace/queries";
 import { dealTypeOf } from "@/lib/profile/deal-types";
 import { formatRange } from "@/lib/marketplace/profit-range";
 import { kindWordFor, projectNumbersFor, projectRangeLine } from "@/lib/project/display";
+import { staleCreditLine } from "@/lib/marketplace/stale-credit";
 
 export const metadata: Metadata = { title: "Opened deals — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -58,6 +60,13 @@ export default async function OpenedDealsPage() {
     const { data } = await createAdminClient().from("credit_transactions").select("id, amount_pence").in("id", txIds.slice(0, 500));
     for (const t of (data ?? []) as { id: number; amount_pence: number | string }[]) paid.set(Number(t.id), Math.abs(Number(t.amount_pence) || 0));
   }
+  // Deal feed: an open credited back because the deal went within the days (read on its own, so a database without the column still lists the opens).
+  const credited = new Map<string, number>();
+  if (hasServiceRole() && rows.length > 0) {
+    const { data, error } = await createAdminClient().from("deal_opens").select("id, stale_credit_pence").in("id", rows.map((r) => r.open.id).slice(0, 500)).not("stale_credit_at", "is", null).gt("stale_credit_pence", 0);
+    if (!error) for (const r of (data ?? []) as { id: string; stale_credit_pence: number | string }[]) credited.set(r.id, Number(r.stale_credit_pence));
+  }
+  const staleDays = (await readDealFeedSettings()).staleCreditDays;
   // Batch 17: an opened Project deal shows its own numbers.
   const dealIds = rows.map((r) => r.deal?.id).filter((id): id is string => typeof id === "string");
   // Batch 28: a buy-to-let deal shows its own cashflow, never a short-let range.
@@ -104,6 +113,7 @@ export default async function OpenedDealsPage() {
                       ) : (
                         <span className="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary">Live</span>
                       )}
+                      {credited.has(open.id) && <p className="mt-1 font-medium text-emerald-700 dark:text-emerald-400">{staleCreditLine(staleDays, credited.get(open.id) ?? 0)}</p>}
                       <p className="mt-1 text-muted-foreground">Opened {new Date(open.opened_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}{paidPence !== null && paidPence > 0 ? ` · ${formatPence(paidPence)}` : Number(open.charged_base_pence) > 0 ? "" : open.verified_via === "pick" ? " · included" : " · free"}{open.verified_via === "pick" ? " · daily pick" : ""}</p>
                     </div>
                   </div>

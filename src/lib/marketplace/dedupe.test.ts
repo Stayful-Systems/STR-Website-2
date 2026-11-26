@@ -78,7 +78,6 @@ test('a retired original frees its twin: it is no longer in the live rows', () =
 });
 
 test('a twin moves to the next original when the first goes', () => {
-  const a = row({ canonical_url: 'a/1' });
   const b = row({ canonical_url: 'b/1', first_seen_at: '2026-11-02T10:00:00Z' });
   const c = row({ canonical_url: 'c/1', first_seen_at: '2026-11-03T10:00:00Z' });
   const current = new Map<string, string | null>([['a/1', null], ['b/1', 'a/1'], ['c/1', 'a/1']]);

@@ -23,6 +23,7 @@ import { runProjectChecks } from '@/lib/project/check-run';
 import { runProjectBackfill } from '@/lib/project/live-backfill-run';
 import { parseBtlAllowance } from '@/lib/btl/config';
 import { runBtlScreen } from '@/lib/btl/screen-server';
+import { grantStaleCreditById } from '@/lib/marketplace/stale-credit-server';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const RUN_COOKIE = 'sf_deals_run';
@@ -339,4 +340,14 @@ export async function updateR2rBarAction(formData: FormData): Promise<void> {
   if (parseR2rBar(pounds) !== pounds) redirect('/admin/deals?msg=bad_r2r_bar');
   await updateBillingSetting('r2r_qualified_profit', pounds);
   redirect('/admin/deals?msg=r2r_saved');
+}
+
+/**
+ * Deal feed: credits one open back by hand (the "Grant stale credit" button). The same function the hourly job uses,
+ * with the time window ignored (and the switch not needed). Once only per open; nothing is credited when nothing was spent.
+ */
+export async function grantStaleCreditAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const out = await grantStaleCreditById(createAdminClient(), String(formData.get('open_id') ?? '').trim());
+  redirect(`/admin/deals?msg=${out.ok ? (out.granted ? 'stale_granted' : 'stale_nothing') : `stale_${out.code}`}`);
 }
