@@ -101,7 +101,7 @@ export function createLiveStore(): AdPackStore {
     async insertPack(r: NewPack) {
       const { data, error } = await admin()
         .from('ad_packs')
-        .insert({ owner_id: r.ownerId, website_id: r.websiteId, operator_code: r.operatorCode, status: r.status })
+        .insert({ owner_id: r.ownerId, website_id: r.websiteId, operator_code: r.operatorCode, status: r.status, route: r.route ?? 'academy' })
         .select(PACK_COLUMNS)
         .single();
       if (isUnique(error)) throw conflictOf(error);

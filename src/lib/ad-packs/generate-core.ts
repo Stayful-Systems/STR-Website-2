@@ -55,6 +55,7 @@ import { runChecks, type CheckInput, type ChecksOutput } from './checks.ts';
 import { ANGLES, operatorCode as allocateOperatorCode, packCode, type Angle } from './codes.ts';
 import { cleanLines } from './captions.ts';
 import { buildFigure, type Figure, type FigureAgg } from './figures.ts';
+import { AD_ROUTES, type AdRoute } from './eligibility.ts';
 import { adLink, adName } from './links.ts';
 import { isRetryableRenderCode, type AdVideo, type RenderRequeue, type RenderRow, type RenderState } from './render-store.ts';
 import type { EnqueueResult } from './render-core.ts';
@@ -94,6 +95,8 @@ export const IMAGE_SIZES = [
 ] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A calculator site's slug: 3 to 40 lowercase letters, digits and hyphens, none at either end (links.ts holds the same rule). */
+const SITE_PATH_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 const HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
 
 // ── Codes and messages ──
@@ -197,6 +200,13 @@ export type GenerateInput = {
   /** The operator's live bare domain, e.g. acme.co.uk. */
   domain: string;
   websiteId?: string | null;
+  /**
+   * Batch 55: which way in the pack was made. Absent is 'academy' (the operator's own domain, links to its root).
+   * 'leaddb' links every ad to the calculator site on this app's own host (`domain` is that host) at /s/<sitePath>.
+   */
+  route?: AdRoute;
+  /** The lead database route only: the calculator site's slug. Required there, and refused on the Academy route. */
+  sitePath?: string;
   /** The operator chose to run the ads with their name in type only (no logo). */
   typeOnly?: boolean;
   /**
@@ -452,6 +462,12 @@ function validate(req: GenerateRequest): boolean {
   if (i.brand.feePct !== null && i.brand.feePct !== undefined && (typeof i.brand.feePct !== 'number' || !Number.isFinite(i.brand.feePct))) return false;
   if (typeof i.domain !== 'string' || !HOST_RE.test(i.domain.trim().toLowerCase())) return false;
   if (i.voiceKey !== undefined && !isVoiceKey(i.voiceKey)) return false;
+  if (i.route !== undefined && !(AD_ROUTES as readonly string[]).includes(i.route)) return false;
+  if (i.route === 'leaddb') {
+    if (typeof i.sitePath !== 'string' || !SITE_PATH_RE.test(i.sitePath)) return false;
+  } else if (i.sitePath !== undefined) {
+    return false;
+  }
   return true;
 }
 
@@ -496,7 +512,7 @@ function planAds(a: { input: GenerateInput; source: AreaSource; figure: Figure |
       n: a.version,
       code,
       adName: adName(code, angle),
-      link: adLink({ domain, code, operatorCode: a.operator }),
+      link: adLink(a.input.route === 'leaddb' && a.input.sitePath !== undefined ? { domain, sitePath: a.input.sitePath, code, operatorCode: a.operator } : { domain, code, operatorCode: a.operator }),
       texts,
       leadForm: [...angleDef(angle).leadFormQuestions],
       cards,
@@ -529,6 +545,7 @@ function checkInputOf(a: { input: GenerateInput; source: AreaSource; figure: Fig
     figures: a.figure ? [{ areaKey: a.source.areaKey, label: a.figure.label, sentence: a.figure.sentence }] : [],
     operatorCode: a.operator,
     domain: a.input.domain.trim().toLowerCase(),
+    ...(a.input.route === 'leaddb' && a.input.sitePath !== undefined ? { sitePath: a.input.sitePath } : {}),
   };
 }
 
@@ -695,14 +712,14 @@ export function createAdPackEngine(deps: GenerateDeps) {
   const pricing: Pricing = deps.pricing ?? { estimate: estimateRawPence, actual: estimateRawPence };
   const log = deps.log ?? (() => {});
 
-  async function createPack(ownerId: string, websiteId: string | null): Promise<PackRow> {
+  async function createPack(ownerId: string, websiteId: string | null, route: AdRoute): Promise<PackRow> {
     const extra = new Set<string>();
     for (let attempt = 0; attempt < 8; attempt++) {
       const taken = await store.takenOperatorCodes();
       for (const c of extra) taken.add(c);
       const code = allocateOperatorCode(ownerId, taken);
       try {
-        return await store.insertPack({ ownerId, websiteId, operatorCode: code, status: 'generating' });
+        return await store.insertPack({ ownerId, websiteId, operatorCode: code, status: 'generating', route });
       } catch (e) {
         if (e instanceof PackConflict && e.which === 'operator_code') {
           extra.add(code);
@@ -780,6 +797,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
 
     try {
       const pack = await store.getPack(ownerId);
+      // A pack keeps the route it was made on: the ads already running carry its links.
+      if (pack && pack.route !== (input.route ?? 'academy')) return fail('invalid_input', pack.id);
       const settings = await store.readSettings();
       // The market snapshot is cached and costs nothing to read (no paid lookup runs here), so it is resolved first: the brand hash uses the area the pack will STORE (after
       // a fall-back from a district to its postcode area), so asking for the same district again is not a "brand change".
@@ -860,7 +879,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
 
       // 6: take the pack, then make everything.
       if (!pack) {
-        held = await createPack(ownerId, input.websiteId ?? null);
+        held = await createPack(ownerId, input.websiteId ?? null, input.route ?? 'academy');
       } else {
         held = await store.beginGenerating(ownerId, pack.id, new Date(now.getTime() - STALE_GENERATING_MS).toISOString());
         if (!held) return fail('in_progress', pack.id);

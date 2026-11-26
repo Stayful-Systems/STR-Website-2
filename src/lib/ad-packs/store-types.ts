@@ -22,6 +22,7 @@ import type { LeadFormQuestion } from './angles.ts';
 import type { ChecksOutput } from './checks.ts';
 import type { AdPackSettings } from './settings.ts';
 import type { AdVideo } from './render-store.ts';
+import type { AdRoute } from './eligibility.ts';
 
 export const PACK_STATUSES = ['draft', 'generating', 'checks_failed', 'preview', 'approved', 'failed'] as const;
 export type PackStatus = (typeof PACK_STATUSES)[number];
@@ -31,6 +32,8 @@ export type PackRow = {
   ownerId: string;
   websiteId: string | null;
   status: PackStatus;
+  /** Batch 55: ad_packs.route. 'academy' (Batch 38, the default) or 'leaddb' (the calculator site). Never changes after the pack is made. */
+  route: AdRoute;
   operatorCode: string;
   /** The version the codes carry. Moves up only when a new version is stored. */
   version: number;
@@ -57,10 +60,10 @@ export type PackRow = {
   updatedAt: string;
 };
 
-/** What updatePack may change (never the id, owner, operator code or timestamps the store keeps). */
-export type PackPatch = Partial<Omit<PackRow, 'id' | 'ownerId' | 'operatorCode' | 'createdAt' | 'updatedAt'>>;
+/** What updatePack may change (never the id, owner, operator code, route or timestamps the store keeps). */
+export type PackPatch = Partial<Omit<PackRow, 'id' | 'ownerId' | 'operatorCode' | 'route' | 'createdAt' | 'updatedAt'>>;
 
-export type NewPack = { ownerId: string; websiteId: string | null; operatorCode: string; status: PackStatus };
+export type NewPack = { ownerId: string; websiteId: string | null; operatorCode: string; status: PackStatus; /** Absent is 'academy'. */ route?: AdRoute };
 
 export type AdFileRef = { name: string; path: string; width: number; height: number; contentType: string; bytes: number };
 /** `video` is the 5b ad's video slot (queued, making, ready, failed, or coming for a pack from before 38b); null for the image ads. */

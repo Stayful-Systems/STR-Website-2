@@ -74,6 +74,7 @@ export class MemoryAdPackStore implements AdPackStore {
       ownerId: r.ownerId,
       websiteId: r.websiteId,
       status: r.status,
+      route: r.route ?? 'academy',
       operatorCode: r.operatorCode,
       version: 1,
       voiceKey: null,
