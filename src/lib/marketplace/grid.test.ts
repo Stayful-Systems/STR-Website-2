@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, SORT_LABELS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, CARD_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView, isAuctionCard, browseFilters, kindOfTypes, typeClauseFor, typesParam } from './grid.ts';
+import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, SORT_LABELS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, CARD_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView, isAuctionCard, browseFilters, kindOfTypes, typeClauseFor, typesParam, KIND_LABELS, CATEGORY_LABELS, DEAL_CATEGORIES, categoryOf, categorySearch } from './grid.ts';
 
 test('parseDealFilters whitelists every value and clamps numbers', () => {
   assert.deepEqual(parseDealFilters({}), DEFAULT_FILTERS);
@@ -155,7 +155,7 @@ test('Browse starts on the profile’s own types; the URL wins; an old kind= lin
   const all = parseDealFilters({ type: 'all' });
   assert.deepEqual(browseFilters(all, true, ['buy_str']).types, ['buy_str', 'brrr', 'r2r', 'btl'], '"All types" is one click');
   const sale = browseFilters(parseDealFilters({ kind: 'sale' }), false, ['r2r']);
-  assert.deepEqual([sale.kind, sale.types], ['both', ['buy_str', 'brrr']]);
+  assert.deepEqual([sale.kind, sale.types], ['both', ['buy_str', 'brrr', 'btl']], 'the Buy-to-let tab is every sale');
   const rent = browseFilters(parseDealFilters({ kind: 'rent' }), false, ['buy_str']);
   assert.deepEqual([rent.kind, rent.types], ['both', ['r2r']]);
   assert.equal(kindOfTypes(['buy_str', 'brrr']), 'sale');
@@ -186,4 +186,46 @@ test('the types as query clauses: a rental is Rent-to-rent, a sale with a Projec
   assert.deepEqual(typeClauseFor(['buy_str', 'brrr'], true, true), { or: 'and(kind.eq.sale,project.is.null,band.eq.qualified),project->>level.eq.light' });
   assert.deepEqual(typeClauseFor(['brrr', 'r2r'], true, true), { or: 'kind.eq.rent,project->>level.eq.light' });
   assert.deepEqual(typeClauseFor(['buy_str', 'r2r'], true, true), typeClauseFor(['buy_str', 'r2r'], true), 'no BRRR asked for: nothing changes');
+});
+
+test('Deal feed: the category tabs round-trip through the URL and the browse fold', () => {
+  const own = ['buy_str', 'r2r'] as const; // a profile that would otherwise narrow the grid
+  const back = (search: string) => {
+    const raw = Object.fromEntries(new URLSearchParams(search));
+    return browseFilters(parseDealFilters(raw), raw.type !== undefined, own);
+  };
+  assert.deepEqual(DEAL_CATEGORIES, ['all', 'rent', 'sale']);
+  for (const category of DEAL_CATEGORIES) {
+    const f = back(categorySearch(DEFAULT_FILTERS, category));
+    assert.equal(categoryOf(f), category, `${category} comes back as the same tab`);
+  }
+  assert.equal(categorySearch(DEFAULT_FILTERS, 'rent'), '?kind=rent');
+  assert.equal(categorySearch(DEFAULT_FILTERS, 'sale'), '?kind=sale');
+  assert.equal(categorySearch(DEFAULT_FILTERS, 'all'), '?type=all', '"All" cannot be narrowed by the profile');
+  assert.deepEqual(back('?kind=rent').types, ['r2r']);
+  assert.deepEqual(back('?kind=sale').types, ['buy_str', 'brrr', 'btl'], 'every sale: Short-let, BRRR and Buy to let');
+  assert.deepEqual(back('?type=all').types, ['buy_str', 'brrr', 'r2r', 'btl']);
+});
+
+test('Deal feed: a tab keeps the other filters and starts at page 1', () => {
+  const f = { ...DEFAULT_FILTERS, beds: '3' as const, maxPrice: 200000, areas: ['YO'], sort: 'newest' as const, page: 4, types: ['r2r' as const] };
+  assert.equal(categorySearch(f, 'sale'), '?kind=sale&areas=YO&beds=3&maxPrice=200000&sort=newest');
+  assert.equal(categorySearch(f, 'all'), '?type=all&areas=YO&beds=3&maxPrice=200000&sort=newest');
+  assert.ok(!categorySearch(f, 'rent').includes('page='));
+});
+
+test('Deal feed: which tab is lit', () => {
+  assert.equal(categoryOf({ kind: 'both', types: [] }), 'all');
+  assert.equal(categoryOf({ kind: 'both', types: ['buy_str', 'brrr', 'r2r', 'btl'] }), 'all');
+  assert.equal(categoryOf({ kind: 'both', types: ['r2r'] }), 'rent');
+  assert.equal(categoryOf({ kind: 'both', types: ['buy_str'] }), 'sale');
+  assert.equal(categoryOf({ kind: 'both', types: ['btl', 'brrr'] }), 'sale');
+  assert.equal(categoryOf({ kind: 'both', types: ['buy_str', 'r2r'] }), null, 'a mixed pick lights no tab');
+  assert.equal(categoryOf({ kind: 'sale', types: [] }), 'sale');
+});
+
+test('Deal feed: the tab labels', () => {
+  assert.equal(KIND_LABELS.sale, 'Buy-to-let');
+  assert.equal(KIND_LABELS.rent, 'Rent-to-rent');
+  assert.deepEqual(DEAL_CATEGORIES.map((c) => CATEGORY_LABELS[c]), ['All', 'Rent-to-rent', 'Buy-to-let']);
 });
