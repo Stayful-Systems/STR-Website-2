@@ -16,6 +16,8 @@ import { runMetered, newActionId } from '../credit/context';
 import { serverFetchEnabled } from '../listing/fetch';
 import { retirementFor, orderDueQueue, SOURCE_HOURLY_CAPS, SHOWN_RECENTLY_MS, type DueRow } from './cadence';
 import type { DealRow } from './types';
+import { refreshDupes } from './dedupe-server';
+import { readDealFeedSettings } from './deal-feed-settings-server';
 import { applyLiveResult, fetchDealPage, loadScreenContext, loadSourcedListings, recordRun, retireDeal, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
 
 const TIME_BUDGET_MS = 50_000;
@@ -182,6 +184,8 @@ export async function runMarketplaceRecheck(opts: { dry: boolean }): Promise<Rec
     }
   }
 
+  // Deal feed: this hour's retirements free their twins and this hour's new live deals may be twins.
+  if (elapsed() < TIME_BUDGET_MS) summary.dupes = await refreshDupes(admin, (await readDealFeedSettings()).dedupePricePct, 'marketplace-recheck');
   summary.ms = elapsed();
   await recordRun(admin, 'recheck', false, startedAt, summary);
   revalidateDeals();
