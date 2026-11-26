@@ -115,7 +115,7 @@ test('the seed plan skips a retired entry whose seed text changed', async () => 
 test('the ad pack drafts cover the tenant notice video and its voice, with the count as a placeholder', async () => {
   const { SERVICE_FACTS } = await import('./service-facts.ts');
   const adpack = SEED.filter((e) => e.slug.startsWith('adpack_'));
-  assert.deepEqual(adpack.map((e) => e.slug), ['adpack_what', 'adpack_who', 'adpack_regenerate', 'adpack_video_voice', 'adpack_video_email', 'adpack_tagging', 'adpack_not_included']);
+  assert.deepEqual(adpack.map((e) => e.slug), ['adpack_what', 'adpack_who', 'adpack_regenerate', 'adpack_video_voice', 'adpack_video_email', 'adpack_tagging', 'adpack_not_included', 'adpack_ld_calculator', 'adpack_ld_rounds', 'adpack_audience']);
   const voice = SEED.find((e) => e.slug === 'adpack_video_voice');
   assert.ok(voice);
   assert.match(voice.answer, /\{ad_pack_voice_changes\}/);
@@ -134,4 +134,25 @@ test('the ad pack drafts cover the tenant notice video and its voice, with the c
   assert.doesNotMatch(SERVICE_FACTS, /later release|arrives in a later|don't promise a date/);
   assert.match(SERVICE_FACTS, /tenant notice video/i);
   assert.match(SERVICE_FACTS, /\{ad_pack_voice_changes\}/);
+});
+
+// Batch 55 (Part A): the lead database ad route drafts. Drafts only, counts are placeholders, nothing typed.
+test('the lead database ad pack drafts exist, use the two new placeholders and type no figure', async () => {
+  const { SERVICE_FACTS } = await import('./service-facts.ts');
+  const calc = SEED.find((e) => e.slug === 'adpack_ld_calculator');
+  const rounds = SEED.find((e) => e.slug === 'adpack_ld_rounds');
+  const audience = SEED.find((e) => e.slug === 'adpack_audience');
+  assert.ok(calc && rounds && audience);
+  assert.match(calc.answer, /\{ad_calc_reports_per_day\}/);
+  assert.match(calc.answer, /pausing/i);
+  assert.match(rounds.answer, /\{ad_pack_ld_round_days\}/);
+  assert.match(audience.answer, /United Kingdom/);
+  assert.match(audience.answer, /last checked/);
+  for (const e of [calc, rounds, audience]) {
+    assert.doesNotMatch(`${e.question} ${e.variants.join(' ')} ${e.answer}`, /!|\d|£/, e.slug);
+    assert.deepEqual(e.channels, ['view', 'chat']);
+  }
+  assert.match(SERVICE_FACTS, /LEAD DATABASE AD PACKS/);
+  assert.match(SERVICE_FACTS, /\{ad_calc_reports_per_day\}/);
+  assert.match(SERVICE_FACTS, /\{ad_pack_ld_round_days\}/);
 });

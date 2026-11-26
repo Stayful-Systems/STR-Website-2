@@ -135,6 +135,40 @@ and `/admin/ad-sheets`.
 - **Knowledge.** Five draft entries in `seed.ts` (`adsheet_*`: what, connect, attribution, outcomes, your_ads), six
   placeholders in `placeholders.ts` (`{ad_sheet_*}`), and a FACEBOOK LEAD FORMS block in `service-facts.ts`.
 
+# Batch 55 (Part A): lead database customers get ad packs through a branded calculator
+
+A lead database customer with no website here gets Batch 38's three Facebook ads, linked to a calculator in their own brand
+at a Stayful address (`/s/<slug>`) instead of a website. The lead database bills the leads (Phase 2, not built). Plan and
+Zac's notes: `docs/build/batch-55-part-a-PLAN.md`; the wire contract for the lead database (Part B):
+`docs/build/batch-55-part-a-CONTRACT.md`.
+
+- **Contract.** Three signed POSTs under `/api/internal/si/ad-route/` (`provision`, `state`, `signin`), signed with
+  `SI_LEAD_PUSH_SECRET` and read by `verifyInbound` (`src/lib/leaddb/inbound.ts`: 404 when the secret is unset or short,
+  401 on a bad signature). Code `src/lib/leaddb/{ad-account,ad-account-server,provision-run,provision-server}.ts`. Table
+  `leaddb_ad_accounts` (one row per lead database customer) holds the pushed state; `adRouteStopped` / `adRouteVerdict`
+  read it and **fail closed** (no account or no state means stopped; a card off, lapsed, cancelled or past the cancel date
+  stops it; **pause never stops it**). `allowed` is set only on `/admin/ad-packs`, never by a push. An older `stateAsOf`
+  is ignored.
+- **Calculator.** `websites.mode = 'calculator'` (default `site`), made by `ensureCalculatorSite`; no page copy, no pages
+  check, funnel inactive. The stop rule is enforced at the page and at the lead, report and autocomplete APIs, but a
+  report already running is never cut off. The report flow (`report-server.ts`) skips the free claim, `held_cap`,
+  `held_credit` and this site's charge. `enqueueLeadDbPush` skips calculator sites until Phase 2 (`si_ad`). Daily limit:
+  `ad_calc_reports_per_day` per owner per UK day (429, no lead row). A calculator owner sees only the brand screen
+  (`CalculatorBrand.tsx`, `calculator-actions.ts`).
+- **Route.** `ad_packs.route` is `academy` or `leaddb`, chosen by `chooseAdRoute`: leaddb only with an ad account and no
+  site-mode website. The Academy eligibility output is pinned byte for byte (`eligibility-academy-pin.test.ts`).
+- **Rounds and caps.** On the lead database route an operator may make one preview per `ad_pack_ld_round_days`
+  (`round-limit.ts`; a failed run, an admin run and a hand edit never count). Extra rounds only by an admin grant
+  (`ad_pack_round_grants`, reason required). `ad_pack_ld_monthly_cap_pence` is the route's own backstop; the Academy
+  cap sums academy runs only. Admin: `LeadDbAccounts.tsx`, `leaddb-actions.ts`, `ld-admin-run.ts`.
+- **Audience step.** Replaced for everyone (Academy and lead database) by `targeting-recipe.ts`; update `LAST_CHECKED`
+  whenever it is re-checked against Meta's screen. No amount is typed in it.
+- **Never log.** Log lines carry an id or code at most, never a lead, email, phone, body, signature, secret or sign-in
+  link. Neither new table is in `ACCESS_COLUMNS`. `leads.status` and `leads.crm_pushed_at` are **never** written by this.
+- **Knowledge.** Three draft entries in `seed.ts` (`adpack_ld_calculator`, `adpack_ld_rounds`, `adpack_audience`), two
+  placeholders in `placeholders.ts` (`{ad_calc_reports_per_day}`, `{ad_pack_ld_round_days}`) and a LEAD DATABASE AD PACKS
+  block in `service-facts.ts`.
+
 # Deal feed (queue Batch 1): tabs, stale-deal credit, duplicates, weekly count
 
 Fills the gaps in the `/deals` marketplace; billing is unchanged (the open ladder and the optional full report).
