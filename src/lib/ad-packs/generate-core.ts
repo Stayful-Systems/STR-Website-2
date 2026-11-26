@@ -49,6 +49,7 @@
 import { createHash } from 'node:crypto';
 import { UNIT_COST_SEED } from '../credit/costs.ts';
 import { monthStartIso } from './month.ts';
+import { countsAsRound, decideLeadDbRound, overBackstop, roundWindowStart, type RoundDecision } from './round-limit.ts';
 import { angleDef, feeSentence, renderCards, renderScript, renderTexts, type Card } from './angles.ts';
 import { NET_INCLUDES_MANAGEMENT_FEE } from './area.ts';
 import { runChecks, type CheckInput, type ChecksOutput } from './checks.ts';
@@ -108,6 +109,8 @@ export const GENERATE_CODES = [
   'regen_used',
   'cost_cap',
   'monthly_cap',
+  'round_limit',
+  'backstop',
   'spend_unknown',
   'not_enough_data',
   'store_failed',
@@ -125,6 +128,8 @@ export const GENERATE_MESSAGES: Record<GenerateCode, string> = {
   regen_used: 'You have used your free regeneration.',
   cost_cap: 'This pack would cost more than the limit for one pack, so it was not made.',
   monthly_cap: 'The limit for making packs this month has been reached. Try again next month.',
+  round_limit: 'You have already made your ads for this round. You can make new ones when the next round starts, or ask us for an extra round.',
+  backstop: 'The limit for making ads this month has been reached. Try again next month.',
   spend_unknown: 'We could not check this month’s limit just now. Try again shortly.',
   not_enough_data: 'There is not enough data in your area yet.',
   store_failed: TRY_AGAIN,
@@ -143,7 +148,7 @@ export function generateMessage(code: string): string {
 export const VIDEO_APPROVE_CODES = ['video_pending', 'video_failed'] as const;
 /** Why changeVoice or retryVideo refuses (besides the cost codes cost_cap, monthly_cap, spend_unknown). */
 export const VIDEO_ACTION_CODES = ['invalid_input', 'no_pack', 'not_preview', 'after_approval', 'same_voice', 'voice_limit_used', 'video_running', 'not_retryable', 'store_failed'] as const;
-export type VideoActionCode = (typeof VIDEO_ACTION_CODES)[number] | 'cost_cap' | 'monthly_cap' | 'spend_unknown';
+export type VideoActionCode = (typeof VIDEO_ACTION_CODES)[number] | 'cost_cap' | 'monthly_cap' | 'backstop' | 'spend_unknown';
 
 export const VIDEO_MESSAGES = {
   video_pending: 'Your video is still being made. It usually takes a few minutes.',
@@ -749,11 +754,15 @@ export function createAdPackEngine(deps: GenerateDeps) {
     return estimateVideoPence({ lines, voiceKey, maxSeconds: settings.renderMaxSeconds, vcpus: settings.sandboxVcpus, cpuSecondPence: await cpuSecondPence() });
   }
 
-  /** The same two caps generatePack applies, for an operation that pays for one more render (a voice change, a retry). */
-  async function capRefusal(settings: AdPackSettings, estimate: number): Promise<'cost_cap' | 'monthly_cap' | 'spend_unknown' | null> {
+  /**
+   * The same two caps generatePack applies, for an operation that pays for one more render (a voice change, a retry).
+   * Batch 55: the month is summed over the pack's own route, and the lead database route answers to its own backstop.
+   */
+  async function capRefusal(settings: AdPackSettings, estimate: number, route: AdRoute): Promise<'cost_cap' | 'monthly_cap' | 'backstop' | 'spend_unknown' | null> {
     if (estimate > settings.maxRawPence) return 'cost_cap';
-    const spent = await store.monthSpendPence(monthStartIso(deps.now()));
+    const spent = await store.monthSpendPence(monthStartIso(deps.now()), route);
     if (spent === null) return 'spend_unknown';
+    if (route === 'leaddb') return overBackstop(spent, estimate, settings.ldMonthlyCapPence) ? 'backstop' : null;
     return fitsCap(spent, estimate, settings.monthlyCapPence) ? null : 'monthly_cap';
   }
 
@@ -786,6 +795,18 @@ export function createAdPackEngine(deps: GenerateDeps) {
     return { ok: true };
   }
 
+  /**
+   * Batch 55 (A8): may this owner make another round on the lead database route? Reads the pack's operator runs inside the
+   * window, and the owner's unused grants only when a round was already made inside it (nothing is read for a first round).
+   * A failed read throws (StoreError) and so refuses with store_failed: never "no runs" by mistake.
+   */
+  async function leadDbRound(ownerId: string, pack: PackRow | null, settings: AdPackSettings, now: Date): Promise<RoundDecision> {
+    const since = roundWindowStart(now, settings.ldRoundDays).toISOString();
+    const runs = pack ? await store.listOperatorRunsSince(ownerId, pack.id, since) : [];
+    const grants = runs.some(countsAsRound) ? await store.listUnusedRoundGrants(ownerId) : [];
+    return decideLeadDbRound({ runs, grants, roundDays: settings.ldRoundDays, now });
+  }
+
   async function generatePack(req: GenerateRequest): Promise<GenerateResult> {
     if (!validate(req)) return fail('invalid_input');
     const { ownerId, by, input } = req;
@@ -794,11 +815,14 @@ export function createAdPackEngine(deps: GenerateDeps) {
     let held: PackRow | null = null;
     let version = 1;
     let regenerate = false;
+    /** Batch 55 (A8): the unused round grant this run would use up (lead database route, operator run), once it succeeds. */
+    let grantId: string | null = null;
+    const route: AdRoute = input.route ?? 'academy';
 
     try {
       const pack = await store.getPack(ownerId);
       // A pack keeps the route it was made on: the ads already running carry its links.
-      if (pack && pack.route !== (input.route ?? 'academy')) return fail('invalid_input', pack.id);
+      if (pack && pack.route !== route) return fail('invalid_input', pack.id);
       const settings = await store.readSettings();
       // The market snapshot is cached and costs nothing to read (no paid lookup runs here), so it is resolved first: the brand hash uses the area the pack will STORE (after
       // a fall-back from a district to its postcode area), so asking for the same district again is not a "brand change".
@@ -816,15 +840,23 @@ export function createAdPackEngine(deps: GenerateDeps) {
       // 1-4: the rules and the cost guard, before any paid call.
       let block: Refusal | null = null;
       if (pack && pack.status === 'generating' && Date.parse(pack.updatedAt) > now.getTime() - STALE_GENERATING_MS) block = refusal('in_progress');
-      if (!block && by === 'operator' && regenerate) {
+      if (!block && by === 'operator' && route === 'leaddb') {
+        // Batch 55 (A8): the lead database route has one preview round per ad_pack_ld_round_days, not the Academy's free regeneration.
+        const round = await leadDbRound(ownerId, pack, settings, now);
+        if (!round.allowed) block = refusal(round.code);
+        else grantId = round.grantId;
+      } else if (!block && by === 'operator' && regenerate) {
         const rule = regenerateBlock(pack, hash, settings);
         if (rule) block = refusal(rule);
       }
       if (!block && estimate > settings.maxRawPence) block = refusal('cost_cap');
-      const spent = await store.monthSpendPence(monthStartIso(now));
+      // Each route sums only its own runs: the Academy's cap is never used up by the lead database's spend, and the other way round.
+      const spent = await store.monthSpendPence(monthStartIso(now), route);
       if (!block) {
         if (spent === null) block = refusal('spend_unknown');
-        else if (!fitsCap(spent, estimate, settings.monthlyCapPence)) block = refusal('monthly_cap');
+        else if (route === 'leaddb') {
+          if (overBackstop(spent, estimate, settings.ldMonthlyCapPence)) block = refusal('backstop');
+        } else if (!fitsCap(spent, estimate, settings.monthlyCapPence)) block = refusal('monthly_cap');
       }
       if (block && !dry) {
         log('generate_refused', { packId: pack?.id, code: block.code });
@@ -879,7 +911,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
 
       // 6: take the pack, then make everything.
       if (!pack) {
-        held = await createPack(ownerId, input.websiteId ?? null, input.route ?? 'academy');
+        held = await createPack(ownerId, input.websiteId ?? null, route);
       } else {
         held = await store.beginGenerating(ownerId, pack.id, new Date(now.getTime() - STALE_GENERATING_MS).toISOString());
         if (!held) return fail('in_progress', pack.id);
@@ -973,6 +1005,15 @@ export function createAdPackEngine(deps: GenerateDeps) {
         { from: ['generating'] },
       );
       if (!updated) throw new GenError('store_failed');
+
+      // Batch 55 (A8): the grant is used up only now that the round it allowed has succeeded (never by a run that failed or failed its checks).
+      if (grantId !== null && status === 'preview') {
+        try {
+          if (!(await store.useRoundGrant(ownerId, grantId, nowIso))) log('round_grant_not_used', { packId: taken.id, code: 'already_used' });
+        } catch (e) {
+          log('round_grant_not_used', { packId: taken.id, code: e instanceof StoreError ? e.code : 'error' });
+        }
+      }
 
       if (status === 'preview' && regenerate) {
         try {
@@ -1127,7 +1168,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
 
       const ad = ads.find((a) => a.angle === '5b' && a.version === pack.version) ?? null;
       const lines = cleanLines(String(ad?.texts.script ?? '').split(/\n\s*\n/));
-      const cap = await capRefusal(settings, await videoEstimateFor(settings, lines.length > 0 ? lines : ['x'.repeat(Math.min(MAX_VOICE_CHARACTERS, 600))], voiceKey));
+      const cap = await capRefusal(settings, await videoEstimateFor(settings, lines.length > 0 ? lines : ['x'.repeat(Math.min(MAX_VOICE_CHARACTERS, 600))], voiceKey), pack.route);
       if (cap) {
         log('voice_change_refused', { packId: pack.id, code: cap });
         return no(cap, GENERATE_MESSAGES[cap]);
@@ -1187,7 +1228,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
 
       const voiceKey: VoiceKey = isVoiceKey(render?.voiceKey) ? render.voiceKey : isVoiceKey(pack.voiceKey) ? pack.voiceKey : DEFAULT_VOICE_KEY;
       const lines = cleanLines(String(ad?.texts.script ?? '').split(/\n\s*\n/));
-      const cap = await capRefusal(settings, await videoEstimateFor(settings, lines.length > 0 ? lines : ['x'.repeat(Math.min(MAX_VOICE_CHARACTERS, 600))], voiceKey));
+      const cap = await capRefusal(settings, await videoEstimateFor(settings, lines.length > 0 ? lines : ['x'.repeat(Math.min(MAX_VOICE_CHARACTERS, 600))], voiceKey), pack.route);
       if (cap) {
         log('video_retry_refused', { packId: pack.id, code: cap });
         return no(cap, GENERATE_MESSAGES[cap]);

@@ -134,6 +134,9 @@ export type NewRun = { packId: string; version: number; by: RunBy; costPence: nu
 
 export type RunRow = { id: string; packId: string; version: number; by: RunBy; dry: boolean; costPence: number; result: RunResult | null; createdAt: string };
 
+/** Batch 55 (A8): an admin's grant of one more creative round to an owner (ad_pack_round_grants). The reason text is never read back into the app. */
+export type RoundGrantRow = { id: string; ownerId: string; createdAt: string; usedAt: string | null };
+
 /** A unique column was hit. `which` says which one. */
 export class PackConflict extends Error {
   readonly which: 'owner' | 'operator_code' | 'code';
@@ -189,7 +192,20 @@ export interface AdPackStore {
   insertRun(ownerId: string, run: NewRun): Promise<RunRow | null>;
   /** The pack's runs, newest first. */
   listRuns(ownerId: string, packId: string, limit?: number): Promise<RunRow[]>;
-  /** Raw cost of every non-dry run since the instant, all owners together; null when it cannot be read. */
-  monthSpendPence(sinceIso: string): Promise<number | null>;
+  /**
+   * Raw cost of every non-dry run since the instant, all owners together; null when it cannot be read.
+   * Batch 55: with a route, only the runs of packs on that route (the Academy cap passes 'academy', so lead database
+   * runs never use it up; the lead database backstop passes 'leaddb'). Without one, every route.
+   */
+  monthSpendPence(sinceIso: string, route?: AdRoute): Promise<number | null>;
+  /**
+   * Batch 55 (A8): the pack's non-dry runs made BY THE OPERATOR since the instant, newest first (the round cap reads
+   * these; admin and render runs are left out in the database). Refused ([]) when the pack is not the owner's.
+   */
+  listOperatorRunsSince(ownerId: string, packId: string, sinceIso: string): Promise<RunRow[]>;
+  /** Batch 55 (A8): the owner's round grants that have not been used, oldest first. Throws StoreError when the read fails. */
+  listUnusedRoundGrants(ownerId: string): Promise<RoundGrantRow[]>;
+  /** Batch 55 (A8): mark one of the owner's grants used, only while it is unused. False when it was already used (or is not theirs). */
+  useRoundGrant(ownerId: string, grantId: string, atIso: string): Promise<boolean>;
   readSettings(): Promise<AdPackSettings>;
 }
