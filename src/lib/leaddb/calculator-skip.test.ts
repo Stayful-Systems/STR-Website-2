@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { enqueueLeadDbPush, runLeadDbDelivery, type DeliveryRow, type FinishPatch, type LeadContext, type LeadDbDeps, type LeadDbStore } from './deliver.ts';
-import { reportSiteIdsOf, withoutCalculatorLeads } from './sweep.ts';
+import { withoutCalculatorLeads } from './sweep.ts';
 import type { WebsiteLeadBody } from './client.ts';
 
 /**
@@ -65,16 +65,9 @@ test('a calculator lead queued by something else is never posted: the drain fail
 });
 
 test('the sweep drops calculator leads (pure) and keeps the order of the rest', () => {
-  const rows = [
-    { id: 'a', website_reports: { website_id: 'site-1' } },
-    { id: 'b', website_reports: { website_id: 'calc-1' } },
-    { id: 'c', website_reports: [{ website_id: 'site-2' }] },
-    { id: 'd', website_reports: [{ website_id: 'calc-1' }] },
-    { id: 'e', website_reports: null },
-  ];
-  assert.deepEqual(withoutCalculatorLeads(rows, new Set(['calc-1'])), ['a', 'c', 'e']);
-  assert.deepEqual(withoutCalculatorLeads(rows, new Set()), ['a', 'b', 'c', 'd', 'e']);
-  assert.deepEqual(reportSiteIdsOf(rows[2]), ['site-2']);
+  assert.deepEqual(withoutCalculatorLeads(['a', 'b', 'c', 'd'], new Set(['b', 'd'])), ['a', 'c']);
+  assert.deepEqual(withoutCalculatorLeads(['a', 'b'], new Set()), ['a', 'b']);
+  assert.deepEqual(withoutCalculatorLeads([], new Set(['a'])), []);
 });
 
 test('the real store reads the site mode into the context and the sweep filters by it', () => {
@@ -82,8 +75,9 @@ test('the real store reads the site mode into the context and the sweep filters 
   assert.match(src, /select\('state, quality_ok, website_id'\)/);
   assert.match(src, /from\('websites'\)\.select\('mode'\)\.eq\('id', report\.website_id\)/);
   assert.match(src, /\.\.\.\(calculator \? \{ calculator: true \} : \{\}\)/);
-  assert.match(src, /from\('websites'\)\.select\('id'\)\.in\('id', reportSiteIds\)\.eq\('mode', 'calculator'\)/);
-  assert.match(src, /const websiteIds = withoutCalculatorLeads\(/);
+  assert.match(src, /from\('website_reports'\)\.select\('lead_id, website_id'\)\.in\('lead_id', candidateIds\)/);
+  assert.match(src, /from\('websites'\) : \{ data: \[\] \}|from\('websites'\)\.select\('id'\)\.in\('id', siteIds\)\.eq\('mode', 'calculator'\)/);
+  assert.match(src, /const websiteIds = withoutCalculatorLeads\(candidateIds, calculatorLeadIds\);/);
 });
 
 test('the hook call sites are unchanged and the push never writes leads.status or crm_pushed_at', () => {

@@ -5,7 +5,7 @@ import { getFunnel } from '../funnels';
 import { renderReportPdf, pdfBrandForFunnel } from '../pdf/render';
 import { leadDbConfig, leadDbPushLead } from './client';
 import { leadDbBadge } from './messages';
-import { pickUnqueued, reportSiteIdsOf, withoutCalculatorLeads, type ReportedLead } from './sweep';
+import { pickUnqueued, withoutCalculatorLeads } from './sweep';
 import { isCalculatorMode } from '../websites/calculator';
 import type { DeliveryRow, FinishPatch, LeadContext, LeadDbDeps, LeadDbStore, LinkState } from './deliver';
 import { realLinkClient, type LinkDeps, type LinkRecord, type LinkStore } from './links';
@@ -158,7 +158,7 @@ export function supabaseStore(): LeadDbStore {
         const since = new Date(Math.max(floor, l.connected_at ? Date.parse(l.connected_at) : floor)).toISOString();
         const { data: leads } = await admin
           .from('leads')
-          .select('id, website_reports!inner(state, website_id)')
+          .select('id, website_reports!inner(state)')
           .eq('user_id', l.owner_id)
           .is('archived_at', null)
           .neq('status', 'held')
@@ -166,12 +166,18 @@ export function supabaseStore(): LeadDbStore {
           .order('created_at', { ascending: true })
           .limit(limit);
         // Batch 55: leads of a calculator site are never queued as si_website leads (Phase 2 sends them as si_ad).
-        const reportSiteIds = [...new Set(((leads ?? []) as ReportedLead[]).flatMap((r) => reportSiteIdsOf(r)))];
-        const { data: calcSites } = reportSiteIds.length
-          ? await admin.from('websites').select('id').in('id', reportSiteIds).eq('mode', 'calculator')
-          : { data: [] };
-        const calcSiteIds = new Set(((calcSites ?? []) as { id: string }[]).map((r) => r.id));
-        const websiteIds = withoutCalculatorLeads((leads ?? []) as ReportedLead[], calcSiteIds);
+        // Two small reads (the report's site, then that site's mode), so the join above is exactly as before.
+        const candidateIds = ((leads ?? []) as { id: string }[]).map((r) => r.id);
+        const calculatorLeadIds = new Set<string>();
+        if (candidateIds.length > 0) {
+          const { data: reps } = await admin.from('website_reports').select('lead_id, website_id').in('lead_id', candidateIds);
+          const repRows = (reps ?? []) as { lead_id: string; website_id: string }[];
+          const siteIds = [...new Set(repRows.map((r) => r.website_id))];
+          const { data: calcSites } = siteIds.length ? await admin.from('websites').select('id').in('id', siteIds).eq('mode', 'calculator') : { data: [] };
+          const calcSiteIds = new Set(((calcSites ?? []) as { id: string }[]).map((r) => r.id));
+          for (const r of repRows) if (calcSiteIds.has(r.website_id)) calculatorLeadIds.add(r.lead_id);
+        }
+        const websiteIds = withoutCalculatorLeads(candidateIds, calculatorLeadIds);
         // Batch 35: a lead read from a lead-form sheet has no report, so the join above never sees it. An ad_sheet_rows
         // row (imported or merged) names it; it goes lead-only, as `context` marks it `sheetLead`.
         const { data: sheetRows } = await admin

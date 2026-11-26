@@ -17,21 +17,11 @@ export function pickUnqueued(websiteIds: readonly string[], sheetIds: readonly s
   return out;
 }
 
-/** A lead row read with its website report's site id (the report row embeds as an object; an array is tolerated). */
-export type ReportedLead = { id: string; website_reports?: { website_id?: string } | { website_id?: string }[] | null };
-
-/** The site ids a lead row's report(s) point at. */
-export function reportSiteIdsOf(row: ReportedLead): string[] {
-  const w = row.website_reports;
-  const list = Array.isArray(w) ? w : w ? [w] : [];
-  return list.map((x) => x.website_id).filter((x): x is string => typeof x === 'string');
-}
-
 /**
- * Batch 55 (Part A): the ids of the website leads the sweep may queue, leaving out every lead whose report belongs to a
- * CALCULATOR site (`calculatorSiteIds`). A calculator lead is never an `si_website` push (Phase 2 sends it as `si_ad`).
- * Order is kept; a lead with no readable report site is kept (that is the old behaviour for a site-mode lead).
+ * Batch 55 (Part A): the website lead ids the sweep may queue, leaving out every lead of a CALCULATOR site
+ * (`calculatorLeadIds`: leads whose report belongs to a site with mode 'calculator'). A calculator lead is never an
+ * `si_website` push (Phase 2 sends it as `si_ad`). Order is kept.
  */
-export function withoutCalculatorLeads(rows: readonly ReportedLead[], calculatorSiteIds: ReadonlySet<string>): string[] {
-  return rows.filter((r) => !reportSiteIdsOf(r).some((id) => calculatorSiteIds.has(id))).map((r) => r.id);
+export function withoutCalculatorLeads(leadIds: readonly string[], calculatorLeadIds: ReadonlySet<string>): string[] {
+  return leadIds.filter((id) => !calculatorLeadIds.has(id));
 }
