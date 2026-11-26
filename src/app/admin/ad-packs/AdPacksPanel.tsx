@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import type { AdminPackRow, AdminView } from "@/lib/ad-packs/admin-view";
 import type { LinkMissingAdminResult, RegenerateResult } from "@/lib/ad-packs/admin-run";
+import type { AdAccountAdminRow } from "@/lib/leaddb/ad-account-admin";
+import { LeadDbAccounts } from "./LeadDbAccounts";
 import { dryRunLinkMissingAction, dryRunRegenerateAction, runLinkMissingAction, runRegenerateAction } from "./actions";
 
 const button = "rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:opacity-60";
@@ -97,7 +99,7 @@ function LinkMissing({ owners }: { owners: { id: string; label: string }[] }) {
   );
 }
 
-export function AdPacksPanel({ view }: { view: AdminView }) {
+export function AdPacksPanel({ view, accounts, accountsError }: { view: AdminView; accounts: AdAccountAdminRow[]; accountsError: boolean }) {
   const { rows, totals } = view;
   const owners = rows.map((r) => ({ id: r.ownerId, label: r.company || r.email || r.ownerId.slice(0, 8) }));
   return (
@@ -174,6 +176,8 @@ export function AdPacksPanel({ view }: { view: AdminView }) {
           </table>
         )}
       </section>
+
+      <LeadDbAccounts accounts={accounts} readError={accountsError} />
 
       <LinkMissing owners={owners} />
     </>
