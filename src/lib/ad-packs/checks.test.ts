@@ -41,6 +41,18 @@ function pack(over: { feePct?: number | null; company?: string; figure?: boolean
   };
 }
 
+/** The lead database route: links go to /s/<slug> on this app's own host, not to an own domain. */
+const APP_HOST = SRC_SITE;
+const SLUG = 'brightstone-calc';
+function leadDbPack(): CheckInput {
+  const base = pack();
+  const c = structuredClone(base);
+  c.domain = APP_HOST;
+  c.sitePath = SLUG;
+  for (const a of c.ads) a.link = adLink({ domain: APP_HOST, sitePath: SLUG, code: a.code, operatorCode: OP });
+  return c;
+}
+
 const rules = (i: CheckInput) => runChecks(i).failures.map((f) => f.rule);
 const withText = (i: CheckInput, patch: (ad: CheckAd) => void, angle: Angle = '3a'): CheckInput => {
   const c = structuredClone(i);
@@ -332,4 +344,35 @@ test('the video result says it RAN only when the video check really ran (approve
   assert.ok(ran.results.filter((x) => x.check !== 'video').every((x) => x.ran === undefined));
   assert.equal(mergeVideoChecks(notRun, GOOD_VIDEOS).results.find((x) => x.check === 'video')?.ran, true);
   assert.equal(mergeVideoChecks(null, []).results.find((x) => x.check === 'video')?.ran, true, 'an empty list is a run that fails (missing files)');
+});
+
+test('links, lead database route: /s/<slug> on this app’s host passes, the app’s host is not “the source brand”', () => {
+  const p = leadDbPack();
+  assert.match(p.ads[0].link, new RegExp(`^https://${APP_HOST.replace(/\./g, '\\.')}/s/${SLUG}\\?ad=`));
+  const r = runChecks(p);
+  assert.deepEqual(r.failures, [], JSON.stringify(r.failures));
+  assert.equal(r.ok, true);
+});
+
+test('links, lead database route: a bare-host link, a wrong slug, a wrong host or a tweaked shape fails', () => {
+  const p = leadDbPack();
+  const setLink = (fn: (l: string, code: string) => string) => withText(p, (a) => (a.link = fn(a.link, a.code)));
+  // A link in the Academy shape (no /s/<slug>) on a pack that says it is a calculator pack.
+  assert.ok(rules(setLink((_l, code) => adLink({ domain: APP_HOST, code, operatorCode: OP }))).includes('link_shape'));
+  assert.ok(rules(setLink((l) => l.replace(`/s/${SLUG}`, '/s/someone-else'))).includes('link_shape'));
+  assert.ok(rules(setLink((l) => l.replace(`/s/${SLUG}`, ''))).includes('link_shape'));
+  assert.ok(rules(setLink((l) => l.replace(APP_HOST, 'other.co.uk'))).includes('link_domain'));
+  assert.ok(rules(setLink((l) => l.replace('utm_source=facebook', 'utm_source=meta'))).includes('link_shape'));
+  assert.ok(rules(setLink((l) => l.replace('utm_content={{ad.id}}', 'utm_content=123'))).includes('link_placeholder'));
+  assert.ok(rules(setLink((l) => l.replace(/\?ad=[^&]+&/, '?'))).includes('link_ad_code'));
+  assert.ok(rules(setLink((l) => l.replace('https://', 'http://'))).includes('link_invalid'));
+  // The source name is still refused anywhere else in the link (the slug, a query value).
+  assert.ok(rules(setLink((l) => l.replace('utm_campaign=SI-', `utm_campaign=${'stay' + 'ful'}-SI-`))).includes('source_word'));
+});
+
+test('links, Academy route: an Academy pack still refuses a /s/<slug> link (no sitePath given)', () => {
+  const p = pack();
+  const bad = withText(p, (a) => (a.link = adLink({ domain: DOMAIN, sitePath: SLUG, code: a.code, operatorCode: OP })));
+  assert.ok(rules(bad).includes('link_shape'));
+  assert.deepEqual(runChecks(p).failures, []);
 });
