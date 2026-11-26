@@ -17,6 +17,7 @@
  *   details. The one log line the caller may write carries a code.
  */
 import { parseAdAccountState, type AdAccountState, type LeadDbAdAccount } from './ad-account.ts';
+import { asObject, parseLdCustomerId } from './inbound.ts';
 
 export interface ProvisionInput {
   ldCustomerId: string;
@@ -51,7 +52,6 @@ export interface ProvisionDeps {
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const CUSTOMER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const PHONE = /^[0-9+()\-.\s]{3,40}$/;
 
 const fail = (status: number, code: Exclude<ProvisionCode, 'created' | 'exists'>): ProvisionOutcome => ({ status, body: { ok: false, code } });
@@ -59,9 +59,10 @@ const ok = (code: 'created' | 'exists'): ProvisionOutcome => ({ status: 200, bod
 
 /** Strict check of the request body. Null when anything is off; never throws. */
 export function parseProvisionBody(raw: unknown): ProvisionInput | null {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
-  const r = raw as Record<string, unknown>;
-  if (typeof r.ld_customer_id !== 'string' || !CUSTOMER_ID.test(r.ld_customer_id)) return null;
+  const r = asObject(raw);
+  if (!r) return null;
+  const ldCustomerId = parseLdCustomerId(r.ld_customer_id);
+  if (!ldCustomerId) return null;
   if (typeof r.email !== 'string') return null;
   const email = r.email.trim().toLowerCase();
   if (email.length > 254 || !EMAIL.test(email)) return null;
@@ -79,7 +80,7 @@ export function parseProvisionBody(raw: unknown): ProvisionInput | null {
   }
   const state = parseAdAccountState(r.state);
   if (!state) return null;
-  return { ldCustomerId: r.ld_customer_id, email, company, phone, state };
+  return { ldCustomerId, email, company, phone, state };
 }
 
 export async function runProvision(deps: ProvisionDeps, input: ProvisionInput): Promise<ProvisionOutcome> {

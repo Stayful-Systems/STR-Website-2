@@ -77,3 +77,15 @@ export async function verifyInbound(req: Request, opts: VerifyInboundOptions = {
   }
   return { ok: true, raw, json };
 }
+
+const LD_CUSTOMER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/** The lead database's customer id as a body field: a short id string, or null. Never throws. */
+export function parseLdCustomerId(raw: unknown): string | null {
+  return typeof raw === 'string' && LD_CUSTOMER_ID.test(raw) ? raw : null;
+}
+
+/** A body that is a JSON object, or null. */
+export function asObject(raw: unknown): Record<string, unknown> | null {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+}
