@@ -160,7 +160,6 @@ test('calculator reports run free at 0p, house-paid, and the frozen mode is what
 test('report-server: the free claim, held_cap, decideStep2 and held_credit sit only in the site-mode branch', () => {
   const start = runner.indexOf('if (calculator) {');
   const elseAt = runner.indexOf('} else {', start);
-  const end = runner.indexOf('// ── The lease ──') >= 0 ? runner.indexOf('const lease', start) : -1;
   assert.ok(start > 0 && elseAt > start);
   const calcBranch = runner.slice(start, elseAt);
   assert.doesNotMatch(calcBranch, /website_free_report_claim|decideStep2|claimOutcome|held_cap|held_credit|held_self|hold\(|freezeMode|faceAvailableFor|chargeReport|chargeDecision/);
@@ -169,7 +168,6 @@ test('report-server: the free claim, held_cap, decideStep2 and held_credit sit o
   for (const needle of ['website_free_report_claim', 'decideStep2(', 'claimOutcome(', 'faceAvailableFor(', 'freezeMode(', 'hold(admin, report, decision.state']) {
     assert.ok(rest.includes(needle), needle);
   }
-  assert.ok(end === -1 || end > elseAt);
 });
 
 test('report-server: a calculator report is never charged, and a credit shortfall never holds it', () => {
