@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { STALE_REASONS, settleStale, staleCreditDue, staleCreditLine, stalePence, staleRunMode, staleSourceRef, staleVerdict, type LedgerRow, type StaleDeal, type StaleDeps, type StaleOpenFacts } from './stale-credit.ts';
+import { STALE_REASONS, purchasesBeforeGone, settleStale, staleCreditDue, staleCreditLine, stalePence, staleRunMode, staleSourceRef, staleVerdict, type LedgerRow, type StaleDeal, type StaleDeps, type StaleOpenFacts } from './stale-credit.ts';
 
 const S = { staleCreditDays: 7 };
 const DAY = 24 * 3600 * 1000;
@@ -150,4 +150,11 @@ test('the line on My opened deals', () => {
   assert.equal(staleCreditLine(7, 450), 'Gone within 7 days, £4.50 credited back');
   assert.equal(staleCreditLine(7, 400), 'Gone within 7 days, £4 credited back');
   assert.equal(staleCreditLine(7, 25), 'Gone within 7 days, £0.25 credited back');
+});
+
+test('a report bought after the deal went is not credited back', () => {
+  const retired = at(3);
+  const bought = [{ id: 'a', created_at: at(1) }, { id: 'b', created_at: at(3) }, { id: 'c', created_at: at(4) }, { id: 'd', created_at: null }, { id: 'e', created_at: 'nonsense' }];
+  assert.deepEqual(purchasesBeforeGone(bought, retired).map((p) => p.id), ['a', 'b']);
+  assert.deepEqual(purchasesBeforeGone(bought, null), [], 'no date for the deal going: nothing counts');
 });

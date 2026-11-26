@@ -11,7 +11,7 @@ import 'server-only';
 import { grant } from '../credit/ledger';
 import { chunk, type Admin } from './server';
 import { readDealFeedSettings } from './deal-feed-settings-server';
-import { STALE_REASONS, settleStale, stalePence, staleRunMode, type LedgerRow, type StaleDeps, type StaleGrantOutcome } from './stale-credit';
+import { STALE_REASONS, purchasesBeforeGone, settleStale, stalePence, staleRunMode, type LedgerRow, type StaleDeps, type StaleGrantOutcome } from './stale-credit';
 import type { DealFeedSettings } from './deal-feed-settings';
 
 /** The cron looks this far back for deals that went; an older one is the admin button's. */
@@ -36,11 +36,13 @@ interface GoneDeal {
 }
 
 /** What the member was actually debited for this open and its completed full reports. */
-async function spentOn(admin: Admin, open: OpenRow): Promise<number> {
+async function spentOn(admin: Admin, open: OpenRow, retiredAt: string | null): Promise<number> {
   const debitIds: number[] = [];
   if (open.transaction_id !== null) debitIds.push(Number(open.transaction_id));
-  const { data: purchases } = await admin.from('analysis_purchases').select('transaction_ids').eq('user_id', open.user_id).eq('deal_id', open.deal_id).eq('status', 'complete');
-  for (const p of (purchases ?? []) as { transaction_ids: (number | string)[] | null }[]) for (const t of p.transaction_ids ?? []) debitIds.push(Number(t));
+  const { data: purchases, error: purchaseErr } = await admin.from('analysis_purchases').select('transaction_ids, created_at').eq('user_id', open.user_id).eq('deal_id', open.deal_id).eq('status', 'complete');
+  if (purchaseErr) throw new Error('purchases unreadable');
+  // Only what was bought before the deal went (a report bought on a deal already gone is not credited back).
+  for (const p of purchasesBeforeGone((purchases ?? []) as { transaction_ids: (number | string)[] | null; created_at: string | null }[], retiredAt)) for (const t of p.transaction_ids ?? []) debitIds.push(Number(t));
   if (debitIds.length === 0) return 0;
   const ids = [...new Set(debitIds)];
   const [debits, refunds] = await Promise.all([
@@ -56,9 +58,9 @@ async function dealOf(admin: Admin, dealId: string): Promise<GoneDeal | null> {
   return (data as GoneDeal | null) ?? null;
 }
 
-function depsFor(admin: Admin): StaleDeps {
+function depsFor(admin: Admin, deal: GoneDeal): StaleDeps {
   return {
-    spentPence: (open) => spentOn(admin, open as OpenRow),
+    spentPence: (open) => spentOn(admin, open as OpenRow, deal.retired_at),
     async grant(userId, pence, sourceRef, description) {
       await grant(userId, 'adjustment', pence, { sourceRef, description });
     },
@@ -72,7 +74,7 @@ function depsFor(admin: Admin): StaleDeps {
 
 /** Grants the credit for one open if it is due. `dry` works out the amount and writes nothing. */
 export async function grantStaleCredit(admin: Admin, open: OpenRow, deal: GoneDeal, settings: DealFeedSettings, opts: { ignoreWindow?: boolean; dry?: boolean; now?: Date } = {}): Promise<StaleGrantOutcome> {
-  const out = await settleStale(depsFor(admin), open, deal, settings, opts);
+  const out = await settleStale(depsFor(admin, deal), open, deal, settings, opts);
   if (out.ok && out.granted) console.info(`[stale-credit] open ${open.id}: ${out.pence} credited back`);
   if (!out.ok && out.code === 'failed') console.error(`[stale-credit] open ${open.id}: failed`);
   return out;

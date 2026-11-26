@@ -19,52 +19,52 @@ ad-packs, ad-sheets, leaddb, `/p/[token]`, `/deal/[token]`.
 - Notes: done.
 
 ## Phase 1: schema and settings
-- [ ] Block "Deal feed" in `supabase/schema.sql` (safe to re-run): `marketplace_deals.dupe_of` (references `canonical_url`,
+- [x] Block "Deal feed" in `supabase/schema.sql` (safe to re-run): `marketplace_deals.dupe_of` (references `canonical_url`,
       on delete set null) and `uprn`, index on `dupe_of`; `deal_opens.stale_credit_at`, `stale_credit_pence`; seeds
       `deal_stale_credit_enabled=false`, `deal_stale_credit_days=7`, `deal_dedupe_enabled=false`, `deal_dedupe_price_pct=2`.
       No grants for anon or authenticated.
-- [ ] `src/lib/marketplace/deal-feed-settings.ts`: pure parser plus defaults (off, 7 days, 2%); a server reader.
-- [ ] Test pinning the defaults to the schema seeds (pattern: Batch 35).
+- [x] `src/lib/marketplace/deal-feed-settings.ts`: pure parser plus defaults (off, 7 days, 2%); a server reader.
+- [x] Test pinning the defaults to the schema seeds (pattern: Batch 35).
 - Check: `npm run typecheck && npm test`
-- Notes:
+- Notes: Block placed before Batch 37's section (its schema tests treat everything after their header as theirs). Reader is `deal-feed-settings-server.ts`; the parser is pure.
 
 ## Phase 2: category tabs on /deals
-- [ ] Tab row All / Rent-to-rent / Buy-to-let above the filters, links only, 44px targets, scrolls sideways on a phone.
-- [ ] `KIND_LABELS.sale` becomes "Buy-to-let"; the sale tab covers every sale type (Short-let, BRRR, Buy to let).
-- [ ] Test: each tab round-trips through `filtersToSearch`; labels.
+- [x] Tab row All / Rent-to-rent / Buy-to-let above the filters, links only, 44px targets, scrolls sideways on a phone.
+- [x] `KIND_LABELS.sale` becomes "Buy-to-let"; the sale tab covers every sale type (Short-let, BRRR, Buy to let).
+- [x] Test: each tab round-trips through `filtersToSearch`; labels.
 - Check: `npm run typecheck && npm test && npm run lint`
-- Notes:
+- Notes: Tabs use `kind=rent`, `kind=sale`, `type=all`. An old `kind=sale` link now includes buy-to-let too, to match Zac's decision.
 
 ## Phase 3: duplicate hiding
-- [ ] `dedupe.ts` (`findDupe` pure) and tests; `uprn` written by `recordColumns`; set and clear `dupe_of` after absorbing and on retire.
-- [ ] Grid query adds `dupe_of is null` while `deal_dedupe_enabled` is on; opened deals and `/deals/[id]` ignore it.
-- [ ] `/admin/deals` shows "Hidden as duplicates: N".
+- [x] `dedupe.ts` (`findDupe` pure) and tests; `uprn` written by `recordColumns`; set and clear `dupe_of` after absorbing and on retire.
+- [x] Grid query adds `dupe_of is null` while `deal_dedupe_enabled` is on; opened deals and `/deals/[id]` ignore it.
+- [x] `/admin/deals` shows "Hidden as duplicates: N".
 - Check: `npm run typecheck && npm test`
 - Rollback: switch `deal_dedupe_enabled` off.
-- Notes:
+- Notes: Postcode is read from `sourced_listings.snapshot` (marketplace_deals has no postcode column). Pointers are kept whether or not the switch is on, so the admin count works before turning it on; only the grid honours the switch. Same kind is required for a UPRN match.
 
 ## Phase 4: stale-deal credit
-- [ ] `stale-credit.ts` (`staleCreditDue` pure, amount from the actual debits) and tests.
-- [ ] Cron `/api/internal/deal-stale-credits` (`17 * * * *`, `CRON_SECRET`, `?dry=1`), `vercel.json`.
-- [ ] Admin "Grant stale credit" action (same function, ignores the window, `requireAdmin`).
-- [ ] `/deals/opened` shows "Gone within 7 days, £X credited back".
+- [x] `stale-credit.ts` (`staleCreditDue` pure, amount from the actual debits) and tests.
+- [x] Cron `/api/internal/deal-stale-credits` (`17 * * * *`, `CRON_SECRET`, `?dry=1`), `vercel.json`.
+- [x] Admin "Grant stale credit" action (same function, ignores the window, `requireAdmin`).
+- [x] `/deals/opened` shows "Gone within 7 days, £X credited back".
 - Check: `npm run typecheck && npm test`
 - Rollback: switch `deal_stale_credit_enabled` off; credits already given can be reversed by an admin adjustment.
-- Notes:
+- Notes: A free open is settled at 0. Reports bought after the deal went are not credited (review fix). The dry run lists even while the switch is off.
 
 ## Phase 5: admin weekly count and rent-to-rent notice
-- [ ] `weekly-sales.ts` (`weeklySales` pure, last 8 ISO weeks by category) and test; table on `/admin/deals` plus "reports this month vs 50 target".
-- [ ] Rent-to-rent permission notice on the deal sheet and the full report panel (kind `rent` only).
+- [x] `weekly-sales.ts` (`weeklySales` pure, last 8 ISO weeks by category) and test; table on `/admin/deals` plus "reports this month vs 50 target".
+- [x] Rent-to-rent permission notice on the deal sheet and the full report panel (kind `rent` only).
 - Check: `npm run typecheck && npm test && npm run lint`
-- Notes:
+- Notes: Panel is `DealFeedPanel.tsx` on /admin/deals; it also holds the switches (there is no /admin/billing editor for these keys).
 
 ## Phase 6: knowledge
-- [ ] Draft entries `deal_feed_categories`, `deal_stale_credit`, `deal_r2r_permission`, `deal_duplicates`; placeholder `{deal_stale_credit_days}`; DEAL FEED line in `service-facts.ts`.
+- [x] Draft entries `deal_feed_categories`, `deal_stale_credit`, `deal_r2r_permission`, `deal_duplicates`; placeholder `{deal_stale_credit_days}`; DEAL FEED line in `service-facts.ts`.
 - Check: `npm test`
-- Notes:
+- Notes: The plan's `deal_open_price_range` placeholder does not exist; used `{open_cost_min}` and `{open_cost_max}`. Wording tuned so the existing match tests still pass.
 
 ## Phase 7: review and merge prep
-- [ ] One fresh subagent reviews the diff against this plan (150 words or fewer); real gaps fixed.
-- [ ] Merge `origin/main`, renumber if needed, short "Deal feed" section in `CLAUDE.md`.
-- [ ] `npm run typecheck && npm test && npm run lint && npm run build`; push; draft PR. Stop there.
-- Notes:
+- [x] One fresh subagent reviews the diff against this plan (150 words or fewer); real gaps fixed.
+- [x] Merge `origin/main`, renumber if needed, short "Deal feed" section in `CLAUDE.md`.
+- [x] `npm run typecheck && npm test && npm run lint && npm run build`; push; draft PR. Stop there.
+- Notes: Review found two points: a report bought after the deal went (fixed), and a duplicate-hiding claim about reaction views (not a bug: the main grid uses the same filter). `origin/main` had nothing new, so no renumbering. Build, tests (5,047+), typecheck pass; lint has no errors.

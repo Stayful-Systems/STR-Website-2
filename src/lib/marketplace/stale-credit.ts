@@ -90,6 +90,20 @@ export function stalePence(ledger: readonly LedgerRow[], debitIds: readonly (num
   return Math.max(0, round4(spent - refunded));
 }
 
+/**
+ * The purchases that count: those started before the deal went. A full report bought on a deal
+ * that was already gone was bought knowing it, so it is not credited back. A purchase with no
+ * usable date is left out (never credit what cannot be dated).
+ */
+export function purchasesBeforeGone<T extends { created_at: string | null }>(purchases: readonly T[], retiredAt: string | null): T[] {
+  const gone = retiredAt ? Date.parse(retiredAt) : Number.NaN;
+  if (!Number.isFinite(gone)) return [];
+  return purchases.filter((p) => {
+    const at = p.created_at ? Date.parse(p.created_at) : Number.NaN;
+    return Number.isFinite(at) && at <= gone;
+  });
+}
+
 /** "Gone within 7 days, £1.00 credited back". */
 export function staleCreditLine(days: number, pence: number): string {
   const pounds = pence / 100;
