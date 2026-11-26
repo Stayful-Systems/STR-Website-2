@@ -55,6 +55,8 @@ export const PLAIN_CODES: Record<string, string> = {
   generate_failed: TRY_AGAIN,
   cost_cap: `We could not make this just now. ${GET_IN_TOUCH}`,
   monthly_cap: 'We cannot make any more ads right now. Please try again later, or get in touch.',
+  round_limit: 'You have already made your ads for this round. You can make new ones when the next round starts, or get in touch and we will see what we can do.',
+  backstop: 'We cannot make any more ads right now. Please try again later, or get in touch.',
   spend_unknown: 'We could not finish that just now. Please try again in a few minutes.',
   video_pending: 'Your video is still being made. This button works as soon as it is ready.',
   video_failed: 'Your video is not ready yet. Please look at the video above first.',
