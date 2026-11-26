@@ -195,7 +195,7 @@ test('lead database route: an unused grant allows exactly one more round, is mar
   h.now = new Date(h.now.getTime() + 60_000);
   const extra = ok(await operator(h, leadDb()));
   assert.equal(extra.status, 'preview');
-  assert.equal(extra.version, 2);
+  assert.equal(extra.version, 3, 'the checks_failed attempt took version 2');
   assert.equal(h.store.grants.find((x) => x.id === g.id)?.usedAt, h.now.toISOString());
   // Exactly one: the next is refused.
   h.now = new Date(h.now.getTime() + 60_000);
@@ -243,15 +243,19 @@ test('lead database route: an unreadable grants read refuses safely (store_faile
   assert.equal(h.store.writes.length, writes);
 });
 
-test('lead database route: an admin regenerate never counts and is never refused by the round cap, and it does not use a grant', async () => {
+test('lead database route: an admin regenerate never counts, is never refused by the round cap, and does not use a grant', async () => {
   const h = harness();
   ok(await operator(h, leadDb()));
+  ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'admin', input: leadDb() }));
+  ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'admin', input: leadDb() }));
+  // Two admin runs later the owner's window still holds just the one round they made themselves: refused without a grant.
+  assert.equal(code(await operator(h, leadDb())), 'round_limit');
   const g = h.store.addGrant(OWNER_A);
   ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'admin', input: leadDb() }));
-  ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'admin', input: leadDb() }));
-  assert.equal(h.store.grants.find((x) => x.id === g.id)?.usedAt, null);
-  // And the owner's own window is still the one round they made.
-  assert.equal(code(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb() })), 'round_limit' === 'round_limit' ? 'round_limit' : '');
+  assert.equal(h.store.grants.find((x) => x.id === g.id)?.usedAt, null, 'an admin run leaves the grant for the owner');
+  // The owner's own extra round then uses it.
+  ok(await operator(h, leadDb()));
+  assert.ok(h.store.grants.find((x) => x.id === g.id)?.usedAt);
 });
 
 test('lead database route: hand edits are free: a voice change and a video retry make no run, and are not refused by the round cap', async () => {
@@ -376,7 +380,7 @@ test('the live store filters the month by route through the pack, and uses a gra
 
 test('the generator reads each route’s own month and the render worker does the same', () => {
   const core = strip(read('./generate-core.ts'));
-  assert.equal((core.match(/monthSpendPence\(monthStartIso\([^)]*\), route\)/g) ?? []).length, 2, 'generatePack and capRefusal both pass the route');
+  assert.equal((core.match(/monthSpendPence\(monthStartIso\((?:now|deps\.now\(\))\), route\)/g) ?? []).length, 2, 'generatePack and capRefusal both pass the route');
   assert.match(core, /useRoundGrant\(ownerId, grantId, nowIso\)/);
   assert.ok(core.indexOf('status === \'preview\'') < core.indexOf('useRoundGrant('), 'the grant is used only after the round has succeeded');
   const render = strip(read('./render-core.ts'));

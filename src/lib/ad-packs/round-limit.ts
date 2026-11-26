@@ -62,7 +62,8 @@ export function decideLeadDbRound(i: { runs: readonly RoundRun[]; grants: readon
   const unused = i.grants.filter((g) => g.usedAt === null).slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1));
   if (unused.length > 0) return { allowed: true, grantId: unused[0].id };
 
-  const newest = Math.max(...inside.map((r) => Date.parse(r.createdAt)).filter((t) => !Number.isNaN(t)), i.now.getTime());
+  const times = inside.map((r) => Date.parse(r.createdAt)).filter((t) => !Number.isNaN(t));
+  const newest = times.length > 0 ? Math.max(...times) : i.now.getTime();
   return { allowed: false, code: 'round_limit', nextRoundAt: new Date(newest + days * DAY_MS).toISOString() };
 }
 
