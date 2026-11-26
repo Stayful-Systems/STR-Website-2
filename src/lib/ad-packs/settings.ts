@@ -12,6 +12,10 @@
  *   ad_pack_sandbox_vcpus       vCPUs of the render sandbox (38b; also read by render-store.ts)
  *   ad_pack_render_max_attempts tries of one render before it is left failed (38b; also read by render-store.ts;
  *                               an operator's "Try again" is refused once a render has used twice this)
+ *   ad_pack_ld_round_days       Batch 55: days between creative rounds on the lead database route (one round per this
+ *                               many days; an admin grant allows one more)
+ *   ad_pack_ld_monthly_cap_pence  Batch 55: the lead database route's own backstop on house spend in a UK month
+ *                               (the Academy cap above sums only academy runs)
  *
  * (ad_packs_enabled, the master switch, is read by eligibility-server.ts.)
  *
@@ -31,6 +35,10 @@ export interface AdPackSettings {
   sandboxVcpus: number;
   /** Tries before a render is left failed (the worker's limit; retryVideo stops at twice this, in all). */
   renderMaxAttempts: number;
+  /** Batch 55: days between creative rounds on the lead database route. */
+  ldRoundDays: number;
+  /** Batch 55: the lead database route's own monthly house-spend backstop, in pence. */
+  ldMonthlyCapPence: number;
 }
 
 /**
@@ -48,6 +56,8 @@ export const AD_PACK_KEYS = {
   renderMaxSeconds: 'ad_pack_render_max_seconds',
   sandboxVcpus: 'ad_pack_sandbox_vcpus',
   renderMaxAttempts: 'ad_pack_render_max_attempts',
+  ldRoundDays: 'ad_pack_ld_round_days',
+  ldMonthlyCapPence: 'ad_pack_ld_monthly_cap_pence',
 } as const satisfies Record<keyof AdPackSettings, string>;
 
 export const DEFAULT_AD_PACK_SETTINGS: AdPackSettings = {
@@ -59,6 +69,8 @@ export const DEFAULT_AD_PACK_SETTINGS: AdPackSettings = {
   renderMaxSeconds: 300,
   sandboxVcpus: 2,
   renderMaxAttempts: 3,
+  ldRoundDays: 30,
+  ldMonthlyCapPence: 25000,
 };
 
 /** Highest values the admin may set (a typo guard, also what the parser accepts). */
@@ -67,6 +79,8 @@ export const AD_PACK_LIMITS = {
   voiceChanges: 10,
   maxRawPence: 100_000,
   monthlyCapPence: 1_000_000,
+  ldRoundDays: 365,
+  ldMonthlyCapPence: 1_000_000,
 } as const;
 
 function wholeIn(raw: unknown, min: number, max: number, fallback: number): number {
@@ -78,7 +92,7 @@ function wholeIn(raw: unknown, min: number, max: number, fallback: number): numb
 
 export type SettingRow = { key: string; value: unknown };
 
-/** The eight settings from billing_settings rows (any other key is ignored). */
+/** The ten settings from billing_settings rows (any other key is ignored). */
 export function parseAdPackSettings(rows: readonly SettingRow[] | null | undefined): AdPackSettings {
   const kv = new Map<string, unknown>();
   for (const r of rows ?? []) if (r && typeof r.key === 'string') kv.set(r.key, r.value);
@@ -93,6 +107,8 @@ export function parseAdPackSettings(rows: readonly SettingRow[] | null | undefin
     renderMaxSeconds: wholeIn(kv.get(k.renderMaxSeconds), 60, 900, d.renderMaxSeconds),
     sandboxVcpus: wholeIn(kv.get(k.sandboxVcpus), 1, 8, d.sandboxVcpus),
     renderMaxAttempts: wholeIn(kv.get(k.renderMaxAttempts), 1, 10, d.renderMaxAttempts),
+    ldRoundDays: wholeIn(kv.get(k.ldRoundDays), 1, AD_PACK_LIMITS.ldRoundDays, d.ldRoundDays),
+    ldMonthlyCapPence: wholeIn(kv.get(k.ldMonthlyCapPence), 0, AD_PACK_LIMITS.ldMonthlyCapPence, d.ldMonthlyCapPence),
   };
 }
 

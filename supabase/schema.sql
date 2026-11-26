@@ -10563,3 +10563,82 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 55 (Part A): the lead database ad route (calculator site, account state, extra rounds)
+-- =========================
+-- A lead database customer with no Academy, no website and no domain gets the
+-- three branded Facebook ads (Batch 38) linked to a branded income calculator
+-- at a Stayful address. The lead database pushes a signed account state; this
+-- site stores it and checks it locally. See docs/build/batch-55-part-a-PLAN.md.
+-- Every statement is add column if not exists / create table if not exists /
+-- on conflict do nothing, so a re-run changes nothing. No function, no policy.
+--
+--   websites.mode               'site' (the Batch 31 website, the default) or
+--                               'calculator' (the calculator-only site: no page
+--                               copy, no free report claim, no credit charge).
+--   ad_packs.route              'academy' (the default: Batch 38's route, its
+--                               £50 monthly cap) or 'leaddb' (the lead database
+--                               route, with its own cap and round limit).
+--   leaddb_ad_accounts          one row per owner: the lead database's last
+--                               pushed account state (customer id, link id,
+--                               card, status, a cancel date, lapsed) and
+--                               whether Zac has allowed this owner on the
+--                               route. allowed_by has no foreign key (the
+--                               record outlives the admin). state_as_of is the
+--                               pushed time: an older push never replaces a
+--                               newer one. Missing state means stopped.
+--   ad_pack_round_grants        an admin's reason-stamped grant of one more
+--                               creative round to an owner; used_at is set
+--                               when the extra round is taken (once).
+--
+-- Neither new table is in ACCESS_COLUMNS: service role only.
+
+alter table public.websites add column if not exists mode text not null default 'site';
+alter table public.websites drop constraint if exists websites_mode_check;
+alter table public.websites add constraint websites_mode_check check (mode in ('site', 'calculator'));
+
+alter table public.ad_packs add column if not exists route text not null default 'academy';
+alter table public.ad_packs drop constraint if exists ad_packs_route_check;
+alter table public.ad_packs add constraint ad_packs_route_check check (route in ('academy', 'leaddb'));
+
+create table if not exists public.leaddb_ad_accounts (
+  owner_id uuid primary key references public.profiles(id) on delete cascade,
+  ld_customer_id text unique not null,
+  link_id text,
+  allowed boolean not null default false,
+  allowed_by uuid,
+  allowed_at timestamptz,
+  card_on_file boolean not null default false,
+  account_status text,
+  cancel_effective_at timestamptz,
+  lapsed boolean not null default false,
+  state_as_of timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.leaddb_ad_accounts enable row level security;  -- no policies: service role only
+revoke all on public.leaddb_ad_accounts from anon, authenticated;
+
+create table if not exists public.ad_pack_round_grants (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  granted_by uuid,
+  reason text not null,
+  created_at timestamptz not null default now(),
+  used_at timestamptz
+);
+alter table public.ad_pack_round_grants drop constraint if exists ad_pack_round_grants_reason_check;
+alter table public.ad_pack_round_grants add constraint ad_pack_round_grants_reason_check check (length(btrim(reason)) > 0);
+create index if not exists ad_pack_round_grants_open_idx on public.ad_pack_round_grants (owner_id) where used_at is null;
+alter table public.ad_pack_round_grants enable row level security;  -- no policies: service role only
+revoke all on public.ad_pack_round_grants from anon, authenticated;
+
+-- ── billing_settings: the three lead database route settings ──
+insert into public.billing_settings (key, value) values
+  ('ad_calc_reports_per_day', '50'::jsonb),
+  ('ad_pack_ld_round_days', '30'::jsonb),
+  ('ad_pack_ld_monthly_cap_pence', '25000'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

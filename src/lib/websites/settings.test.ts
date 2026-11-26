@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DEFAULT_WEBSITE, WEBSITE_KEYS, parseWebsite } from './settings.ts';
+import { AD_CALC_REPORTS_PER_DAY_KEY, DEFAULT_AD_CALC_REPORTS_PER_DAY, DEFAULT_WEBSITE, WEBSITE_KEYS, parseAdCalcReportsPerDay, parseWebsite } from './settings.ts';
 
 const from = (rows: Record<string, unknown>) => parseWebsite((k) => rows[k]);
 
@@ -54,4 +54,23 @@ test('numbers are whole and in range; stored numbers and numeric strings both re
   }
   // A price of 0 would be refused by the charge function, so it is not readable as a price.
   for (const bad of [0, -300, 'free', 12.5, null]) assert.equal(from({ website_report_pence: bad }).reportPence, 300, String(bad));
+});
+
+test('Batch 55: ad_calc_reports_per_day defaults to 50, is pinned to the schema seed, and is not one of the five website settings', () => {
+  assert.equal(AD_CALC_REPORTS_PER_DAY_KEY, 'ad_calc_reports_per_day');
+  assert.equal(DEFAULT_AD_CALC_REPORTS_PER_DAY, 50);
+  assert.equal(parseAdCalcReportsPerDay(undefined), 50);
+  const m = sql.match(/\('ad_calc_reports_per_day',\s*'([^']*)'::jsonb\)/);
+  assert.ok(m, 'the schema seeds ad_calc_reports_per_day');
+  assert.equal(parseAdCalcReportsPerDay(JSON.parse(m![1])), DEFAULT_AD_CALC_REPORTS_PER_DAY);
+  assert.equal(JSON.parse(m![1]), 50);
+  assert.ok(!Object.values(WEBSITE_KEYS).includes(AD_CALC_REPORTS_PER_DAY_KEY as never), 'the admin panel saves WEBSITE_KEYS key by key');
+});
+
+test('Batch 55: the calculator report limit reads whole numbers (0 stops it); anything else is 50', () => {
+  assert.equal(parseAdCalcReportsPerDay(80), 80);
+  assert.equal(parseAdCalcReportsPerDay('25'), 25);
+  assert.equal(parseAdCalcReportsPerDay(0), 0);
+  assert.equal(parseAdCalcReportsPerDay('0'), 0);
+  for (const bad of ['lots', 2.5, -1, '', null, true, NaN, 1e9, {}, []]) assert.equal(parseAdCalcReportsPerDay(bad), 50, String(bad));
 });
