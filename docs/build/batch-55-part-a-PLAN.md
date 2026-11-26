@@ -84,11 +84,11 @@ Every phase's check: `npm test && npm run typecheck && npm run lint` (failures o
 - Notes: Campaign goal (Leads / landing page views) is recorded only as OBJECTIVE_PROPOSED, not shown: it clashes with the existing choose-traffic step (Traffic). Zac to decide. GuideWizard renders a new step.checklist as a numbered list.
 
 ## Phase A10: knowledge, CLAUDE.md, PR (depends on all)
-- [ ] `seed.ts` drafts `adpack_ld_calculator`, `adpack_ld_rounds`, `adpack_audience`; `placeholders.ts` `{ad_calc_reports_per_day}`, `{ad_pack_ld_round_days}`; `service-facts.ts` block.
-- [ ] `CLAUDE.md` "Batch 55 (Part A)" section.
-- [ ] Merge `origin/main`, re-check overlap, push, open a draft PR `[Zac] Batch 55 Part A, Phase 1: calculator, eligibility, handoff`. Stop before Phase 2.
+- [x] `seed.ts` drafts `adpack_ld_calculator`, `adpack_ld_rounds`, `adpack_audience`; `placeholders.ts` `{ad_calc_reports_per_day}`, `{ad_pack_ld_round_days}`; `service-facts.ts` block.
+- [x] `CLAUDE.md` "Batch 55 (Part A)" section.
+- [x] Merge `origin/main`, re-check overlap, push, open a draft PR `[Zac] Batch 55 Part A, Phase 1: calculator, eligibility, handoff`. Stop before Phase 2.
 - Check: `npm test`, `npm run build`.
-- Notes:
+- Notes: Final check on the combined branch: `npm test` 5249 pass / 0 fail, `npm run typecheck` clean, `npm run lint` 0 errors (79 warnings), `npm run build` exit 0. `origin/main` had no new commits, so no merge was needed. The answers avoid digits (the approval check blocks them), so the audience draft says "the widest age range Facebook offers"; the guide page shows the real range. Not done: the by-hand run with dev data (needs live Supabase).
 
 ## Migration
 One block in `supabase/schema.sql`, depending only on tables already live (websites, ad_packs, ad_pack_runs, profiles, billing_settings). Every statement is `add column if not exists` / `create table if not exists`, so re-running is safe. Undo: drop the two new tables and two columns; no Academy code reads them.
