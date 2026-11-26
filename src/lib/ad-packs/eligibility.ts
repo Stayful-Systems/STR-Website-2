@@ -177,5 +177,5 @@ const LEADDB_PLAIN: Record<(typeof LEADDB_ONLY_REASONS)[number], string> = {
   no_leaddb_account: 'Your lead database account is not linked to this account yet. Once it is, your ads will appear here.',
   account_stopped: 'Your lead database account is not active at the moment, so the ads are on hold. Once it is active again, they will appear here.',
   no_card: 'Your lead database account needs a payment card on file before you can make ads. Add one there, then come back.',
-  not_allowed: 'Your ads are not switched on for your account yet. We will tell you as soon as they are.',
+  not_allowed: 'Your ads are not open for your account yet. We will tell you as soon as they are.',
 };
