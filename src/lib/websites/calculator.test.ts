@@ -133,7 +133,8 @@ test('ensureCalculatorSite has exactly the signature the signed routes import an
   );
   assert.match(src, /export type EnsureCalculatorSiteResult = \{ ok: true; slug: string; created: boolean \} \| \{ ok: false; reason: 'has_website' \| 'failed' \}/);
   const body = code(src.slice(src.indexOf('export async function ensureCalculatorSite')));
-  const fn = body.slice(0, body.indexOf('// ── Setup flow writes'));
+  const fn = body.slice(0, body.indexOf('export type SaveResult'));
+  assert.ok(fn.length > 500 && fn.length < body.length, 'the slice is this one function');
   assert.match(fn, /try \{/);
   assert.match(fn, /catch \(e\)/);
   // The row is live at once, in calculator mode, with live_at stamped, and no invite, copy, approval or domain.
