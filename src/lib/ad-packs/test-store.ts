@@ -19,7 +19,9 @@ import type { AdVideo, AdVideoReady } from './render-store.ts';
 import { enqueueRender } from './render-core.ts';
 import { mergeVideoChecks, VIDEO_SIZES } from './checks.ts';
 import { MemoryRenderStore } from './render-test-store.ts';
-import { PackConflict, StoreError, type AdPackStore, type NewAd, type NewPack, type NewRun, type PackAdRow, type PackPatch, type PackRow, type PackStatus, type RunRow } from './store-types.ts';
+import { PackConflict, StoreError, type AdPackStore, type NewAd, type NewPack, type NewRun, type PackAdRow, type PackPatch, type PackRow, type PackStatus, type RoundGrantRow, type RunRow } from './store-types.ts';
+import type { AdRoute } from './eligibility.ts';
+import { sumRunSpend } from './round-limit.ts';
 
 const clone = <T>(v: T): T => structuredClone(v);
 
@@ -27,11 +29,13 @@ export class MemoryAdPackStore implements AdPackStore {
   readonly packs = new Map<string, PackRow>();
   readonly ads = new Map<string, PackAdRow>();
   readonly runs: (RunRow & { ownerId: string })[] = [];
+  /** Batch 55 (A8): ad_pack_round_grants (the reason is never kept here, as nothing reads it back). */
+  readonly grants: RoundGrantRow[] = [];
   settings: AdPackSettings = { ...DEFAULT_AD_PACK_SETTINGS };
   /** Every write, by name, so a dry run can be shown to have made none. */
   readonly writes: string[] = [];
   /** Make the next read of this kind throw (to test a failing database). */
-  failNext: Partial<Record<'getPack' | 'insertAds' | 'updatePack' | 'monthSpend', boolean>> = {};
+  failNext: Partial<Record<'getPack' | 'insertAds' | 'updatePack' | 'monthSpend' | 'grants', boolean>> = {};
   /** Make monthSpendPence return null (unreadable). */
   spendUnreadable = false;
   clock: () => Date = () => new Date();
@@ -74,6 +78,7 @@ export class MemoryAdPackStore implements AdPackStore {
       ownerId: r.ownerId,
       websiteId: r.websiteId,
       status: r.status,
+      route: r.route ?? 'academy',
       operatorCode: r.operatorCode,
       version: 1,
       voiceKey: null,
@@ -186,9 +191,42 @@ export class MemoryAdPackStore implements AdPackStore {
       .map(clone);
   }
 
-  async monthSpendPence(sinceIso: string) {
+  async monthSpendPence(sinceIso: string, route?: AdRoute) {
     if (this.spendUnreadable) return null;
-    return this.runs.filter((r) => !r.dry && r.createdAt >= sinceIso).reduce((n, r) => n + r.costPence, 0);
+    // A run's route is its pack's (the real store joins on ad_pack_runs.pack_id).
+    const spend = this.runs.map((r) => ({ route: this.packs.get(r.packId)?.route ?? 'academy', dry: r.dry, costPence: r.costPence, createdAt: r.createdAt }));
+    return sumRunSpend(spend, route, sinceIso);
+  }
+
+  async listOperatorRunsSince(ownerId: string, packId: string, sinceIso: string) {
+    return this.runs
+      .filter((r) => r.ownerId === ownerId && r.packId === packId && r.by === 'operator' && !r.dry && r.createdAt >= sinceIso)
+      .slice()
+      .reverse()
+      .map(clone);
+  }
+
+  async listUnusedRoundGrants(ownerId: string) {
+    if (this.failNext.grants) {
+      this.failNext.grants = false;
+      throw new StoreError('read');
+    }
+    return this.grants.filter((g) => g.ownerId === ownerId && g.usedAt === null).map(clone);
+  }
+
+  async useRoundGrant(ownerId: string, grantId: string, atIso: string) {
+    const g = this.grants.find((x) => x.id === grantId && x.ownerId === ownerId);
+    if (!g || g.usedAt !== null) return false;
+    this.writes.push('useRoundGrant');
+    g.usedAt = atIso;
+    return true;
+  }
+
+  /** A test's way to give an owner an admin grant of one more round (the admin screen does this through insertRoundGrant). */
+  addGrant(ownerId: string, createdAt = this.clock().toISOString()): RoundGrantRow {
+    const g: RoundGrantRow = { id: `grant-${++this.seq}`, ownerId, createdAt, usedAt: null };
+    this.grants.push(g);
+    return g;
   }
 
   async readSettings() {

@@ -16,7 +16,7 @@ const ELIGIBLE: EligibilityFacts = { eligible: true, reasons: [], website: { id:
 
 const JPG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 0]);
 
-type GenerateRequestLike = { ownerId: string; input: { voiceKey?: string } };
+type GenerateRequestLike = { ownerId: string; input: { voiceKey?: string; route?: string; sitePath?: string; domain?: string } };
 
 type Rec = { ownerId: string; kind: string; extras: Record<string, string | number>; dedupeKey?: string };
 
@@ -592,4 +592,64 @@ test('approve: while the video is being made or has failed the pack is not appro
   assert.match((await approveOp(a.deps, { packId: a.view.pack.id, version: '1' })).error ?? '', /not ready yet/);
   assert.equal(a.records.length, 0);
   assert.equal((await a.h.store.getPack(OWNER_A))!.status, 'preview');
+});
+
+// ── Batch 55 (Part A, A7): the lead database route ──
+
+// Built from parts: the app's own host is the domain on this route.
+const APP_HOST = 'stay' + 'ful.co.uk';
+const LEADDB: EligibilityFacts = { eligible: true, reasons: [], route: 'leaddb', website: { id: 'calc-site-1', settings: SETTINGS }, domain: APP_HOST, sitePath: 'brightstone-calc' };
+
+test('generate, lead database route: the calculator site and this app’s host make the links, the pack is made on that route', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  assert.deepEqual(await generateOp(s.deps, input), { ok: true });
+  assert.equal(s.calls.generated[0].input.route, 'leaddb');
+  assert.equal(s.calls.generated[0].input.sitePath, 'brightstone-calc');
+  assert.equal(s.calls.generated[0].input.domain, APP_HOST);
+  const pack = await s.h.store.getPack(OWNER_A);
+  assert.equal(pack?.route, 'leaddb');
+  assert.equal(pack?.websiteId, 'calc-site-1');
+  const ads = await s.h.store.listAds(OWNER_A, pack!.id);
+  assert.equal(ads.length, 3);
+  assert.ok(ads.every((a) => a.link.startsWith(`https://${APP_HOST}/s/brightstone-calc?ad=`)), 'the Stayful host and /s/<slug>');
+});
+
+test('generate, lead database route: the form cannot bring its own route, slug or host', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  assert.deepEqual(await generateOp(s.deps, { ...input, route: 'academy', sitePath: 'someone-else', domain: 'evil.co.uk' } as typeof input), { ok: true });
+  assert.equal(s.calls.generated[0].input.route, 'leaddb');
+  assert.equal(s.calls.generated[0].input.sitePath, 'brightstone-calc');
+  assert.equal(s.calls.generated[0].input.domain, APP_HOST);
+});
+
+test('generate, lead database route: no slug, or not eligible, is refused in plain words and nothing is made', async () => {
+  const s = setup();
+  s.eligible({ ...LEADDB, sitePath: undefined });
+  assert.deepEqual(await generateOp(s.deps, input), { error: MESSAGES.not_eligible });
+  for (const [reason, pattern] of [
+    ['no_leaddb_account', /not linked/],
+    ['account_stopped', /not active/],
+    ['no_card', /payment card/],
+    ['not_allowed', /not open/],
+    ['has_website', /own website/],
+  ] as const) {
+    s.eligible({ eligible: false, reasons: [reason], route: 'leaddb' });
+    const out = await generateOp(s.deps, input);
+    assert.match(out.error ?? '', pattern, reason);
+    assert.doesNotMatch(out.error ?? '', /_/, reason);
+  }
+  assert.equal(s.calls.generate, 0);
+  assert.equal(await s.h.store.getPack(OWNER_A), null);
+});
+
+test('generate, Academy route: no route or slug is sent, so the request is exactly what it was', async () => {
+  const s = setup();
+  assert.deepEqual(await generateOp(s.deps, input), { ok: true });
+  assert.ok(!('route' in s.calls.generated[0].input));
+  assert.ok(!('sitePath' in s.calls.generated[0].input));
+  const pack = await s.h.store.getPack(OWNER_A);
+  assert.equal(pack?.route, 'academy');
+  assert.ok((await s.h.store.listAds(OWNER_A, pack!.id)).every((a) => a.link.startsWith('https://brightstone.co.uk/?ad=')));
 });

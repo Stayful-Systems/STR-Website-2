@@ -67,3 +67,21 @@ export function parseWebsite(get: (key: string) => unknown): WebsiteSettings {
     freeReportsPerSitePerDay: wholeIn(get(k.freeReportsPerSitePerDay), 0, 1000, d.freeReportsPerSitePerDay),
   };
 }
+
+/**
+ * Batch 55 (Part A): the calculator sites' report limit, a bot guard (not billing). Seeded in
+ * supabase/schema.sql's Batch 55 block. It is NOT a field of WebsiteSettings on purpose: that
+ * object is the admin panel's five website settings (saved key by key), and this one has no
+ * panel of its own.
+ *
+ *   ad_calc_reports_per_day   reports one owner's calculator site may start per UK day (0 stops it)
+ */
+export const AD_CALC_REPORTS_PER_DAY_KEY = 'ad_calc_reports_per_day';
+export const DEFAULT_AD_CALC_REPORTS_PER_DAY = 50;
+export const AD_CALC_REPORTS_PER_DAY_MAX = 10_000;
+
+/** The per-day calculator report limit from a raw billing_settings value; anything unreadable is the default. */
+export function parseAdCalcReportsPerDay(raw: unknown): number {
+  if (typeof raw !== 'number' && typeof raw !== 'string') return DEFAULT_AD_CALC_REPORTS_PER_DAY; // not an array or object (Number([]) is 0)
+  return wholeIn(raw, 0, AD_CALC_REPORTS_PER_DAY_MAX, DEFAULT_AD_CALC_REPORTS_PER_DAY);
+}

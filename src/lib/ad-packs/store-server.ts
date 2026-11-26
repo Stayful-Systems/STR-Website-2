@@ -101,7 +101,7 @@ export function createLiveStore(): AdPackStore {
     async insertPack(r: NewPack) {
       const { data, error } = await admin()
         .from('ad_packs')
-        .insert({ owner_id: r.ownerId, website_id: r.websiteId, operator_code: r.operatorCode, status: r.status })
+        .insert({ owner_id: r.ownerId, website_id: r.websiteId, operator_code: r.operatorCode, status: r.status, route: r.route ?? 'academy' })
         .select(PACK_COLUMNS)
         .single();
       if (isUnique(error)) throw conflictOf(error);
@@ -197,17 +197,71 @@ export function createLiveStore(): AdPackStore {
       return ((data ?? []) as Record<string, unknown>[]).map(toRunRow);
     },
 
-    async monthSpendPence(sinceIso) {
-      const { data, error } = await admin().from('ad_pack_runs').select('cost_pence').eq('dry', false).gte('created_at', sinceIso);
+    async monthSpendPence(sinceIso, route) {
+      // Batch 55: with a route, only the runs of packs on it (the join is on ad_pack_runs.pack_id). Without one, every run, as before.
+      const runs = admin().from('ad_pack_runs');
+      const { data, error } = route
+        ? await runs.select('cost_pence, ad_packs!inner(route)').eq('ad_packs.route', route).eq('dry', false).gte('created_at', sinceIso)
+        : await runs.select('cost_pence').eq('dry', false).gte('created_at', sinceIso);
       if (error) {
         console.error('[ad-packs] month spend read failed:', error.code ?? 'error');
         return null;
       }
-      return ((data ?? []) as { cost_pence: number | string }[]).reduce((n, r) => n + (Number(r.cost_pence) || 0), 0);
+      return ((data ?? []) as unknown as { cost_pence: number | string }[]).reduce((n, r) => n + (Number(r.cost_pence) || 0), 0);
+    },
+
+    async listOperatorRunsSince(ownerId, packId, sinceIso) {
+      if (!UUID.test(ownerId) || !UUID.test(packId)) return [];
+      const { data: own, error: ownError } = await admin().from('ad_packs').select('id').eq('id', packId).eq('owner_id', ownerId).maybeSingle();
+      if (ownError) fail('ad_packs owner check', ownError);
+      if (!own) return [];
+      const { data, error } = await admin()
+        .from('ad_pack_runs')
+        .select(RUN_COLUMNS)
+        .eq('pack_id', packId)
+        .eq('by', 'operator')
+        .eq('dry', false)
+        .gte('created_at', sinceIso)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) fail('ad_pack_runs round read', error);
+      return ((data ?? []) as Record<string, unknown>[]).map(toRunRow);
+    },
+
+    async listUnusedRoundGrants(ownerId) {
+      if (!UUID.test(ownerId)) return [];
+      const { data, error } = await admin().from('ad_pack_round_grants').select('id, owner_id, created_at, used_at').eq('owner_id', ownerId).is('used_at', null).order('created_at', { ascending: true });
+      if (error) fail('ad_pack_round_grants read', error);
+      return ((data ?? []) as { id: string; owner_id: string; created_at: string; used_at: string | null }[]).map((r) => ({ id: String(r.id), ownerId: String(r.owner_id), createdAt: String(r.created_at), usedAt: r.used_at ?? null }));
+    },
+
+    async useRoundGrant(ownerId, grantId, atIso) {
+      if (!UUID.test(ownerId) || !UUID.test(grantId)) return false;
+      // used_at is null in the filter, so two runs landing together cannot both use the same grant.
+      const { data, error } = await admin().from('ad_pack_round_grants').update({ used_at: atIso }).eq('id', grantId).eq('owner_id', ownerId).is('used_at', null).select('id');
+      if (error) fail('ad_pack_round_grants use', error);
+      return (data ?? []).length > 0;
     },
 
     readSettings: readAdPackSettings,
   };
+}
+
+// ── Round grants (admin) ──
+
+/**
+ * Batch 55 (A8): one admin grant of an extra creative round to an owner who has a lead database ad account. The reason
+ * is stored for the record and never read back into the app or logged. 'no_account' when the owner has no ad account;
+ * throws (a database error code only) when the write fails. The caller has already checked the admin and the reason.
+ */
+export async function insertRoundGrant(ownerId: string, adminId: string, reason: string): Promise<'granted' | 'no_account'> {
+  if (!UUID.test(ownerId) || !UUID.test(adminId)) return 'no_account';
+  const { data: acct, error: acctError } = await admin().from('leaddb_ad_accounts').select('owner_id').eq('owner_id', ownerId).maybeSingle();
+  if (acctError) fail('leaddb_ad_accounts read', acctError);
+  if (!acct) return 'no_account';
+  const { error } = await admin().from('ad_pack_round_grants').insert({ owner_id: ownerId, granted_by: adminId, reason });
+  if (error) fail('ad_pack_round_grants insert', error);
+  return 'granted';
 }
 
 // ── Storage ──

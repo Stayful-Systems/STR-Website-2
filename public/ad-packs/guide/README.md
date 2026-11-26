@@ -17,7 +17,7 @@ Step ids, one file each:
 - `create-campaign.png`
 - `choose-traffic.png`
 - `set-budget.png`
-- `set-audience.png`
+- `set-audience.png` (the audience step, see below)
 - `choose-page.png`
 - `upload-file.png`
 - `paste-primary.png`
@@ -26,3 +26,15 @@ Step ids, one file each:
 - `paste-ad-name.png`
 - `paste-link.png`
 - `publish.png`
+
+## The audience step picture
+
+The audience step lists seven settings (`src/lib/ad-packs/targeting-recipe.ts`, last checked 2026-11-23). It keeps
+one file, named after its step id, so the folder and the guide stay in step. Take it as three crops of Meta's
+audience section and join them top to bottom into one tall picture, still 1200 px wide at most:
+
+1. Location, age and gender, and Advantage+ audience.
+2. Interests (Real property, Landlord, Airbnb) and Placements.
+3. Campaign budget (switched on, no amount typed) and the empty exclusion and lookalike boxes.
+
+Use a sample ad account, so no personal data shows.

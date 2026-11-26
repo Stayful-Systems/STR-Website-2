@@ -19,7 +19,8 @@
  *   claims       no banned claim (websites/checks.ts), no income range, no
  *                "you will earn", no guarantee
  *   links        ?ad=<its code>, utm_content={{ad.id}} literally, the
- *                operator's domain, a code that belongs to the operator
+ *                operator's domain (or, on the lead database route, this
+ *                app's own host and /s/<slug>), a code that belongs to the operator
  *   files        image sizes are exactly 1080x1080, 1080x1350 or 1080x1920
  *   video        (38b, only when `videos` is given: the 5b ad's three MP4s as the sandbox
  *                measured them) exact sizes by name, a length over 0 and up to 60 s, an
@@ -137,8 +138,13 @@ export type CheckInput = {
   figures: CheckFigure[];
   /** The 6-character operator code the pack codes must carry. */
   operatorCode: string;
-  /** The operator's bare domain, e.g. acme.co.uk. */
+  /** The operator's bare domain, e.g. acme.co.uk. On the lead database route this is this app's own host. */
   domain: string;
+  /**
+   * The lead database route (Batch 55): the slug of the calculator site the links go to, so every link must be the
+   * `https://<domain>/s/<slug>?ad=...` shape. Absent (the Academy route): every link must be the bare-host shape.
+   */
+  sitePath?: string;
   /**
    * The 5b ad's rendered MP4s (38b). Omitted at generation time (the video does not exist yet): the video check
    * then has nothing to say. Given (also as an empty list) it is checked: all three sizes must be there.
@@ -313,8 +319,12 @@ export function runChecks(input: CheckInput): ChecksOutput {
     { where: 'company name', text: company },
     { where: 'area', text: String(brand.areaLabel ?? '') },
   ];
+  // The lead database route links to this app's own address, so its host (and only its host) is not "the source brand" there.
+  const ownPrefix = input.sitePath === undefined ? null : `https://${String(input.domain ?? '').trim().toLowerCase()}/`;
   for (const ad of ads) {
-    brandStrings.push({ where: `${ad.angle} link`, text: String(ad.link ?? '') }, { where: `${ad.angle} ad name`, text: String(ad.adName ?? '') });
+    const link = String(ad.link ?? '');
+    const linkText = ownPrefix !== null && link.toLowerCase().startsWith(ownPrefix) ? link.slice(ownPrefix.length) : link;
+    brandStrings.push({ where: `${ad.angle} link`, text: linkText }, { where: `${ad.angle} ad name`, text: String(ad.adName ?? '') });
   }
   for (const s of brandStrings) {
     const m = SOURCE_WORD_RE.exec(s.text);
@@ -446,7 +456,7 @@ export function runChecks(input: CheckInput): ChecksOutput {
     if (!link.includes(`utm_content=${AD_ID_PLACEHOLDER}`)) fail('links', 'link_placeholder', where, `The link must contain utm_content=${AD_ID_PLACEHOLDER} exactly, so Meta can fill in the ad id.`);
     if (parsed && HOST_RE.test(domain) && /^[0-9A-F]{6}$/.test(operator) && parsed.operatorCode === operator) {
       try {
-        if (link !== adLink({ domain, code: ad.code, operatorCode: operator })) fail('links', 'link_shape', where, 'The link is not in the standard tracked form.');
+        if (link !== adLink(input.sitePath === undefined ? { domain, code: ad.code, operatorCode: operator } : { domain, sitePath: input.sitePath, code: ad.code, operatorCode: operator })) fail('links', 'link_shape', where, 'The link is not in the standard tracked form.');
       } catch {
         fail('links', 'link_shape', where, 'The link is not in the standard tracked form.');
       }

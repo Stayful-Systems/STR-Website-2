@@ -16,3 +16,12 @@ export function pickUnqueued(websiteIds: readonly string[], sheetIds: readonly s
   }
   return out;
 }
+
+/**
+ * Batch 55 (Part A): the website lead ids the sweep may queue, leaving out every lead of a CALCULATOR site
+ * (`calculatorLeadIds`: leads whose report belongs to a site with mode 'calculator'). A calculator lead is never an
+ * `si_website` push (Phase 2 sends it as `si_ad`). Order is kept.
+ */
+export function withoutCalculatorLeads(leadIds: readonly string[], calculatorLeadIds: ReadonlySet<string>): string[] {
+  return leadIds.filter((id) => !calculatorLeadIds.has(id));
+}

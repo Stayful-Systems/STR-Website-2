@@ -592,6 +592,15 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const n = whole(g, 'ad_sheet_dedupe_days', 1);
     return n === null ? null : String(n);
   }),
+  // Batch 55 (Part A): lead database customers' branded calculator and creative rounds (each read strictly from its billing_settings row, seeded in schema.sql's Batch 55 block)
+  ad_calc_reports_per_day: g_('Income reports one calculator may start in a UK day for a lead database customer', 'billing_settings.ad_calc_reports_per_day', (g) => {
+    const n = whole(g, 'ad_calc_reports_per_day', 1);
+    return n === null ? null : String(n);
+  }),
+  ad_pack_ld_round_days: g_('Days between one set of ads and the next for a lead database customer (one round per this many days)', 'billing_settings.ad_pack_ld_round_days', (g) => {
+    const n = whole(g, 'ad_pack_ld_round_days', 1);
+    return n === null ? null : String(n);
+  }),
   // Deal feed (queue Batch 1): the stale-deal credit window (billing_settings.deal_stale_credit_days, seeded in schema.sql's Deal feed block)
   deal_stale_credit_days: g_('Days after opening within which a deal that goes off the market is credited back', 'billing_settings.deal_stale_credit_days', (g) => {
     const n = whole(g, 'deal_stale_credit_days', 1);

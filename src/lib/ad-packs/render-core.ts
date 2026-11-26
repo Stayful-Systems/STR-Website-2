@@ -695,8 +695,10 @@ async function renderPack(deps: RenderDeps, row: RenderRow, pack: PackRow, setti
   const effectiveMax = Math.min(settings.maxSeconds, ROUTE_MAX_SECONDS - ROUTE_RESERVE_SECONDS);
   const cpuSecondPence = await deps.sandboxCpuSecondPence();
   const capCheck = async (voiceWorstPence: number) => {
-    const cap = (await deps.packs.readSettings()).monthlyCapPence;
-    const spent = await deps.packs.monthSpendPence(monthStartIso(deps.now()));
+    // Batch 55: each route sums only its own runs; the lead database route answers to its own backstop (a render that would pass it stops with monthly_cap, as it always has).
+    const cfg = await deps.packs.readSettings();
+    const cap = pack.route === 'leaddb' ? cfg.ldMonthlyCapPence : cfg.monthlyCapPence;
+    const spent = await deps.packs.monthSpendPence(monthStartIso(deps.now()), pack.route);
     if (spent === null) throw new RenderFail('spend_unknown');
     const worst = wholePence(attemptPence({ vcpus: settings.vcpus, seconds: effectiveMax, cpuSecondPence, voicePence: voiceWorstPence }));
     if (!fitsCap(spent, worst, cap)) throw new RenderFail('monthly_cap');

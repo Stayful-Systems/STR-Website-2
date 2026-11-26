@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { recordActivity } from '@/lib/activity/log';
 import { LOGO_MAX_BYTES, parseHexColour } from '@/lib/funnels/brand';
 import { deleteLogoIfOurs, uploadLogo } from '@/lib/funnels/storage';
+import { CALCULATOR_FLOW_REFUSAL } from '@/lib/websites/calculator-setup';
+import { isCalculatorMode } from '@/lib/websites/calculator';
 import { goLive, goLiveMessages, type PageFetch } from '@/lib/websites/golive-server';
 import { WEBSITE_REGEN_CAP, generateSiteCopy } from '@/lib/websites/copy-server';
 import { sitePagesOf } from '@/lib/websites/render';
@@ -47,6 +49,7 @@ const DENIAL: Record<ActorDenial, string> = {
   not_management: 'Your website has not been set up for your account yet.',
   plan_required: 'Your plan does not include a website yet.',
   unavailable: 'We could not do that just now. Please try again.',
+  calculator_site: CALCULATOR_FLOW_REFUSAL,
 };
 
 type Editor = { ok: true; actor: WebsiteActor } | { ok: false; error: string };
@@ -55,6 +58,8 @@ type Editor = { ok: true; actor: WebsiteActor } | { ok: false; error: string };
 async function editor(): Promise<Editor> {
   const r = await websiteActor();
   if (!r.ok) return { ok: false, error: DENIAL[r.reason] };
+  // Batch 55: a calculator site has no website steps. websiteActor already refuses it; this keeps the rule in sight of every write.
+  if (isCalculatorMode(r.actor.site.mode)) return { ok: false, error: CALCULATOR_FLOW_REFUSAL };
   if (!r.actor.editable) return { ok: false, error: 'Your website is live. It cannot be changed from the setup.' };
   return { ok: true, actor: r.actor };
 }
@@ -225,6 +230,7 @@ const realFetch: PageFetch = (url, init) => fetch(url, init);
 export async function approveAction(): Promise<WebsiteState> {
   const r = await websiteActor();
   if (!r.ok) return { error: DENIAL[r.reason] };
+  if (isCalculatorMode(r.actor.site.mode)) return { error: CALCULATOR_FLOW_REFUSAL };
   const { actor } = r;
   const { site } = actor;
   if (site.status === 'live') return { saved: true, live: true };

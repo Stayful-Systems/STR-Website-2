@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ELIGIBILITY_REASONS } from '../../../lib/ad-packs/eligibility.ts';
+import { ELIGIBILITY_REASONS, LEADDB_ONLY_REASONS } from '../../../lib/ad-packs/eligibility.ts';
 import { CHECK_IDS } from '../../../lib/ad-packs/checks.ts';
 import { PACK_STATUSES } from '../../../lib/ad-packs/store-types.ts';
 import { GENERATE_CODES } from '../../../lib/ad-packs/generate-core.ts';
@@ -73,7 +73,7 @@ test('the scanner itself catches an internal word in text and in a string', () =
 
 test('every sentence the view models can produce is plain', () => {
   const said: string[] = [];
-  for (const r of ELIGIBILITY_REASONS) {
+  for (const r of [...ELIGIBILITY_REASONS, ...LEADDB_ONLY_REASONS]) {
     const v = eligibilityView([r]);
     said.push(v.title, v.message, v.next?.text ?? '', v.next?.label ?? '');
   }

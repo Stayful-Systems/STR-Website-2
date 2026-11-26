@@ -10,6 +10,10 @@ import { isSelfSubmit } from '@/lib/websites/policy';
 import { parseSources } from '@/lib/websites/sources';
 import { issueStepToken } from '@/lib/websites/step-token';
 import { liveSiteBySlug, type WebsiteRow } from '@/lib/websites/store-server';
+import { calculatorStopped } from '@/lib/websites/calculator-server';
+import { isCalculatorMode } from '@/lib/websites/calculator';
+import { CALCULATOR_DAY_FULL_MESSAGE, calculatorDayDecision, ukDayWindow } from '@/lib/websites/calculator-limit';
+import { readAdCalcReportsPerDay } from '@/lib/websites/calc-settings-server';
 import { notifyOperatorOfWebsiteLead } from '@/lib/websites/notify-server';
 import { enqueueLeadDbPush } from '@/lib/leaddb/deliver';
 import { linkLeadToPackAd } from '@/lib/ad-packs/attribution-server';
@@ -22,7 +26,8 @@ import { siteDomain } from '@/lib/websites/urls';
  * Public: no session, no account. The landlord gives a name, email, phone and
  * the consent tick; there is NO address yet. What this does, in this order:
  *
- *   1. the site must be LIVE (liveSiteBySlug), else 404
+ *   1. the site must be LIVE (liveSiteBySlug), else 404. A calculator site (Batch 55)
+ *      whose owner's lead database ad route is stopped reads as missing too
  *   2. Turnstile says a person submitted this, BEFORE the caps are counted
  *   3. countAttempt against the website's own funnel row (kind='website'):
  *      the per-IP window and the site's daily share. Step 1 ONLY: step 2 never
@@ -35,6 +40,12 @@ import { siteDomain } from '@/lib/websites/urls';
  *      (awaiting_address, self-submit flag) are inserted once, on conflict do
  *      nothing: a resubmit changes nothing and reveals nothing
  *   7. the operator's "new landlord lead" email (once per lead)
+ *
+ * Batch 55 (Part A): a CALCULATOR site takes at most `ad_calc_reports_per_day` new leads a
+ * day per owner (UK day). Past that, a neutral "try again tomorrow" and NO lead row. The
+ * check sits just before the lead is created, so the same enquiry inside the hour (the
+ * same lead) is never refused. Read-then-insert, so a burst can overshoot by one or two:
+ * accepted, it is a bot guard.
  *
  * A lead saved here stays a New lead whether or not step 2 ever happens: no
  * later step is needed for it to exist, and nothing here depends on one.
@@ -91,6 +102,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   // ── 1. A live site only. Preview, paused and unknown all read as missing. ──
   const site = await liveSiteBySlug(slug);
   if (!site) return new Response('Not found', { status: 404 });
+  // Batch 55: a calculator site with a stopped owner takes nothing new, and says nothing about why.
+  if (await calculatorStopped(site)) return new Response('Not found', { status: 404 });
 
   const forwarded = request.headers.get('x-forwarded-for');
   const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
@@ -149,6 +162,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   if (prior) leadId = (prior as { id: string }).id;
 
   if (!leadId) {
+    // Batch 55: a calculator site's daily limit, counted over the owner's leads of this site's funnel today (UK day).
+    if (isCalculatorMode(site.mode)) {
+      const window = ukDayWindow(new Date());
+      const { count, error: countError } = await admin
+        .from('leads')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', site.userId)
+        .eq('funnel_id', site.funnelId)
+        .gte('created_at', window.startIso)
+        .lt('created_at', window.endIso);
+      if (countError) {
+        console.error(`[website-lead] daily count failed for website ${site.id}:`, countError.code ?? 'error');
+        return reply({ ok: false, error: SAVE_FAILED }, 503);
+      }
+      const day = calculatorDayDecision({ limit: await readAdCalcReportsPerDay(), usedToday: count ?? 0 });
+      if (!day.allowed) return reply({ ok: false, error: CALCULATOR_DAY_FULL_MESSAGE }, 429);
+    }
     const captured = await captureLead({
       userId: site.userId,
       funnelId: site.funnelId,

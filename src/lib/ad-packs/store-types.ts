@@ -22,6 +22,7 @@ import type { LeadFormQuestion } from './angles.ts';
 import type { ChecksOutput } from './checks.ts';
 import type { AdPackSettings } from './settings.ts';
 import type { AdVideo } from './render-store.ts';
+import type { AdRoute } from './eligibility.ts';
 
 export const PACK_STATUSES = ['draft', 'generating', 'checks_failed', 'preview', 'approved', 'failed'] as const;
 export type PackStatus = (typeof PACK_STATUSES)[number];
@@ -31,6 +32,8 @@ export type PackRow = {
   ownerId: string;
   websiteId: string | null;
   status: PackStatus;
+  /** Batch 55: ad_packs.route. 'academy' (Batch 38, the default) or 'leaddb' (the calculator site). Never changes after the pack is made. */
+  route: AdRoute;
   operatorCode: string;
   /** The version the codes carry. Moves up only when a new version is stored. */
   version: number;
@@ -57,10 +60,10 @@ export type PackRow = {
   updatedAt: string;
 };
 
-/** What updatePack may change (never the id, owner, operator code or timestamps the store keeps). */
-export type PackPatch = Partial<Omit<PackRow, 'id' | 'ownerId' | 'operatorCode' | 'createdAt' | 'updatedAt'>>;
+/** What updatePack may change (never the id, owner, operator code, route or timestamps the store keeps). */
+export type PackPatch = Partial<Omit<PackRow, 'id' | 'ownerId' | 'operatorCode' | 'route' | 'createdAt' | 'updatedAt'>>;
 
-export type NewPack = { ownerId: string; websiteId: string | null; operatorCode: string; status: PackStatus };
+export type NewPack = { ownerId: string; websiteId: string | null; operatorCode: string; status: PackStatus; /** Absent is 'academy'. */ route?: AdRoute };
 
 export type AdFileRef = { name: string; path: string; width: number; height: number; contentType: string; bytes: number };
 /** `video` is the 5b ad's video slot (queued, making, ready, failed, or coming for a pack from before 38b); null for the image ads. */
@@ -131,6 +134,9 @@ export type NewRun = { packId: string; version: number; by: RunBy; costPence: nu
 
 export type RunRow = { id: string; packId: string; version: number; by: RunBy; dry: boolean; costPence: number; result: RunResult | null; createdAt: string };
 
+/** Batch 55 (A8): an admin's grant of one more creative round to an owner (ad_pack_round_grants). The reason text is never read back into the app. */
+export type RoundGrantRow = { id: string; ownerId: string; createdAt: string; usedAt: string | null };
+
 /** A unique column was hit. `which` says which one. */
 export class PackConflict extends Error {
   readonly which: 'owner' | 'operator_code' | 'code';
@@ -186,7 +192,20 @@ export interface AdPackStore {
   insertRun(ownerId: string, run: NewRun): Promise<RunRow | null>;
   /** The pack's runs, newest first. */
   listRuns(ownerId: string, packId: string, limit?: number): Promise<RunRow[]>;
-  /** Raw cost of every non-dry run since the instant, all owners together; null when it cannot be read. */
-  monthSpendPence(sinceIso: string): Promise<number | null>;
+  /**
+   * Raw cost of every non-dry run since the instant, all owners together; null when it cannot be read.
+   * Batch 55: with a route, only the runs of packs on that route (the Academy cap passes 'academy', so lead database
+   * runs never use it up; the lead database backstop passes 'leaddb'). Without one, every route.
+   */
+  monthSpendPence(sinceIso: string, route?: AdRoute): Promise<number | null>;
+  /**
+   * Batch 55 (A8): the pack's non-dry runs made BY THE OPERATOR since the instant, newest first (the round cap reads
+   * these; admin and render runs are left out in the database). Refused ([]) when the pack is not the owner's.
+   */
+  listOperatorRunsSince(ownerId: string, packId: string, sinceIso: string): Promise<RunRow[]>;
+  /** Batch 55 (A8): the owner's round grants that have not been used, oldest first. Throws StoreError when the read fails. */
+  listUnusedRoundGrants(ownerId: string): Promise<RoundGrantRow[]>;
+  /** Batch 55 (A8): mark one of the owner's grants used, only while it is unused. False when it was already used (or is not theirs). */
+  useRoundGrant(ownerId: string, grantId: string, atIso: string): Promise<boolean>;
   readSettings(): Promise<AdPackSettings>;
 }

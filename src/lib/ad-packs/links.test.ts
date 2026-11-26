@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ANGLES, packCode } from './codes.ts';
-import { adLink, adName, cleanMetaAdId, isAdIdPlaceholder } from './links.ts';
+import { adLink, adName, appHost, cleanMetaAdId, isAdIdPlaceholder } from './links.ts';
 
 test('every link carries ?ad=<CODE> and a literal {{ad.id}}', () => {
   for (const a of ANGLES) {
@@ -54,4 +54,50 @@ test('cleanMetaAdId keeps digits only, 30 at most', () => {
   assert.equal(cleanMetaAdId(''), null);
   assert.equal(cleanMetaAdId(null), null);
   for (const bad of ['12a3', 'ad_123', '12 3', '-123', '1.5', '１２３']) assert.equal(cleanMetaAdId(bad), null, bad);
+});
+
+// ── Batch 55 (Part A, A7): the lead database route links to a site on this app's own address ──
+
+test('{ sitePath } gives https://<host>/s/<slug>?ad=... with the same tail, the placeholder literal', () => {
+  const link = adLink({ sitePath: 'brightstone-homes', domain: 'example.co.uk', code: 'SI-3F9A2C-5B-1', operatorCode: '3F9A2C' });
+  assert.equal(
+    link,
+    'https://example.co.uk/s/brightstone-homes?ad=SI-3F9A2C-5B-1&utm_source=facebook&utm_medium=paid_social&utm_campaign=SI-3F9A2C&utm_content={{ad.id}}',
+  );
+  assert.ok(link.endsWith('&utm_content={{ad.id}}'));
+  assert.ok(!link.includes('%7B'));
+});
+
+test('{ sitePath } with no host uses this app’s own host, and appHost reads NEXT_PUBLIC_SITE_URL', () => {
+  const saved = process.env.NEXT_PUBLIC_SITE_URL;
+  try {
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://app.example.com/';
+    assert.equal(appHost(), 'app.example.com');
+    assert.equal(
+      adLink({ sitePath: 'my-calculator', code: 'si-3f9a2c-3a-2', operatorCode: '3f9a2c' }),
+      'https://app.example.com/s/my-calculator?ad=SI-3F9A2C-3A-2&utm_source=facebook&utm_medium=paid_social&utm_campaign=SI-3F9A2C&utm_content={{ad.id}}',
+    );
+    delete process.env.NEXT_PUBLIC_SITE_URL;
+    assert.match(adLink({ sitePath: 'my-calculator', code: 'SI-3F9A2C-5B-1', operatorCode: '3F9A2C' }), /^https:\/\/[a-z0-9.-]+\/s\/my-calculator\?ad=SI-3F9A2C-5B-1&/);
+  } finally {
+    if (saved === undefined) delete process.env.NEXT_PUBLIC_SITE_URL;
+    else process.env.NEXT_PUBLIC_SITE_URL = saved;
+  }
+});
+
+test('{ sitePath } refuses a bad slug, a bad code or a code that is not the operator’s', () => {
+  const ok = { code: 'SI-3F9A2C-5B-1', operatorCode: '3F9A2C', domain: 'example.co.uk' };
+  for (const bad of ['', 'ab', 'Has-Capitals', '-lead', 'trail-', 'a/b', '../x', 'a b', 'x'.repeat(41), 'a?b=c']) {
+    assert.throws(() => adLink({ ...ok, sitePath: bad }), bad);
+  }
+  assert.throws(() => adLink({ ...ok, sitePath: 'my-calculator', code: 'nope' }));
+  assert.throws(() => adLink({ ...ok, sitePath: 'my-calculator', operatorCode: 'AAAAAA' }));
+  assert.throws(() => adLink({ ...ok, sitePath: 'my-calculator', domain: 'not a host' }));
+});
+
+test('the bare-host shape is byte for byte unchanged beside the new one', () => {
+  assert.equal(
+    adLink({ domain: 'acme-lettings.co.uk', code: 'SI-3F9A2C-5B-1', operatorCode: '3F9A2C' }),
+    'https://acme-lettings.co.uk/?ad=SI-3F9A2C-5B-1&utm_source=facebook&utm_medium=paid_social&utm_campaign=SI-3F9A2C&utm_content={{ad.id}}',
+  );
 });

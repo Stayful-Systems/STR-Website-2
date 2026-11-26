@@ -5,7 +5,8 @@ import { getFunnel } from '../funnels';
 import { renderReportPdf, pdfBrandForFunnel } from '../pdf/render';
 import { leadDbConfig, leadDbPushLead } from './client';
 import { leadDbBadge } from './messages';
-import { pickUnqueued } from './sweep';
+import { pickUnqueued, withoutCalculatorLeads } from './sweep';
+import { isCalculatorMode } from '../websites/calculator';
 import type { DeliveryRow, FinishPatch, LeadContext, LeadDbDeps, LeadDbStore, LinkState } from './deliver';
 import { realLinkClient, type LinkDeps, type LinkRecord, type LinkStore } from './links';
 import type { AnalysisResult } from '../types';
@@ -54,8 +55,14 @@ export function supabaseStore(): LeadDbStore {
         id: string; user_id: string; status: string | null; archived_at: string | null; name: string | null; email: string | null;
         phone: string | null; address: string | null; postcode: string | null; bedrooms: number | null; result: AnalysisResult | null;
       };
-      const { data: rep } = await admin.from('website_reports').select('state, quality_ok').eq('lead_id', leadId).maybeSingle();
-      const report = rep as { state: string; quality_ok: boolean | null } | null;
+      const { data: rep } = await admin.from('website_reports').select('state, quality_ok, website_id').eq('lead_id', leadId).maybeSingle();
+      const report = rep as { state: string; quality_ok: boolean | null; website_id: string } | null;
+      // Batch 55: is the report's site a calculator site? Then this lead is never an si_website push.
+      let calculator = false;
+      if (report) {
+        const { data: siteRow } = await admin.from('websites').select('mode').eq('id', report.website_id).maybeSingle();
+        calculator = isCalculatorMode((siteRow as { mode?: unknown } | null)?.mode);
+      }
       // Batch 35: a lead read from a Facebook lead-form sheet has no report; it goes lead-only.
       let sheetLead = false;
       if (!report) {
@@ -76,6 +83,7 @@ export function supabaseStore(): LeadDbStore {
         result: lead.result,
         report: report ? { state: report.state, qualityOk: report.quality_ok } : null,
         ...(sheetLead ? { sheetLead: true } : {}),
+        ...(calculator ? { calculator: true } : {}),
       };
     },
 
@@ -157,7 +165,19 @@ export function supabaseStore(): LeadDbStore {
           .gte('created_at', since)
           .order('created_at', { ascending: true })
           .limit(limit);
-        const websiteIds = ((leads ?? []) as { id: string }[]).map((r) => r.id);
+        // Batch 55: leads of a calculator site are never queued as si_website leads (Phase 2 sends them as si_ad).
+        // Two small reads (the report's site, then that site's mode), so the join above is exactly as before.
+        const candidateIds = ((leads ?? []) as { id: string }[]).map((r) => r.id);
+        const calculatorLeadIds = new Set<string>();
+        if (candidateIds.length > 0) {
+          const { data: reps } = await admin.from('website_reports').select('lead_id, website_id').in('lead_id', candidateIds);
+          const repRows = (reps ?? []) as { lead_id: string; website_id: string }[];
+          const siteIds = [...new Set(repRows.map((r) => r.website_id))];
+          const { data: calcSites } = siteIds.length ? await admin.from('websites').select('id').in('id', siteIds).eq('mode', 'calculator') : { data: [] };
+          const calcSiteIds = new Set(((calcSites ?? []) as { id: string }[]).map((r) => r.id));
+          for (const r of repRows) if (calcSiteIds.has(r.website_id)) calculatorLeadIds.add(r.lead_id);
+        }
+        const websiteIds = withoutCalculatorLeads(candidateIds, calculatorLeadIds);
         // Batch 35: a lead read from a lead-form sheet has no report, so the join above never sees it. An ad_sheet_rows
         // row (imported or merged) names it; it goes lead-only, as `context` marks it `sheetLead`.
         const { data: sheetRows } = await admin

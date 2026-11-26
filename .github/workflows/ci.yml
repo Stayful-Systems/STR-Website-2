@@ -108,3 +108,5 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/adsheets-smoke.sql
       - name: Website transfer table, one-open-per-site and ref checks (Batch 37)
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/website-transfers-smoke.sql
+      - name: Lead database ad route tables, columns and seed checks (Batch 55 Part A)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/batch55-smoke.sql

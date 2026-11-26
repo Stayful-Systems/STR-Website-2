@@ -17,6 +17,7 @@ import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { INSUFFICIENT_CREDIT_CODE } from '@/lib/credit/http';
 import { ownedFunnelByToken } from '@/lib/funnels';
 import { liveSiteBySlug } from '@/lib/websites/store-server';
+import { calculatorStopped } from '@/lib/websites/calculator-server';
 import { countAutocomplete, reserveSpend, settleSpend } from '@/lib/funnels/caps';
 import { actionSpend } from '@/lib/credit/action';
 import { estimateAction } from '@/lib/credit/estimate';
@@ -170,6 +171,8 @@ export async function GET(request: Request) {
     // preview slug gets no suggestions, as a dead funnel token does.
     const site = await liveSiteBySlug(siteSlug);
     if (!site) return Response.json({ suggestions: [] });
+    // Batch 55: a calculator site with a stopped owner gets no suggestions, as an unknown slug gets none.
+    if (await calculatorStopped(site)) return Response.json({ suggestions: [] });
     if (!(await countAutocomplete(site.funnelId, ip))) return Response.json({ suggestions: [] });
     funnelId = site.funnelId;
   } else {

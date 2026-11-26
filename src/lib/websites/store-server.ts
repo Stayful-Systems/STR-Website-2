@@ -7,7 +7,8 @@ import { mintFunnelToken } from '../funnels';
 import { isManagement } from '../management/stamp';
 import { ownerIdOrNull } from '../leads/scope';
 import { MAX_AREAS, type SiteCopy, type SiteSettings } from './page-model';
-import { slugProblem, makeSlug, type SlugProblem } from './slug';
+import { slugProblem, makeSlug, freeSlug, type SlugProblem } from './slug';
+import { CALCULATOR_MODE, parseWebsiteMode, type WebsiteMode } from './calculator';
 import { websiteAccess, type AccessDenial } from './policy';
 import { parseWebsite, WEBSITE_KEYS, type WebsiteSettings } from './settings';
 import { WEBSITE_STATUSES, type WebsiteStatus } from './types';
@@ -23,6 +24,11 @@ import { WEBSITE_STATUSES, type WebsiteStatus } from './types';
  *                         websites row, status 'invited'. One site per member.
  *   saveSettings / savePages / saveChecks / bumpRegen / setStatus
  *                         the setup flow's writes, each scoped by the owner's id
+ *
+ * ensureCalculatorSite  Batch 55 (Part A): the calculator-only site for a lead
+ *                         database customer: a funnel row and a LIVE websites row
+ *                         with mode='calculator' (no invite, no copy, no approval,
+ *                         no domain). Idempotent; never throws.
  *
  * Website funnels are never active. A website's funnel row exists only so its
  * leads, the lead cap and the activity log have a funnel to hang on; live or
@@ -72,9 +78,11 @@ export interface WebsiteRow {
   pausedAt: string | null;
   /** Batch 33's seam: ignored today. */
   domain: string | null;
+  /** Batch 55: 'site' (the Batch 31 website) or 'calculator' (the calculator-only site). */
+  mode: WebsiteMode;
 }
 
-const COLUMNS = 'id, user_id, funnel_id, slug, status, settings, pages, regen_count, checks, invited_at, approved_at, live_at, paused_at, domain';
+const COLUMNS = 'id, user_id, funnel_id, slug, status, settings, pages, regen_count, checks, invited_at, approved_at, live_at, paused_at, domain, mode';
 
 export const EMPTY_SETTINGS: SiteSettings = {
   companyName: '',
@@ -139,6 +147,7 @@ function toRow(r: Record<string, unknown>): WebsiteRow {
     liveAt: iso(r.live_at),
     pausedAt: iso(r.paused_at),
     domain: iso(r.domain),
+    mode: parseWebsiteMode(r.mode),
   };
 }
 
@@ -181,6 +190,29 @@ export async function siteById(id: string): Promise<WebsiteRow | null> {
     return null;
   }
   return data ? toRow(data as Record<string, unknown>) : null;
+}
+
+// ── The funnel row every website hangs on ──
+
+type Admin = ReturnType<typeof createAdminClient>;
+
+/** The website's funnel row: kind='website', active=false for ever (set here, never changed). Its id, or null (logged by code). */
+async function insertWebsiteFunnel(admin: Admin, ownerId: string, slug: string): Promise<string | null> {
+  const { data: funnel, error: funnelError } = await admin
+    .from('funnels')
+    .insert({ user_id: ownerId, public_token: mintFunnelToken(), name: `Website: ${slug}`.slice(0, 80), kind: 'website', active: false })
+    .select('id')
+    .single();
+  if (funnelError || !funnel) {
+    console.error('[websites] funnel row failed:', funnelError?.code ?? 'error');
+    return null;
+  }
+  return (funnel as { id: string }).id;
+}
+
+/** Takes a website funnel row back out when the website row after it failed (nothing hangs on it yet). */
+async function dropWebsiteFunnel(admin: Admin, funnelId: string): Promise<void> {
+  await admin.from('funnels').delete().eq('id', funnelId).eq('kind', 'website');
 }
 
 // ── Invite ──
@@ -226,16 +258,8 @@ export async function inviteWebsite(o: { memberId: string; invitedBy: string | n
   if (taken) return { ok: false, reason: 'slug_taken' };
 
   // The funnel row. active=false is set here and nowhere else touches it again.
-  const { data: funnel, error: funnelError } = await admin
-    .from('funnels')
-    .insert({ user_id: ownerId, public_token: mintFunnelToken(), name: `Website: ${slug}`.slice(0, 80), kind: 'website', active: false })
-    .select('id')
-    .single();
-  if (funnelError || !funnel) {
-    console.error('[websites] invite: funnel row failed:', funnelError?.message);
-    return { ok: false, reason: 'unavailable' };
-  }
-  const funnelId = (funnel as { id: string }).id;
+  const funnelId = await insertWebsiteFunnel(admin, ownerId, slug);
+  if (!funnelId) return { ok: false, reason: 'unavailable' };
 
   const settingsJson: SiteSettings = { ...EMPTY_SETTINGS, companyName: text(o.companyName, 80) };
   const { data: site, error: siteError } = await admin
@@ -245,7 +269,7 @@ export async function inviteWebsite(o: { memberId: string; invitedBy: string | n
     .single();
   if (siteError || !site) {
     // Nothing hangs on the funnel yet: take it back out so no orphan is left.
-    await admin.from('funnels').delete().eq('id', funnelId).eq('kind', 'website');
+    await dropWebsiteFunnel(admin, funnelId);
     const lost = (siteError as { code?: string } | null)?.code === '23505';
     if (lost) {
       // A second invite or the same slug won the race.
@@ -256,6 +280,86 @@ export async function inviteWebsite(o: { memberId: string; invitedBy: string | n
     return { ok: false, reason: 'unavailable' };
   }
   return { ok: true, site: toRow(site as Record<string, unknown>) };
+}
+
+// ── The calculator-only site (Batch 55, Part A) ──
+
+export type EnsureCalculatorSiteResult = { ok: true; slug: string; created: boolean } | { ok: false; reason: 'has_website' | 'failed' };
+
+/** Used when the company name makes no usable address ("" or all symbols). */
+const CALCULATOR_SLUG_FALLBACK = 'my-calculator';
+
+/**
+ * The calculator-only site for a lead database customer who has no website:
+ * a funnel row (kind='website', never activated, notify_new_lead left at its
+ * default so a lead announces exactly as a website lead does) and a websites
+ * row that is LIVE at once, mode='calculator', live_at stamped, brand and
+ * contact settings from the arguments with the same defaults the invite uses.
+ * No invite, no page copy, no approval, no domain.
+ *
+ * Idempotent. An owner who already has a calculator site gets it back
+ * (created: false). An owner who has a normal website gets 'has_website'
+ * (websites.user_id is unique). Never throws; logs a code only, never the
+ * company name, email or phone. `ownerId` is the account owner the caller
+ * already established (the signed route's own lookup), never a request body.
+ */
+export async function ensureCalculatorSite(input: { ownerId: string; company: string; email: string; phone: string | null }): Promise<EnsureCalculatorSiteResult> {
+  try {
+    if (!hasServiceRole() || !UUID.test(input.ownerId)) return { ok: false, reason: 'failed' };
+    const admin = createAdminClient();
+
+    const answerFrom = (site: WebsiteRow | null): EnsureCalculatorSiteResult | null => {
+      if (!site) return null;
+      return site.mode === CALCULATOR_MODE ? { ok: true, slug: site.slug, created: false } : { ok: false, reason: 'has_website' };
+    };
+
+    const existing = answerFrom(await ownSite(input.ownerId));
+    if (existing) return existing;
+
+    const settings: SiteSettings = {
+      ...EMPTY_SETTINGS,
+      companyName: text(input.company, 80),
+      contactEmail: text(input.email, 254),
+      contactPhone: text(input.phone, 40),
+    };
+
+    // The slug: the company name through makeSlug and freeSlug. A lost race on the slug is retried with the taken list read again.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const base = makeSlug(settings.companyName) || CALCULATOR_SLUG_FALLBACK;
+      const { data: rows, error: takenError } = await admin.from('websites').select('slug').like('slug', `${base.slice(0, 30)}%`).limit(200);
+      if (takenError) {
+        console.error('[websites] calculator: slug read failed:', takenError.code ?? 'error');
+        return { ok: false, reason: 'failed' };
+      }
+      const taken = new Set((rows ?? []).map((r) => String((r as { slug: unknown }).slug)));
+      const slug = freeSlug(base, taken) ?? freeSlug(CALCULATOR_SLUG_FALLBACK, taken);
+      if (!slug) return { ok: false, reason: 'failed' };
+
+      const funnelId = await insertWebsiteFunnel(admin, input.ownerId, slug);
+      if (!funnelId) return { ok: false, reason: 'failed' };
+
+      const now = new Date().toISOString();
+      const { error: siteError } = await admin
+        .from('websites')
+        .insert({ user_id: input.ownerId, funnel_id: funnelId, slug, status: 'live', mode: CALCULATOR_MODE, settings, live_at: now, invited_by: null });
+      if (!siteError) return { ok: true, slug, created: true };
+
+      // Nothing hangs on the funnel yet: take it back out so no orphan is left.
+      await dropWebsiteFunnel(admin, funnelId);
+      if ((siteError as { code?: string }).code === '23505') {
+        // The owner's other request, or the same slug, won the race: answer from what is there, else try the next free slug.
+        const won = answerFrom(await ownSite(input.ownerId));
+        if (won) return won;
+        continue;
+      }
+      console.error('[websites] calculator: website row failed:', (siteError as { code?: string }).code ?? 'error');
+      return { ok: false, reason: 'failed' };
+    }
+    return { ok: false, reason: 'failed' };
+  } catch (e) {
+    console.error('[websites] calculator: failed:', e instanceof Error ? e.name : 'error');
+    return { ok: false, reason: 'failed' };
+  }
 }
 
 // ── Setup flow writes (each scoped by the owner's id) ──

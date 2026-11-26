@@ -13,7 +13,7 @@ import type { ChecksOutput } from './checks.ts';
 import { parseAdVideo } from './render-store.ts';
 
 export const PACK_COLUMNS =
-  'id, owner_id, website_id, status, operator_code, version, voice_key, voice_changes, regen_count, brand_hash, area_key, area_label, bedrooms, figures, photos, checks, error_code, cost_pence, generated_at, approved_at, created_at, updated_at';
+  'id, owner_id, website_id, status, route, operator_code, version, voice_key, voice_changes, regen_count, brand_hash, area_key, area_label, bedrooms, figures, photos, checks, error_code, cost_pence, generated_at, approved_at, created_at, updated_at';
 export const AD_COLUMNS = 'id, pack_id, owner_id, version, angle, n, code, ad_name, link, texts, lead_form, files, superseded_at, created_at';
 export const RUN_COLUMNS = 'id, pack_id, version, by, dry, cost_pence, result, created_at';
 
@@ -52,6 +52,7 @@ export function toPackRow(r: Record<string, unknown>): PackRow {
     ownerId: String(r.owner_id),
     websiteId: str(r.website_id),
     status,
+    route: r.route === 'leaddb' ? 'leaddb' : 'academy',
     operatorCode: String(r.operator_code),
     version: int(r.version, 1),
     voiceKey: str(r.voice_key),

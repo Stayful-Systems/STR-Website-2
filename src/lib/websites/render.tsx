@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { LeadForm } from './LeadForm';
 import type { RenderForm } from './lead-form-props';
 import { buildSitePages, pageAt, type PageModel, type SiteCopy, type SiteSettings } from './page-model';
+import { CalculatorPage, CalculatorPrivacy } from './templates/CalculatorPage';
 import { SitePage } from './templates/pages';
 import type { SiteRef } from './types';
 
@@ -40,4 +41,19 @@ export function renderSitePage(pages: readonly PageModel[], path: string, opts: 
   const page = pageAt(pages, path);
   if (!page) return null;
   return <SitePage page={page} renderForm={leadFormRenderer(opts)} />;
+}
+
+/**
+ * Batch 55 (Part A): a calculator site's two pages, the form ("") and the
+ * privacy page, in the calculator frame (no navigation). Any other path is
+ * null (the caller 404s). The form is the website's own, so step 1, step 2 and
+ * the report are unchanged.
+ */
+export function renderCalculatorPage(pages: readonly PageModel[], path: string, opts: { preview?: boolean } = {}): ReactNode | null {
+  const page = pageAt(pages, path);
+  if (!page) return null;
+  const renderForm = leadFormRenderer(opts);
+  if (path === '') return <CalculatorPage page={page} renderForm={renderForm} />;
+  if (path === 'privacy') return <CalculatorPrivacy page={page} renderForm={renderForm} />;
+  return null;
 }

@@ -1138,6 +1138,37 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['Do you manage my Facebook ads?', 'Can you get into my Meta ad account?', 'Will the ad pack get me landlord leads?', 'Can I get my ads refreshed?', 'Can you make new ad angles for me?', 'Does it show how my ads are performing?'],
     answer: 'There is no free refresh: your pack changes only when you regenerate it after a brand change, and we don’t add new angles. We never access your Meta account, we don’t show ad performance numbers and we promise no results; Meta’s own ad screens show how your ads perform, and Stayful records only which ad each website lead came from.',
   },
+  // ── Batch 55 (Part A): ad packs for lead database customers through a branded calculator (drafts for Zac to approve; the two counts are the ad_calc_reports_per_day and ad_pack_ld_round_days settings) ──
+  {
+    slug: 'adpack_ld_calculator',
+    from: 'Batch 55 Part A, lead database ad route (a branded income calculator at a Stayful address, linked from the three ads; the daily limit is the ad_calc_reports_per_day setting; it stops when the card is off, the account lapses or is cancelled, and pausing does not stop it; Stayful switches it on for each customer)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What is the income calculator linked from my lead database ads?',
+    variants: ['Where do my Facebook ads send landlords?', 'What is the calculator at a Stayful address?', 'Why has my calculator stopped working?', 'Does pausing my lead database account stop my calculator?', 'Is there a limit on how many reports my calculator makes a day?'],
+    answer: 'Your three Facebook ads link to an income calculator in your own name, logo and colours at a Stayful web address. A landlord enters a property, gets an income report and reaches you as a lead; what those leads cost is handled in your lead database account. It starts up to {ad_calc_reports_per_day} reports a day, then asks landlords to try again tomorrow. It stops if your card is taken off, your account lapses or is cancelled, or a cancellation date is reached, but pausing does not stop it, and a report already running always finishes. We switch it on for each customer ourselves.',
+  },
+  {
+    slug: 'adpack_ld_rounds',
+    from: 'Batch 55 Part A, lead database ad route (one new set of ads per ad_pack_ld_round_days days; an extra round only when Stayful grants one; small edits stay free)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'How often can I make a new set of ads?',
+    variants: ['Can I make new ads again?', 'Why can’t I make another set of ads yet?', 'How do I get an extra round of ads?', 'Does changing my logo give me new ads?', 'Do small edits use up my round?'],
+    answer: 'You can make one new set of your three ads every {ad_pack_ld_round_days} days. A set that could not be finished does not count, and neither does a small edit, such as changing the video voice before you approve. If you need another set sooner, ask the team at {team_email}: an extra round is only made when we grant one. We also keep an overall limit on how many ads can be made in a month, so if you are told to try again next month, that is why.',
+  },
+  {
+    slug: 'adpack_audience',
+    from: 'Batch 55 Part A, the Set up your audience step in the Facebook guide (the same recipe for every customer; the page says when it was last checked)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What audience should I choose when I put my ads on Facebook?',
+    variants: ['What targeting do I set on my ads?', 'Which interests should I add?', 'Should I narrow my audience to my own area?', 'What do I put for age and gender?', 'Why does the guide say not to type a budget amount in the audience step?', 'Can I add exclusions or a lookalike audience?'],
+    answer: 'The guide’s Set up your audience step is the same for every customer. Choose the United Kingdom, the widest age range Facebook offers and all genders. Turn Advantage+ audience on, add the three interests it lists (Real property, Landlord and Airbnb) and use Advantage+ placements. Turn the campaign budget on without typing an amount, because you choose your own, and leave exclusions and lookalikes empty unless you have your own list. The step shows when it was last checked against Facebook’s own screen.',
+  },
   // ── Batch 35: Facebook lead forms through Google Sheets, attribution, one-tap outcomes and Your ads (drafts for Zac to approve; every figure is an ad_sheet_* setting) ──
   {
     slug: 'adsheet_what',

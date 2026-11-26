@@ -12,7 +12,7 @@
  *
  * Pure: no network, no database, no server-only.
  */
-import type { EligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
+import type { PackEligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
 import type { Angle } from '../../../lib/ad-packs/codes.ts';
 import type { CheckId } from '../../../lib/ad-packs/checks.ts';
 import type { AdFiles, AdTexts, PackStatus } from '../../../lib/ad-packs/store-types.ts';
@@ -55,6 +55,8 @@ export const PLAIN_CODES: Record<string, string> = {
   generate_failed: TRY_AGAIN,
   cost_cap: `We could not make this just now. ${GET_IN_TOUCH}`,
   monthly_cap: 'We cannot make any more ads right now. Please try again later, or get in touch.',
+  round_limit: 'You have already made your ads for this round. You can make new ones when the next round starts, or get in touch and we will see what we can do.',
+  backstop: 'We cannot make any more ads right now. Please try again later, or get in touch.',
   spend_unknown: 'We could not finish that just now. Please try again in a few minutes.',
   video_pending: 'Your video is still being made. This button works as soon as it is ready.',
   video_failed: 'Your video is not ready yet. Please look at the video above first.',
@@ -80,7 +82,7 @@ export type NextStep = { text: string; href?: string; label?: string };
 
 const WEBSITE_SETUP = '/leads/setup/website';
 
-const ELIGIBILITY_PLAIN: Record<EligibilityReason, string> = {
+const ELIGIBILITY_PLAIN: Record<PackEligibilityReason, string> = {
   not_owner: 'Only the person who owns the account can make the ads. Please ask them to open this page.',
   no_academy: 'These ads come with the Academy. Once your Academy purchase is linked to this account, they will show up here.',
   academy_refunded: 'These ads come with the Academy, and your Academy purchase was refunded.',
@@ -89,9 +91,14 @@ const ELIGIBILITY_PLAIN: Record<EligibilityReason, string> = {
   no_domain: 'Your website needs its own .co.uk address first, because your ads send people there.',
   domain_not_live: 'Your website address is not live yet. This can take a little while. We will email you when it is ready.',
   switch_off: 'Your Facebook ads are not open yet. We will tell you as soon as they are.',
+  has_website: 'You already have your own website, so these ads are not set up for this account.',
+  no_leaddb_account: 'Your lead database account is not linked to this account yet, so there are no ads to make.',
+  account_stopped: 'Your lead database account is not active at the moment, so your ads are on hold.',
+  no_card: 'Your lead database account needs a payment card before you can make ads.',
+  not_allowed: 'Your Facebook ads are not open for your account yet. We will tell you as soon as they are.',
 };
 
-const NEXT_STEP: Record<EligibilityReason, NextStep> = {
+const NEXT_STEP: Record<PackEligibilityReason, NextStep> = {
   not_owner: { text: 'Ask the account owner to open this page.' },
   no_academy: { text: 'If you have joined the Academy, check it is linked to this account. If it still does not show, get in touch and we will sort it out.' },
   academy_refunded: { text: 'If that is not right, get in touch and we will look into it.' },
@@ -100,10 +107,15 @@ const NEXT_STEP: Record<EligibilityReason, NextStep> = {
   no_domain: { text: 'Choose your .co.uk address on your website page.', href: WEBSITE_SETUP, label: 'Choose my address' },
   domain_not_live: { text: 'There is nothing to do. Come back when you get our email.' },
   switch_off: { text: 'There is nothing to do yet.' },
+  has_website: { text: 'If that does not sound right, get in touch and we will look into it.' },
+  no_leaddb_account: { text: 'If you have a lead database account, get in touch and we will link it to this one.' },
+  account_stopped: { text: 'There is nothing to do here. Your ads come back when your lead database account is active again.' },
+  no_card: { text: 'Add a payment card to your lead database account, then come back to this page.' },
+  not_allowed: { text: 'There is nothing to do yet.' },
 };
 
 /** The plain sentence for one reason (no code, no jargon). */
-export const eligibilitySentence = (r: EligibilityReason): string => ELIGIBILITY_PLAIN[r] ?? 'Your Facebook ads are not available for this account yet.';
+export const eligibilitySentence = (r: PackEligibilityReason): string => ELIGIBILITY_PLAIN[r] ?? 'Your Facebook ads are not available for this account yet.';
 
 export type EligibilityView = { title: string; message: string; next: NextStep | null };
 
@@ -111,7 +123,7 @@ export type EligibilityView = { title: string; message: string; next: NextStep |
  * Why the ads are not available yet, in ONE plain message (the most basic reason), and the one thing to do next.
  * No codes: only sentences.
  */
-export function eligibilityView(reasons: readonly EligibilityReason[]): EligibilityView {
+export function eligibilityView(reasons: readonly PackEligibilityReason[]): EligibilityView {
   const first = reasons[0];
   if (!first) return { title: 'Your Facebook ads are not ready yet', message: 'Your Facebook ads are not available for this account yet.', next: null };
   return {

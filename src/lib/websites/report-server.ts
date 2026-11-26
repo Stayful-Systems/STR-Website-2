@@ -11,6 +11,7 @@ import { enqueueLeadDbPush } from '../leaddb/deliver';
 import { parseLeadRules } from '../leads/rules';
 import type { AnalysisResult } from '../types';
 import { readWebsiteSettings } from './store-server';
+import { CALCULATOR_BILLING, isCalculatorMode } from './calculator';
 import { notifyOperatorOfWebsiteLead, notifyOperatorReportFailed, sendLandlordEmail } from './notify-server';
 import { buildSummary, type ReportSummary } from './summary';
 import {
@@ -61,6 +62,14 @@ import type { BillingMode, ClaimResult, FrozenBilling, LandlordOutcome, ReportSt
  *     'queued'.
  *  7. quality_ok and state 'done' are stored, then the landlord's email goes.
  *
+ * Batch 55 (Part A): a CALCULATOR site (websites.mode = 'calculator') runs the same report but is
+ * not billed here. It skips the free-report claim (so never held_cap), decideStep2 (so never
+ * held_credit, and no held_self: the owner may try their own calculator) and chargeReport; the
+ * run is house-paid (billedUserId null) and the billing mode is frozen as 'free' at 0p. The lead
+ * database bills these reports later (Phase 2). A site-mode report is exactly as above. The stop
+ * rule (a stopped owner) is NOT checked here: a report already running must finish, so this file
+ * never reads the ad account (a test pins it).
+ *
  * What comes back is a small state object: never the result, never an address.
  * Nothing here logs a lead's details; log lines carry the lead id and an error
  * name only.
@@ -98,6 +107,8 @@ interface ReportRow {
 interface RunContext {
   report: ReportRow;
   ownerId: string;
+  /** websites.mode of the report's site: 'calculator' skips the claim, the credit hold and the charge. */
+  siteMode: string | null;
   funnelId: string;
   /** The landlord's property, as step 2 stored it. Null until step 2 has saved it. */
   input: AnalysisInput | null;
@@ -129,9 +140,9 @@ async function loadContext(admin: Admin, leadId: string): Promise<RunContext | n
   if (error || !rep) return null;
   const report = toReport(rep as Record<string, unknown>);
 
-  const { data: site } = await admin.from('websites').select('user_id, funnel_id').eq('id', report.websiteId).maybeSingle();
+  const { data: site } = await admin.from('websites').select('user_id, funnel_id, mode').eq('id', report.websiteId).maybeSingle();
   if (!site) return null;
-  const { user_id: ownerId, funnel_id: funnelId } = site as { user_id: string; funnel_id: string };
+  const { user_id: ownerId, funnel_id: funnelId, mode: siteMode } = site as { user_id: string; funnel_id: string; mode?: string | null };
 
   // The lead must be this website's own: its owner and its funnel.
   const [{ data: lead }, { data: funnel }] = await Promise.all([
@@ -144,6 +155,7 @@ async function loadContext(admin: Admin, leadId: string): Promise<RunContext | n
   return {
     report,
     ownerId,
+    siteMode: siteMode ?? null,
     funnelId,
     input: input && typeof input === 'object' ? (input as AnalysisInput) : null,
     rulesRaw: f?.lead_rules ?? null,
@@ -327,41 +339,48 @@ export async function runWebsiteReport(leadId: string, opts: RunWebsiteReportOpt
   if (report.state === 'held_cap' && report.dueDay && report.dueDay > today) return stateOf(report, null);
 
   // ── The decision: what the frozen billing mode says to do ──
-  const settings = await readWebsiteSettings();
-  const existing: FrozenBilling | null = report.billingMode ? { billingMode: report.billingMode, pricePence: report.pricePence ?? 0 } : null;
-  const mode = freezeMode(settings, existing);
-  let balancePence: number | null = null;
-  if (mode.billingMode === 'charged') balancePence = await faceAvailableFor(ctx.ownerId, 'website_report').catch(() => null);
-  const decision = decideStep2({ frozen: existing, settings, selfSubmit: report.selfSubmit, balancePence });
+  const calculator = isCalculatorMode(ctx.siteMode);
   const firstTime = report.state === 'awaiting_address';
+  let frozen: FrozenBilling;
+  if (calculator) {
+    // Batch 55: no free claim, no held_cap, no decideStep2, no held_credit, no charge. Free at 0p, house-paid, always runs.
+    frozen = CALCULATOR_BILLING;
+  } else {
+    const settings = await readWebsiteSettings();
+    const existing: FrozenBilling | null = report.billingMode ? { billingMode: report.billingMode, pricePence: report.pricePence ?? 0 } : null;
+    const mode = freezeMode(settings, existing);
+    let balancePence: number | null = null;
+    if (mode.billingMode === 'charged') balancePence = await faceAvailableFor(ctx.ownerId, 'website_report').catch(() => null);
+    const decision = decideStep2({ frozen: existing, settings, selfSubmit: report.selfSubmit, balancePence });
 
-  if (decision.kind === 'hold') {
-    // held_self: saved and flagged, NOT run. held_credit: waits for credit.
-    const won = await hold(admin, report, decision.state, decision.frozen, null, nowIso);
-    const after: ReportRow = { ...report, state: won ? decision.state : report.state, dueDay: null };
-    if (won && firstTime) {
-      await sendLandlordEmail({ leadId, kind: 'will_contact' });
-      await notifyOperatorOfWebsiteLead({ leadId, websiteId: report.websiteId });
-    }
-    return stateOf(won ? after : await reread(admin, ctx), null);
-  }
-
-  const frozen = decision.frozen;
-  if (decision.kind === 'claim') {
-    // Free: one of today's slots. Held reports (the cron) need used < limit; live ones also leave room for the backlog.
-    const { data, error } = await admin.rpc('website_free_report_claim', { p_lead: leadId, p_website: report.websiteId, p_held: report.state === 'held_cap' });
-    // A claim that cannot be answered counts as full: nothing is spent, the cron tries tomorrow.
-    const claim: ClaimResult = !error && (data === 'claimed' || data === 'already' || data === 'site_full' || data === 'day_full') ? data : 'day_full';
-    if (error) console.error(`[website-report] claim failed for lead ${leadId}:`, error.message);
-    const out = claimOutcome(claim);
-    if (out.kind === 'hold') {
-      const dueDay = nextDay(today);
-      const won = await hold(admin, report, out.state, frozen, dueDay, nowIso);
+    if (decision.kind === 'hold') {
+      // held_self: saved and flagged, NOT run. held_credit: waits for credit.
+      const won = await hold(admin, report, decision.state, decision.frozen, null, nowIso);
+      const after: ReportRow = { ...report, state: won ? decision.state : report.state, dueDay: null };
       if (won && firstTime) {
-        await sendLandlordEmail({ leadId, kind: 'held' });
+        await sendLandlordEmail({ leadId, kind: 'will_contact' });
         await notifyOperatorOfWebsiteLead({ leadId, websiteId: report.websiteId });
       }
-      return stateOf(won ? { ...report, state: out.state, dueDay } : await reread(admin, ctx), null);
+      return stateOf(won ? after : await reread(admin, ctx), null);
+    }
+
+    frozen = decision.frozen;
+    if (decision.kind === 'claim') {
+      // Free: one of today's slots. Held reports (the cron) need used < limit; live ones also leave room for the backlog.
+      const { data, error } = await admin.rpc('website_free_report_claim', { p_lead: leadId, p_website: report.websiteId, p_held: report.state === 'held_cap' });
+      // A claim that cannot be answered counts as full: nothing is spent, the cron tries tomorrow.
+      const claim: ClaimResult = !error && (data === 'claimed' || data === 'already' || data === 'site_full' || data === 'day_full') ? data : 'day_full';
+      if (error) console.error(`[website-report] claim failed for lead ${leadId}:`, error.message);
+      const out = claimOutcome(claim);
+      if (out.kind === 'hold') {
+        const dueDay = nextDay(today);
+        const won = await hold(admin, report, out.state, frozen, dueDay, nowIso);
+        if (won && firstTime) {
+          await sendLandlordEmail({ leadId, kind: 'held' });
+          await notifyOperatorOfWebsiteLead({ leadId, websiteId: report.websiteId });
+        }
+        return stateOf(won ? { ...report, state: out.state, dueDay } : await reread(admin, ctx), null);
+      }
     }
   }
 
@@ -376,8 +395,8 @@ export async function runWebsiteReport(leadId: string, opts: RunWebsiteReportOpt
   try {
     prepared = await reserveAnalysis(runInput, runOptions);
   } catch (err) {
-    if (err instanceof InsufficientCreditError) {
-      // The balance fell short between the check and the reservation: wait for credit.
+    if (err instanceof InsufficientCreditError && !calculator) {
+      // The balance fell short between the check and the reservation: wait for credit. (Never a calculator report: it is house-paid.)
       const won = await endRun(admin, leadId, attempt, { state: 'held_credit', lease_until: null, attempts: report.attempts });
       return stateOf(won ? { ...report, state: 'held_credit', dueDay: null } : await reread(admin, ctx), null);
     }
@@ -406,7 +425,8 @@ export async function runWebsiteReport(leadId: string, opts: RunWebsiteReportOpt
   const quality = qualityOk({ complete, trustworthy });
 
   // Charged mode only, and only a quality-OK report with figures: once, after finish().
-  const charge = chargeDecision({ billingMode: frozen.billingMode, pricePence: frozen.pricePence, quality, hasFigures: complete });
+  // A calculator report is never charged here (the lead database bills it later), whatever the mode on the row says.
+  const charge = calculator ? ({ charge: false, reason: 'free_mode' } as const) : chargeDecision({ billingMode: frozen.billingMode, pricePence: frozen.pricePence, quality, hasFigures: complete });
   if (charge.charge) await chargeReport(admin, { ownerId: ctx.ownerId, leadId, websiteId: report.websiteId, pence: charge.pence });
 
   // The lead gets its report and its CRM delivery; the landlord is not emailed a /r link.

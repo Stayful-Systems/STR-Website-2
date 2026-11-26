@@ -12,7 +12,9 @@
  * signed, approved or logged:
  *
  *   generate   the brand, the domain and the website come from the owner's own
- *              website (eligibility); a pack id, if sent, must be the owner's pack;
+ *              website (eligibility); on the lead database route (Batch 55) the website
+ *              is the owner's calculator site and the domain is this app's own host,
+ *              with the ads linking to /s/<slug>; a pack id, if sent, must be the owner's pack;
  *              photo references must be inside the owner's own uploads folder
  *   approve    the pack id must be the owner's pack
  *   download   the pack ad must be the owner's, and have that file (signedDownloadUrl)
@@ -33,7 +35,7 @@
  */
 import type { ApproveResult, ChangeVoiceResult, GenerateRequest, GenerateResult, PackView, RetryVideoResult } from '../../../lib/ad-packs/generate-core.ts';
 import { parseAreaKey } from '../../../lib/ad-packs/area.ts';
-import type { EligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
+import type { AdRoute, PackEligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
 import { checkPhoto, cleanPhotoRefs, MAX_UPLOADS_PER_OWNER, PHOTO_MESSAGES, uploadRef } from '../../../lib/ad-packs/photos.ts';
 import type { PackAdRow } from '../../../lib/ad-packs/store-types.ts';
 import { isVoiceKey, type VoiceKey } from '../../../lib/ad-packs/voices.ts';
@@ -61,10 +63,14 @@ export type Session = { ok: true; ownerId: string; email: string | null; admin: 
 
 export type EligibilityFacts = {
   eligible: boolean;
-  reasons: EligibilityReason[];
+  reasons: PackEligibilityReason[];
   website?: { id: string; settings: SiteBrandInput };
-  /** The live bare domain, only when it is live. */
+  /** The live bare domain, only when it is live. On the lead database route: this app's own host. */
   domain?: string;
+  /** Batch 55: which way in. Absent is the Academy route, exactly as before. */
+  route?: AdRoute;
+  /** The lead database route only: the calculator site's slug, so the ads link to /s/<slug>. */
+  sitePath?: string;
 };
 
 export type AreaPreviewDep = AreaPreviewInput;
@@ -116,6 +122,9 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
   if (!s.ok) return { error: sessionError(s) };
   const elig = await deps.eligibility(s.ownerId, { admin: s.admin });
   if (!elig.eligible || !elig.website || !elig.domain) return { error: eligibilityError(elig) };
+  // The lead database route needs the calculator site's slug as well; everything else about the Academy route is as it was.
+  const leadDbRoute = elig.route === 'leaddb';
+  if (leadDbRoute && !elig.sitePath) return { error: MESSAGES.not_eligible };
 
   const mine = await ownPack(deps, s.ownerId, input.packId);
   if (!mine.ok) return { error: MESSAGES.not_found };
@@ -142,6 +151,7 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
       brand: { company: brand.company, logoUrl: brand.logoUrl, brandColour: brand.brandColour, feePct: brand.feePct, areas: brand.areas, photoUrl: brand.photoUrl },
       domain: elig.domain,
       websiteId: elig.website.id,
+      ...(leadDbRoute && elig.sitePath ? { route: 'leaddb' as const, sitePath: elig.sitePath } : {}),
       typeOnly: brand.logoUrl === null && typeOnly,
       ...(voiceKey ? { voiceKey } : {}),
     },

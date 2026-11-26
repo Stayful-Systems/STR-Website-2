@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ELIGIBILITY_REASONS } from '../../../lib/ad-packs/eligibility.ts';
+import { ELIGIBILITY_REASONS, LEADDB_ONLY_REASONS } from '../../../lib/ad-packs/eligibility.ts';
 import { CHECK_IDS } from '../../../lib/ad-packs/checks.ts';
 import { PACK_STATUSES } from '../../../lib/ad-packs/store-types.ts';
 import { harness } from '../../../lib/ad-packs/test-store.ts';
@@ -432,4 +432,20 @@ test('a poll answer holds the version, the video card, the approve state and the
   assert.equal(out.version, 3);
   assert.equal(out.video.action, 'retry');
   assert.doesNotMatch(JSON.stringify(out), /sandbox_failed|video_failed|[a-z]+_[a-z]+/);
+});
+
+test('the lead database reasons are plain sentences with a next step, no code leaks (Batch 55)', () => {
+  for (const r of LEADDB_ONLY_REASONS) {
+    const v = eligibilityView([r]);
+    assert.equal(v.message, eligibilitySentence(r));
+    assert.ok(v.message.length > 20 && /[.]$/.test(v.message), r);
+    assert.ok(v.next && v.next.text.length > 10, `${r} has a next step`);
+    const everything = [v.title, v.message, v.next?.text ?? '', v.next?.label ?? ''].join(' ');
+    assert.ok(!everything.includes(r), `${r} is not shown`);
+    assert.doesNotMatch(everything, LOOKS_LIKE_A_CODE, r);
+    assert.doesNotMatch(everything, /!/, r);
+    if (v.next?.href) assert.match(v.next.href, /^\/leads\//);
+  }
+  assert.equal(new Set(LEADDB_ONLY_REASONS.map((r) => eligibilitySentence(r))).size, LEADDB_ONLY_REASONS.length, 'each reads differently');
+  assert.equal(eligibilityView(['no_card', 'not_allowed']).message, eligibilitySentence('no_card'), 'the most basic is said');
 });

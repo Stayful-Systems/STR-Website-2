@@ -94,7 +94,7 @@ function colourOfImage(img: HTMLImageElement): string | null {
   }
 }
 
-async function colourFromFile(file: File): Promise<string | null> {
+export async function colourFromFile(file: File): Promise<string | null> {
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
@@ -126,7 +126,7 @@ const isSwatch = (c: string) => BRAND_SWATCHES.some((s) => s.toUpperCase() === c
 const validHex = (c: string | null | undefined): c is string => typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c);
 
 /** The eight swatches, "Custom" and the picker. `onPick` says the member chose it by hand. */
-function ColourPicker({ value, onPick }: { value: string; onPick: (hex: string) => void }) {
+export function ColourPicker({ value, onPick }: { value: string; onPick: (hex: string) => void }) {
   const [custom, setCustom] = useState(!isSwatch(value));
   return (
     <fieldset>
@@ -156,9 +156,9 @@ function ColourPicker({ value, onPick }: { value: string; onPick: (hex: string) 
 }
 
 /** An image upload (logo or photo): PNG or JPEG, sent as soon as it is chosen, through the owner's own action. */
-function ImageUpload({ kind, label, current, onFile }: { kind: "logo" | "photo"; label: string; current: string | null; onFile?: (file: File) => void }) {
+export function ImageUpload({ kind, label, current, onFile, upload = uploadImageAction }: { kind: "logo" | "photo"; label: string; current: string | null; onFile?: (file: File) => void; upload?: typeof uploadImageAction }) {
   const router = useRouter();
-  const [state, action, pending] = useActionState(uploadImageAction, INITIAL);
+  const [state, action, pending] = useActionState(upload, INITIAL);
   const [tooBig, setTooBig] = useState(false);
   useEffect(() => {
     if (state.saved) router.refresh();
