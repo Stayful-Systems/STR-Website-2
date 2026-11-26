@@ -21,6 +21,7 @@
  */
 import { adRouteStopped, type LeadDbAdAccount } from '../leaddb/ad-account.ts';
 import type { SiteCopy, SiteSettings } from './page-model.ts';
+import type { FrozenBilling } from './types.ts';
 
 /** websites.mode for the calculator-only site. */
 export const CALCULATOR_MODE = 'calculator';
@@ -49,6 +50,14 @@ export function calculatorServes(site: { mode: unknown }, account: LeadDbAdAccou
   if (!isCalculatorMode(site.mode)) return true;
   return !adRouteStopped(account, now);
 }
+
+/**
+ * How a calculator report is run: free at 0p, house-paid, never held for the day's
+ * free-report cap or for credit and never charged on this side (the lead database
+ * bills these reports later, Phase 2). Frozen on the report row like any other
+ * mode, so a retry reads the same thing.
+ */
+export const CALCULATOR_BILLING: FrozenBilling = { billingMode: 'free', pricePence: 0 };
 
 /**
  * The brand fields an owner may edit on a calculator site, by their real

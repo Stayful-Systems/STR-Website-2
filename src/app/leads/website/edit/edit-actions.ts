@@ -48,6 +48,7 @@ const DENIAL: Record<ActorDenial, string> = {
   not_management: 'Your website has not been set up for your account yet.',
   plan_required: 'Your plan does not include a website yet.',
   unavailable: 'We could not do that just now. Please try again.',
+  calculator_site: 'Your calculator does not have website pages to edit. You can change your company name, logo, colour, areas, fee and contact details in your setup.',
 };
 
 type Editor = { ok: true; ownerId: string; run: EditRun } | { ok: false; error: string };

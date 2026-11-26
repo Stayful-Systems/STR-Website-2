@@ -6,6 +6,7 @@ import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { isPaid, type AccessProfile } from '@/lib/access';
 import { isManagement } from '@/lib/management/stamp';
 import { ownerIdOrNull } from '@/lib/leads/scope';
+import { isCalculatorMode } from '@/lib/websites/calculator';
 import { websiteAccess, type AccessDenial } from '@/lib/websites/policy';
 import { ownSite, readWebsiteSettings, type WebsiteRow } from '@/lib/websites/store-server';
 import { isEditable, resumeStep, WEBSITE_SETUP_PATH, type WebsiteStepNo } from './steps';
@@ -24,7 +25,8 @@ import { isEditable, resumeStep, WEBSITE_SETUP_PATH, type WebsiteStepNo } from '
  * websiteSetupContext(), which is the same check with a redirect or a notice.
  */
 
-export type ActorDenial = 'signed_out' | AccessDenial | 'unavailable';
+/** 'calculator_site': the owner's site is the calculator-only site (Batch 55), which has none of the website flows. */
+export type ActorDenial = 'signed_out' | AccessDenial | 'unavailable' | 'calculator_site';
 
 export interface WebsiteActor {
   /** The signed-in person: always the account owner here. */
@@ -54,6 +56,8 @@ export async function websiteActor(): Promise<ActorResult> {
     createAdminClient().from('profiles').select(PROFILE_COLUMNS).eq('id', ownerId).maybeSingle(),
   ]);
   if (!site) return { ok: false, reason: 'not_invited' };
+  // Batch 55: a calculator site has no copy, approval, address or transfer, so every website flow refuses it here, whatever the plan.
+  if (isCalculatorMode(site.mode)) return { ok: false, reason: 'calculator_site' };
   if (!profile) return { ok: false, reason: 'unavailable' };
 
   const editable = isEditable(site.status);
@@ -64,6 +68,37 @@ export async function websiteActor(): Promise<ActorResult> {
   );
   if (!access.allowed) return { ok: false, reason: access.reason };
   return { ok: true, actor: { userId: ownerId, email: user.email ?? null, site, editable } };
+}
+
+// ── The calculator-only site (Batch 55, Part A) ──
+
+export interface CalculatorActor {
+  /** The signed-in person: always the account owner. */
+  userId: string;
+  email: string | null;
+  site: WebsiteRow;
+}
+
+export type CalculatorActorResult = { ok: true; actor: CalculatorActor } | { ok: false; reason: 'signed_out' | 'not_owner' | 'not_calculator' | 'unavailable' };
+
+/**
+ * The account owner at work on their own calculator-only site. Owner-only
+ * (ownerIdOrNull: a team member is refused) and found by who is signed in,
+ * never by an id from the address or a form. A normal website, or no site at
+ * all, is 'not_calculator': the website setup answers those. There is no
+ * management or plan test here: a calculator customer comes from the lead
+ * database, and their calculator is live from the day it is made.
+ */
+export async function calculatorActor(): Promise<CalculatorActorResult> {
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, reason: 'signed_out' };
+  const ownerId = await ownerIdOrNull(user);
+  if (!ownerId) return { ok: false, reason: 'not_owner' };
+  if (!hasServiceRole()) return { ok: false, reason: 'unavailable' };
+  const site = await ownSite(ownerId);
+  if (!site || !isCalculatorMode(site.mode)) return { ok: false, reason: 'not_calculator' };
+  return { ok: true, actor: { userId: ownerId, email: user.email ?? null, site } };
 }
 
 /** Step 4 (optional) continued from or skipped: the activity row the step logs. */
