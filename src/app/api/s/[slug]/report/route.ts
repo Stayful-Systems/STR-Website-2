@@ -112,8 +112,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   // ── 1. A live site only. ──
   const site = await liveSiteBySlug(slug);
   if (!site) return new Response('Not found', { status: 404 });
-  // Batch 55: a calculator site with a stopped owner starts no new report. (A report already running is not cut off: it never comes through here.)
-  if (await calculatorStopped(site)) return new Response('Not found', { status: 404 });
 
   let body: unknown;
   try {
@@ -142,6 +140,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
 
   // ── 5. Not awaiting its address: the current state, never a second run. ──
   if (current.state !== 'awaiting_address') return sseOnce(finalEvent(current, site.settings.companyName));
+
+  // Batch 55: a calculator site with a stopped owner STARTS no new report. Only a report still awaiting its address gets here, so
+  // one that is already running or done is answered above (its state, read only) and is never cut off.
+  if (await calculatorStopped(site)) return new Response('Not found', { status: 404 });
 
   // ── 4. Awaiting its address: validate it, save it to the lead, run the report. ──
   const { data: lead } = await admin.from('leads').select('email').eq('id', leadId).eq('user_id', site.userId).eq('funnel_id', site.funnelId).maybeSingle();
