@@ -33,7 +33,7 @@
  */
 import type { ApproveResult, ChangeVoiceResult, GenerateRequest, GenerateResult, PackView, RetryVideoResult } from '../../../lib/ad-packs/generate-core.ts';
 import { parseAreaKey } from '../../../lib/ad-packs/area.ts';
-import type { EligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
+import type { AdRoute, PackEligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
 import { checkPhoto, cleanPhotoRefs, MAX_UPLOADS_PER_OWNER, PHOTO_MESSAGES, uploadRef } from '../../../lib/ad-packs/photos.ts';
 import type { PackAdRow } from '../../../lib/ad-packs/store-types.ts';
 import { isVoiceKey, type VoiceKey } from '../../../lib/ad-packs/voices.ts';
