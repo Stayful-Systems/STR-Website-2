@@ -76,7 +76,7 @@ test('the real store reads the site mode into the context and the sweep filters 
   assert.match(src, /from\('websites'\)\.select\('mode'\)\.eq\('id', report\.website_id\)/);
   assert.match(src, /\.\.\.\(calculator \? \{ calculator: true \} : \{\}\)/);
   assert.match(src, /from\('website_reports'\)\.select\('lead_id, website_id'\)\.in\('lead_id', candidateIds\)/);
-  assert.match(src, /from\('websites'\) : \{ data: \[\] \}|from\('websites'\)\.select\('id'\)\.in\('id', siteIds\)\.eq\('mode', 'calculator'\)/);
+  assert.match(src, /from\('websites'\)\.select\('id'\)\.in\('id', siteIds\)\.eq\('mode', 'calculator'\)/);
   assert.match(src, /const websiteIds = withoutCalculatorLeads\(candidateIds, calculatorLeadIds\);/);
 });
 

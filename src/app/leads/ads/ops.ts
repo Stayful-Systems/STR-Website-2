@@ -61,7 +61,7 @@ export type Session = { ok: true; ownerId: string; email: string | null; admin: 
 
 export type EligibilityFacts = {
   eligible: boolean;
-  reasons: EligibilityReason[];
+  reasons: PackEligibilityReason[];
   website?: { id: string; settings: SiteBrandInput };
   /** The live bare domain, only when it is live. */
   domain?: string;
