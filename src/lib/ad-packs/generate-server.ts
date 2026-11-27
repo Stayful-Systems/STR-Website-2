@@ -7,6 +7,7 @@ import { areaFigureSource } from './area-server.ts';
 import { renderAdImages } from './images';
 import { createLiveStore, deleteFiles, uploadFile } from './store-server.ts';
 import { adPackFetchImage } from './files-server.ts';
+import { markPackNoticePending } from '../leaddb/ad-account-server';
 
 export type {
   ApproveCode,
@@ -65,6 +66,8 @@ function realDeps(): GenerateDeps {
     deleteFiles: (paths) => deleteFiles(paths),
     sandboxCpuSecondPence: readSandboxCpuSecondPence,
     log: (event, fields) => console.error(`[ad-packs] ${event}`, fields.packId ?? '-', fields.code ?? '-'),
+    // Batch 55 step 2: the lead database is told once that this customer made ads (sent by /api/internal/leaddb-deliveries).
+    onLeadDbPackGenerated: (ownerId) => markPackNoticePending(ownerId),
   };
 }
 

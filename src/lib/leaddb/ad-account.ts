@@ -31,6 +31,10 @@ export interface LeadDbAdAccountRow {
   cancel_effective_at: string | null;
   lapsed: boolean;
   state_as_of: string | null;
+  /** Batch 55 step 2 (rule 21): new ad leads are not accepted while this is on. Absent on an older read: off. */
+  unpaid_hold?: boolean | null;
+  unpaid_hold_as_of?: string | null;
+  owed_pence?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -47,6 +51,13 @@ export interface LeadDbAdAccount {
   lapsed: boolean;
   /** When the lead database said this state was true. Null: no state has ever arrived. */
   stateAsOf: Date | null;
+  /**
+   * Batch 55 step 2 (rule 21, contract section 9): the unpaid hold. On: the route is stopped (stop condition 8), with the
+   * same neutral page; a report already running still finishes. Optional: absent reads as off.
+   */
+  unpaidHold?: boolean;
+  /** When the hold was last set (by an unpaid-hold call or a state carrying `unpaidHold`). */
+  unpaidHoldAsOf?: Date | null;
 }
 
 /** The signed state the lead database pushes. Codes and flags only, never a person's details. */
@@ -58,9 +69,14 @@ export interface AdAccountState {
   lapsed: boolean;
   /** ISO 8601. Required. */
   stateAsOf: string;
+  /**
+   * Batch 55 step 2 (contract section 9): optional. Absent means "no change to the stored hold" (a v1 sender keeps
+   * working); true or false sets it, under the same stateAsOf ordering.
+   */
+  unpaidHold?: boolean;
 }
 
-export type AdRouteStopReason = 'no_account' | 'not_allowed' | 'no_card' | 'account_stopped';
+export type AdRouteStopReason = 'no_account' | 'not_allowed' | 'no_card' | 'account_stopped' | 'unpaid_hold';
 export type AdRouteVerdict = { ok: true } | { ok: false; reason: AdRouteStopReason };
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
@@ -90,6 +106,8 @@ export function rowToAdAccount(row: LeadDbAdAccountRow): LeadDbAdAccount {
     cancelEffectiveAt: toDate(row.cancel_effective_at),
     lapsed: row.lapsed === true,
     stateAsOf: toDate(row.state_as_of),
+    unpaidHold: row.unpaid_hold === true,
+    unpaidHoldAsOf: toDate(row.unpaid_hold_as_of ?? null),
   };
 }
 
@@ -100,6 +118,8 @@ export function stateToRowPatch(state: AdAccountState): {
   cancel_effective_at: string | null;
   lapsed: boolean;
   state_as_of: string;
+  unpaid_hold?: boolean;
+  unpaid_hold_as_of?: string;
 } {
   return {
     account_status: state.accountStatus,
@@ -107,6 +127,8 @@ export function stateToRowPatch(state: AdAccountState): {
     cancel_effective_at: state.cancelEffectiveAt,
     lapsed: state.lapsed,
     state_as_of: state.stateAsOf,
+    // Batch 55 step 2: only when the push carries it. Absent leaves the stored hold as it is.
+    ...(typeof state.unpaidHold === 'boolean' ? { unpaid_hold: state.unpaidHold, unpaid_hold_as_of: state.stateAsOf } : {}),
   };
 }
 
@@ -135,7 +157,16 @@ export function parseAdAccountState(raw: unknown): AdAccountState | null {
   }
 
   if (parseIso(r.stateAsOf) === null) return null;
-  return { accountStatus, cardOnFile: r.cardOnFile, cancelEffectiveAt, lapsed: r.lapsed, stateAsOf: r.stateAsOf as string };
+  // Batch 55 step 2: optional; present must be a boolean.
+  if (r.unpaidHold !== undefined && typeof r.unpaidHold !== 'boolean') return null;
+  return {
+    accountStatus,
+    cardOnFile: r.cardOnFile,
+    cancelEffectiveAt,
+    lapsed: r.lapsed,
+    stateAsOf: r.stateAsOf as string,
+    ...(typeof r.unpaidHold === 'boolean' ? { unpaidHold: r.unpaidHold } : {}),
+  };
 }
 
 /**
@@ -155,10 +186,12 @@ function accountStopped(account: LeadDbAdAccount | null, now: Date): boolean {
 /**
  * True when the lead database ad route must stop for this account: no
  * account, never received a state, lapsed, cancelled, a cancel date that has
- * arrived, or no card on file. Never reads pause.
+ * arrived, no card on file, or (Batch 55 step 2, stop condition 8) the unpaid
+ * hold is on. Never reads pause.
  */
 export function adRouteStopped(account: LeadDbAdAccount | null, now: Date): boolean {
   if (accountStopped(account, now)) return true;
+  if (account!.unpaidHold === true) return true;
   return account!.cardOnFile !== true;
 }
 
@@ -169,12 +202,14 @@ export function adRouteStopped(account: LeadDbAdAccount | null, now: Date): bool
  * eligibility reasons no_leaddb_account, account_stopped, no_card, not_allowed):
  *   1. no_account       there is no row
  *   2. account_stopped  never received a state, lapsed, cancelled, or past its cancel date
- *   3. no_card          the lead database says no card is on file
- *   4. not_allowed      Zac has not allowed this owner
+ *   3. unpaid_hold      Batch 55 step 2: unpaid ad-lead charges reached the hold (rule 21)
+ *   4. no_card          the lead database says no card is on file
+ *   5. not_allowed      Zac has not allowed this owner
  */
 export function adRouteVerdict(account: LeadDbAdAccount | null, now: Date): AdRouteVerdict {
   if (!account) return { ok: false, reason: 'no_account' };
   if (accountStopped(account, now)) return { ok: false, reason: 'account_stopped' };
+  if (account.unpaidHold === true) return { ok: false, reason: 'unpaid_hold' };
   if (account.cardOnFile !== true) return { ok: false, reason: 'no_card' };
   if (account.allowed !== true) return { ok: false, reason: 'not_allowed' };
   return { ok: true };
@@ -190,4 +225,36 @@ export function shouldApplyState(current: { stateAsOf: Date | null } | null, inc
   const incomingAt = Date.parse(incoming.stateAsOf);
   if (Number.isNaN(incomingAt)) return false;
   return incomingAt >= current.stateAsOf.getTime();
+}
+
+/**
+ * Batch 55 step 2 (contract section 12): the unpaid-hold call's body. Null when anything is off; never throws.
+ * `owedPence` is for the admin screen only (a whole number of pence, 0 or more, or null).
+ */
+export interface UnpaidHoldPush {
+  on: boolean;
+  owedPence: number | null;
+  /** ISO 8601. */
+  holdAsOf: string;
+}
+
+export function parseUnpaidHold(raw: unknown): UnpaidHoldPush | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.on !== 'boolean') return null;
+  if (parseIso(r.holdAsOf) === null) return null;
+  let owedPence: number | null = null;
+  if (r.owedPence !== undefined && r.owedPence !== null) {
+    if (typeof r.owedPence !== 'number' || !Number.isInteger(r.owedPence) || r.owedPence < 0 || r.owedPence > 100_000_000) return null;
+    owedPence = r.owedPence;
+  }
+  return { on: r.on, owedPence, holdAsOf: r.holdAsOf as string };
+}
+
+/** Newer replaces, equal is applied again, older is stale. No stored hold time takes anything. */
+export function shouldApplyHold(currentAsOf: Date | null | undefined, incomingIso: string): boolean {
+  if (!currentAsOf) return true;
+  const t = Date.parse(incomingIso);
+  if (Number.isNaN(t)) return false;
+  return t >= currentAsOf.getTime();
 }

@@ -142,6 +142,8 @@ export function evaluateLeadDbEligibility(facts: LeadDbEligibilityFacts, opts: {
 export const LEADDB_REASON_OF_VERDICT: Record<AdRouteStopReason, LeadDbEligibilityReason> = {
   no_account: 'no_leaddb_account',
   account_stopped: 'account_stopped',
+  // Batch 55 step 2: the unpaid hold reads as the account being on hold (the same neutral wording; never "pause").
+  unpaid_hold: 'account_stopped',
   no_card: 'no_card',
   not_allowed: 'not_allowed',
 };

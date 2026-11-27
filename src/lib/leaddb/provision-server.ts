@@ -24,6 +24,17 @@ async function profileIdByEmail(email: string): Promise<string | null> {
   return ((data ?? [])[0] as { id: string } | undefined)?.id ?? null;
 }
 
+/** The three mandatory profile questions are answered (as stampManagement reads it). False on any failure. */
+async function quizDone(userId: string): Promise<boolean> {
+  try {
+    const { profileSummaryFor } = await import('../profile/server');
+    const s = await profileSummaryFor(userId);
+    return Boolean(s?.progress.mandatoryDone);
+  } catch {
+    return false;
+  }
+}
+
 export function liveProvisionDeps(): ProvisionDeps {
   return {
     readAccountByCustomerId: readAdAccountByCustomerId,
@@ -82,5 +93,32 @@ export function liveProvisionDeps(): ProvisionDeps {
     },
 
     ensureSite: (input) => ensureCalculatorSite(input),
+
+    // Batch 55 step 2: the first sign-in lands on the ads, not the /welcome quiz: the management stamp, written only
+    // while signup_path is null. Written directly, NOT through stampManagement: that records mc_signup and sends a Meta
+    // conversion, which must never fire for a provisioned lead database customer. Daily picks go off unless the quiz is
+    // done (as stampManagement does), with no funnel sync, activity or conversion. A member this call created is not
+    // given the welcome credit (the check ensureWelcomeGrant reads, stamped done with its own reason).
+    async settleMember(ownerId, isNew) {
+      const nowIso = new Date().toISOString();
+      const { data: stamped, error: stampErr } = await db()
+        .from('profiles')
+        .update({ signup_path: 'management', signup_path_at: nowIso, signup_path_via: 'account' })
+        .eq('id', ownerId)
+        .is('signup_path', null)
+        .select('id');
+      if (stampErr) console.error('[leaddb-ad-route] management stamp failed:', stampErr.code ?? 'error');
+      if (!stampErr && (stamped ?? []).length > 0 && !(await quizDone(ownerId))) {
+        const { error: picksErr } = await db().from('profiles').update({ sourcing_alerts: false }).eq('id', ownerId);
+        if (picksErr) console.error('[leaddb-ad-route] picks off failed:', picksErr.code ?? 'error');
+      }
+      if (!isNew) return;
+      const { error } = await db()
+        .from('profiles')
+        .update({ welcome_checked_at: nowIso, welcome_withheld_reason: 'leaddb_ad_route' })
+        .eq('id', ownerId)
+        .is('welcome_checked_at', null);
+      if (error) console.error('[leaddb-ad-route] welcome check stamp failed:', error.code ?? 'error');
+    },
   };
 }

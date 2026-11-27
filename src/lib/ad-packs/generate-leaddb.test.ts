@@ -97,3 +97,29 @@ test('a regenerate on the same route works; a regenerate on the other route is r
   assert.equal(code(await a.engine.generatePack({ ownerId: OWNER_A, by: 'admin', input: leadDb() })), 'invalid_input');
   assert.equal((await a.store.getPack(OWNER_A))?.route, 'academy');
 });
+
+// Batch 55 step 2 (contract section 9, call 4): the lead database hears that this customer made ads.
+test('a lead database pack that reaches preview calls onLeadDbPackGenerated; an Academy pack, a dry run and a throwing hook do not break anything', async () => {
+  const { createAdPackEngine } = await import('./generate-core.ts');
+  const h = harness();
+  const called: string[] = [];
+  const engine = createAdPackEngine({ ...h.deps, onLeadDbPackGenerated: async (owner) => { called.push(owner); } });
+  await engine.generatePack({ ownerId: OWNER_A, by: 'admin', dry: true, input: leadDb() });
+  assert.deepEqual(called, [], 'a dry run makes nothing and tells nobody');
+  const r = ok(await engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb() }));
+  assert.equal(r.status, 'preview');
+  assert.deepEqual(called, [OWNER_A]);
+
+  const academy = harness();
+  const seen: string[] = [];
+  const a = createAdPackEngine({ ...academy.deps, onLeadDbPackGenerated: async (owner) => { seen.push(owner); } });
+  ok(await a.generatePack({ ownerId: OWNER_A, by: 'operator', input: input() }));
+  assert.deepEqual(seen, [], 'the Academy route never tells the lead database');
+
+  const boom = harness();
+  const b = createAdPackEngine({ ...boom.deps, onLeadDbPackGenerated: async () => { throw new Error('db down: a secret'); } });
+  const made = ok(await b.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb() }));
+  assert.equal(made.status, 'preview', 'a failed mark never fails the generation');
+  assert.ok(boom.logs.some((l) => l.event === 'pack_notice_not_marked' && l.fields.code === 'error'));
+  assert.ok(!JSON.stringify(boom.logs).includes('secret'));
+});

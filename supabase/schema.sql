@@ -10642,3 +10642,79 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 55 step 2: calculator leads go to the lead database as ad leads
+-- =========================
+-- Every lead from a calculator site (websites.mode = 'calculator') is pushed,
+-- signed, to the customer's own lead database account as an `si_ad` lead
+-- (contract docs/build/55-CONTRACT.md in lead-database, section 10): the lead
+-- details first, then the report (or "no figures") under the same SI lead id.
+-- Whether the lead is billable is decided ONCE here, when the first report
+-- phase is sent, and frozen on the delivery row; the lead database never
+-- recomputes it. The lead database also pushes back an unpaid hold (section
+-- 12) and stage changes (section 11).
+-- Every statement is add column if not exists / create table if not exists,
+-- so a re-run changes nothing. No function, no policy.
+--
+--   leaddb_ad_deliveries        one row per calculator lead: the retry queue
+--                               and its state. phase_sent is the last phase the
+--                               lead database accepted (null, lead, report,
+--                               report_failed). billable, billable_reason and
+--                               low_data are frozen when the first report
+--                               phase is built. repeat_of_lead_id is an earlier
+--                               ad lead of the same landlord (30 days).
+--   leaddb_ad_accounts          + unpaid_hold (and its as-of time and the owed
+--                               pence, for admin only); + pack_notice_pending /
+--                               pack_notice_sent_at: the "first ad pack made"
+--                               call to the lead database, sent by the cron.
+--   leads.ld_stage_as_of        when the lead database said the stage it last
+--                               pushed was true: an older push is ignored.
+--
+-- leads.status and leads.crm_pushed_at are NEVER written by this. The new
+-- table is not in ACCESS_COLUMNS: service role only.
+
+create table if not exists public.leaddb_ad_deliveries (
+  lead_id uuid primary key references public.leads(id) on delete cascade,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  ld_customer_id text not null,
+  status text not null default 'pending',
+  phase_sent text,
+  attempts integer not null default 0,
+  next_attempt_at timestamptz not null default now(),
+  lease_until timestamptz,
+  billable boolean,
+  billable_reason text,
+  low_data boolean,
+  repeat_of_lead_id uuid,
+  outcome text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.leaddb_ad_deliveries drop constraint if exists leaddb_ad_deliveries_status_check;
+alter table public.leaddb_ad_deliveries add constraint leaddb_ad_deliveries_status_check
+  check (status in ('pending', 'sent', 'failed'));
+alter table public.leaddb_ad_deliveries drop constraint if exists leaddb_ad_deliveries_phase_check;
+alter table public.leaddb_ad_deliveries add constraint leaddb_ad_deliveries_phase_check
+  check (phase_sent is null or phase_sent in ('lead', 'report', 'report_failed'));
+alter table public.leaddb_ad_deliveries drop constraint if exists leaddb_ad_deliveries_reason_check;
+alter table public.leaddb_ad_deliveries add constraint leaddb_ad_deliveries_reason_check
+  check (billable_reason is null or billable_reason in ('report_ran', 'low_data', 'repeat', 'test', 'no_figures'));
+alter table public.leaddb_ad_deliveries drop constraint if exists leaddb_ad_deliveries_attempts_check;
+alter table public.leaddb_ad_deliveries add constraint leaddb_ad_deliveries_attempts_check check (attempts >= 0);
+create index if not exists leaddb_ad_deliveries_due_idx
+  on public.leaddb_ad_deliveries (next_attempt_at) where status = 'pending';
+create index if not exists leaddb_ad_deliveries_owner_idx on public.leaddb_ad_deliveries (owner_id, created_at desc);
+alter table public.leaddb_ad_deliveries enable row level security;  -- no policies: service role only
+revoke all on public.leaddb_ad_deliveries from anon, authenticated;
+
+alter table public.leaddb_ad_accounts add column if not exists unpaid_hold boolean not null default false;
+alter table public.leaddb_ad_accounts add column if not exists unpaid_hold_as_of timestamptz;
+alter table public.leaddb_ad_accounts add column if not exists owed_pence integer;
+alter table public.leaddb_ad_accounts add column if not exists pack_notice_pending boolean not null default false;
+alter table public.leaddb_ad_accounts add column if not exists pack_notice_sent_at timestamptz;
+
+alter table public.leads add column if not exists ld_stage_as_of timestamptz;
+
+notify pgrst, 'reload schema';

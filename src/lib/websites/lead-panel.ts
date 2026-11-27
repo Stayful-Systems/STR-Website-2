@@ -30,8 +30,27 @@ export interface ReportStateText {
   tone: 'ok' | 'warn' | 'bad' | 'neutral';
 }
 
+// ── Batch 55 step 2: ad leads (a calculator site's leads, sent to the lead database as `si_ad`, rule 12) ──
+
+/** The low-data detail on an ad lead: the amber label stays, and the lead is still charged. */
+export const AD_LEAD_LOW_DATA_DETAIL = 'There was limited local data, so the figures are an early estimate. This lead is still charged.';
+/** An ad lead from a landlord who enquired before (30 days). */
+export const AD_LEAD_REPEAT_LINE = 'This landlord enquired before. This is charged as a separate lead.';
+/** An ad lead that matches the owner's own details (a test of their own calculator): never charged (rule 10). */
+export const AD_LEAD_TEST_LINE = 'This looks like your own test, so it is not charged.';
+/** Where Swap or Replace would sit on an ad lead. */
+export const AD_LEAD_NOT_REPLACEABLE = 'Ad leads are not replaceable.';
+
+export interface ReportStateOptions {
+  /** The lead came from a calculator site (an ad lead). Absent: a website lead, exactly as before. */
+  adLead?: boolean;
+}
+
 /** The report's state in plain words. */
-export function reportStateText(r: ReportStateInput): ReportStateText {
+export function reportStateText(r: ReportStateInput, opts: ReportStateOptions = {}): ReportStateText {
+  if (opts.adLead === true && r.state === 'done' && r.qualityOk === false) {
+    return { label: 'Done: low confidence, early estimate', detail: AD_LEAD_LOW_DATA_DETAIL, tone: 'warn' };
+  }
   switch (r.state) {
     case 'awaiting_address':
       return { label: 'Awaiting address', detail: 'They left their details but have not added the property yet (step 2). The lead stays New.', tone: 'neutral' };
@@ -95,4 +114,14 @@ export function websiteCardModel(site: WebsiteCardInput): WebsiteCardModel {
     default:
       return { statusLabel: 'Unknown', linkLabel: null, href: null };
   }
+}
+
+/**
+ * Batch 55 step 2: the extra lines on an ad lead (none on a website lead): the repeat line when this landlord enquired
+ * before, and always the plain line where Swap or Replace would sit (ad leads are never replaceable, rule 13).
+ */
+export function adLeadLines(f: { adLead: boolean; repeat: boolean; test?: boolean }): string[] {
+  if (!f.adLead) return [];
+  if (f.test === true) return [AD_LEAD_TEST_LINE, AD_LEAD_NOT_REPLACEABLE];
+  return [...(f.repeat ? [AD_LEAD_REPEAT_LINE] : []), AD_LEAD_NOT_REPLACEABLE];
 }

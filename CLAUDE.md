@@ -201,3 +201,34 @@ Plan and Zac's to-do list: `docs/build/batch-01-deal-feed-PLAN.md` and `-BLOCKER
   packs, ad sheets and the lead database.
 - **Knowledge.** Four draft entries in `seed.ts` (`deal_feed_categories`, `deal_stale_credit`, `deal_r2r_permission`,
   `deal_duplicates`), the `{deal_stale_credit_days}` placeholder and a DEAL FEED block in `service-facts.ts`.
+
+# Batch 55 step 2: calculator leads go to the lead database as ad leads
+
+Every lead from a calculator site (`websites.mode = 'calculator'`, Batch 55 Part A) is pushed, signed, to the customer's own
+lead database account as an `si_ad` lead. The wire contract is `docs/build/55-CONTRACT.md` in lead-database (sections 9 to
+12); the rules are `docs/build/55-RULES.md` there (rules 9 to 14, 17 to 21). Code: `src/lib/leaddb/ad-*.ts`.
+
+- **Push.** `enqueueAdLeadPush(leadId)` (`ad-deliver.ts`) runs after `linkLeadToPackAd` in the lead route, after the Batch 32
+  hook in `report-server.ts` and when `giveUp` fails a report, always as `void ….catch(() => {})`. It acts only for a calculator
+  lead whose owner has a `leaddb_ad_accounts` row. The Batch 32 push still skips calculator leads (`calculator_site`).
+  `/api/internal/leaddb-deliveries` drains `leaddb_ad_deliveries` after the Batch 32 drain (`?dry=1` sends nothing): phase
+  `lead` (details and the ad tag read from `ad_pack_lead_links` at send time), then `report` (figures, PDF, `low_data`) or
+  `report_failed`. A 409 `no_lead` sends the lead again first. `repeat_of_si_lead_id` also goes on the report phase (the
+  postcode is only known after step 2), and so does the full `lead` block, read fresh (LD fills only empty fields).
+- **Billing.** Decided ONCE when the first report phase is built and frozen on the row: test (`self_submit`) → not billable;
+  no figures → not billable; repeat landlord inside 30 days → `repeat`; low quality → `low_data`; else `report_ran`.
+  `chargeDecision(…, source: 'si_ad')` charges a low-data report; without `source` it is byte-identical. Ad leads are never
+  replaceable.
+- **Back from the lead database.** `ad-route/unpaid-hold` (ordered by `holdAsOf`) and `unpaidHold` inside a state push: stop
+  condition 8, verdict `unpaid_hold`, the same neutral page; a running report still finishes; never called "pause".
+  `ad-route/stage` (ordered by `stageAt` against `leads.ld_stage_as_of`, calculator leads of that customer only, stamps
+  `meeting_reached_at` once; decision in `ad-stage.ts`, own test file because it writes `leads`).
+- **First pack.** A lead database pack reaching preview marks `pack_notice_pending`; the cron sends `ad-pack-generated` once
+  (404 `unknown_customer` is final).
+- **Provision.** A created or linked member gets the management stamp written directly (no /welcome quiz; never
+  `stampManagement`, which sends a Meta conversion); a member provision created gets `welcome_checked_at` with reason
+  `leaddb_ad_route` (no welcome credit).
+- **Never.** `leads.status` and `leads.crm_pushed_at` are never written. Logs carry an id or code, never a lead, body or secret.
+  The new table is not in `ACCESS_COLUMNS`. Lead panel wording for ad leads is in `lead-panel.ts` (site wording unchanged).
+- **Knowledge.** Draft `adpack_ld_ad_leads` in `seed.ts` (no price typed: the price setting is step 3) and an "Ad leads" line in
+  the LEAD DATABASE AD PACKS block of `service-facts.ts`.

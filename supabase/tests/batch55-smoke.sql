@@ -1,4 +1,5 @@
 -- Batch 55 (Part A) checks: websites.mode, ad_packs.route, the two lead database route tables and the three seeds.
+-- Batch 55 step 2 checks: leaddb_ad_deliveries, the unpaid hold and pack notice columns, leads.ld_stage_as_of.
 -- Run AFTER schema.sql: by hand in the Supabase SQL editor, or by CI (job "schema").
 -- Read only: it inserts nothing. A failing check raises; success prints a notice.
 begin;
@@ -72,6 +73,44 @@ begin
    where (key, value) in (
      ('ad_calc_reports_per_day', '50'::jsonb), ('ad_pack_ld_round_days', '30'::jsonb), ('ad_pack_ld_monthly_cap_pence', '25000'::jsonb));
   if n <> 3 then raise exception 'the three Batch 55 settings must be seeded (found % with the default values)', n; end if;
+
+  -- ── Batch 55 step 2 ──
+  -- leaddb_ad_deliveries: RLS on, no policy, no browser access, one row per lead, the closed checks.
+  select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
+   where s.nspname = 'public' and c.relname = 'leaddb_ad_deliveries' and c.relrowsecurity;
+  if n <> 1 then raise exception 'leaddb_ad_deliveries must exist with RLS on'; end if;
+  select count(*) into n from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname = 'leaddb_ad_deliveries';
+  if n <> 0 then raise exception 'leaddb_ad_deliveries must have no policies (found %)', n; end if;
+  if has_table_privilege('anon', 'public.leaddb_ad_deliveries', 'select') or has_table_privilege('authenticated', 'public.leaddb_ad_deliveries', 'select')
+     or has_table_privilege('anon', 'public.leaddb_ad_deliveries', 'insert') or has_table_privilege('authenticated', 'public.leaddb_ad_deliveries', 'insert')
+     or has_table_privilege('anon', 'public.leaddb_ad_deliveries', 'update') or has_table_privilege('authenticated', 'public.leaddb_ad_deliveries', 'update') then
+    raise exception 'anon/authenticated must have no access to leaddb_ad_deliveries';
+  end if;
+  select count(*) into n from pg_constraint
+   where conrelid = 'public.leaddb_ad_deliveries'::regclass and contype = 'p' and pg_get_constraintdef(oid) = 'PRIMARY KEY (lead_id)';
+  if n <> 1 then raise exception 'leaddb_ad_deliveries must be keyed on lead_id'; end if;
+  select count(*) into n from pg_constraint
+   where conrelid = 'public.leaddb_ad_deliveries'::regclass
+     and conname in ('leaddb_ad_deliveries_status_check', 'leaddb_ad_deliveries_phase_check', 'leaddb_ad_deliveries_reason_check', 'leaddb_ad_deliveries_attempts_check');
+  if n <> 4 then raise exception 'leaddb_ad_deliveries is missing checks (found % of 4)', n; end if;
+  select count(*) into n from information_schema.columns
+   where table_schema = 'public' and table_name = 'leaddb_ad_deliveries'
+     and column_name in ('lead_id', 'owner_id', 'ld_customer_id', 'status', 'phase_sent', 'attempts', 'next_attempt_at', 'lease_until',
+                         'billable', 'billable_reason', 'low_data', 'repeat_of_lead_id', 'outcome', 'last_error', 'created_at', 'updated_at');
+  if n <> 16 then raise exception 'leaddb_ad_deliveries is missing columns (found % of 16)', n; end if;
+
+  -- leaddb_ad_accounts: the unpaid hold and the pack notice; leads.ld_stage_as_of.
+  select count(*) into n from information_schema.columns
+   where table_schema = 'public' and table_name = 'leaddb_ad_accounts'
+     and column_name in ('unpaid_hold', 'unpaid_hold_as_of', 'owed_pence', 'pack_notice_pending', 'pack_notice_sent_at');
+  if n <> 5 then raise exception 'leaddb_ad_accounts is missing the step 2 columns (found % of 5)', n; end if;
+  select count(*) into n from information_schema.columns
+   where table_schema = 'public' and table_name = 'leaddb_ad_accounts' and column_name in ('unpaid_hold', 'pack_notice_pending')
+     and is_nullable = 'NO' and column_default = 'false';
+  if n <> 2 then raise exception 'unpaid_hold and pack_notice_pending must be not null default false'; end if;
+  select count(*) into n from information_schema.columns
+   where table_schema = 'public' and table_name = 'leads' and column_name = 'ld_stage_as_of' and data_type = 'timestamp with time zone';
+  if n <> 1 then raise exception 'leads.ld_stage_as_of (timestamptz) must exist'; end if;
 
   raise notice 'batch55 smoke: ok';
 end $$;

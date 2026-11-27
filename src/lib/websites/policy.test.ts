@@ -266,3 +266,18 @@ test('pin: policy.ts and the other pure files import nothing server-side', () =>
     for (const m of src.matchAll(/^(?:import|export)\b[^;]*?\bfrom\s+['"]([^'"]+)['"]/gm)) assert.doesNotMatch(m[1], /server|supabase/, `${name} imports ${m[1]}`);
   }
 });
+
+// Batch 55 step 2 (rules 10, 11): the ad-calculator source. Website behaviour is byte-identical (the tests above).
+test('chargeDecision for si_ad: no figures is not charged, low data IS charged as low_data, and the frozen mode is not read', () => {
+  for (const billingMode of ['free', 'charged'] as const) {
+    assert.deepEqual(chargeDecision({ billingMode, pricePence: 0, quality: true, hasFigures: false, source: 'si_ad' }), { charge: false, reason: 'no_figures' });
+    assert.deepEqual(chargeDecision({ billingMode, pricePence: 0, quality: false, hasFigures: true, source: 'si_ad' }), { charge: true, pence: 0, reason: 'low_data' });
+    assert.deepEqual(chargeDecision({ billingMode, pricePence: 0, quality: null, hasFigures: true, source: 'si_ad' }), { charge: true, pence: 0, reason: 'low_data' });
+    assert.deepEqual(chargeDecision({ billingMode, pricePence: 350, quality: true, hasFigures: true, source: 'si_ad' }), { charge: true, pence: 350 });
+  }
+  assert.deepEqual(chargeDecision({ billingMode: 'free', pricePence: Number.NaN, quality: true, hasFigures: true, source: 'si_ad' }), { charge: true, pence: 0 });
+  // si_website (or no source) keeps the website rule: a low-quality report is never charged.
+  assert.deepEqual(chargeDecision({ billingMode: 'charged', pricePence: 300, quality: false, hasFigures: true, source: 'si_website' }), { charge: false, reason: 'low_quality' });
+  assert.deepEqual(chargeDecision({ billingMode: 'charged', pricePence: 300, quality: false, hasFigures: true }), { charge: false, reason: 'low_quality' });
+  assert.deepEqual(chargeDecision({ billingMode: 'free', pricePence: 0, quality: true, hasFigures: true, source: 'si_website' }), { charge: false, reason: 'free_mode' });
+});

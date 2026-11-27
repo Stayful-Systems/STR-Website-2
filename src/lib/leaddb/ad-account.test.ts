@@ -212,3 +212,52 @@ test('a state patch never carries the allowed columns', () => {
   const patch = stateToRowPatch(state());
   assert.deepEqual(Object.keys(patch).sort(), ['account_status', 'cancel_effective_at', 'card_on_file', 'lapsed', 'state_as_of']);
 });
+
+// ── Batch 55 step 2: the unpaid hold (contract sections 9 and 12, stop condition 8) ──
+
+test('the unpaid hold stops the route (verdict unpaid_hold), and pause still never does', async () => {
+  assert.equal(adRouteStopped(acct({ unpaidHold: true }), NOW), true);
+  assert.deepEqual(adRouteVerdict(acct({ unpaidHold: true }), NOW), { ok: false, reason: 'unpaid_hold' });
+  assert.equal(adRouteStopped(acct({ unpaidHold: false }), NOW), false);
+  assert.equal(adRouteStopped(acct({ unpaidHold: false, accountStatus: 'paused' }), NOW), false);
+  assert.equal(adRouteStopped(acct(), NOW), false, 'absent reads as off');
+  // A stopped account says account_stopped first; the hold comes before the card and the allowed switch.
+  assert.deepEqual(adRouteVerdict(acct({ unpaidHold: true, lapsed: true }), NOW), { ok: false, reason: 'account_stopped' });
+  assert.deepEqual(adRouteVerdict(acct({ unpaidHold: true, cardOnFile: false, allowed: false }), NOW), { ok: false, reason: 'unpaid_hold' });
+  // The calculator page, lead, report and autocomplete stops all read adRouteStopped through calculatorServes.
+  const { calculatorServes } = await import('../websites/calculator.ts');
+  assert.equal(calculatorServes({ mode: 'calculator' } as never, acct({ unpaidHold: true }), NOW), false);
+  assert.equal(calculatorServes({ mode: 'calculator' } as never, acct({ unpaidHold: false }), NOW), true);
+});
+
+test('a state may carry unpaidHold: absent leaves the stored hold alone, present sets it under stateAsOf', () => {
+  assert.equal('unpaidHold' in (parseAdAccountState(state()) ?? {}), false);
+  assert.equal(parseAdAccountState({ ...state(), unpaidHold: true })?.unpaidHold, true);
+  assert.equal(parseAdAccountState({ ...state(), unpaidHold: false })?.unpaidHold, false);
+  assert.equal(parseAdAccountState({ ...state(), unpaidHold: 'yes' }), null);
+  assert.deepEqual(stateToRowPatch(state({ unpaidHold: true })), {
+    account_status: 'active', card_on_file: true, cancel_effective_at: null, lapsed: false, state_as_of: '2026-11-26T09:00:00Z',
+    unpaid_hold: true, unpaid_hold_as_of: '2026-11-26T09:00:00Z',
+  });
+  const row = rowToAdAccount({
+    owner_id: 'o', ld_customer_id: 'c', link_id: null, allowed: true, allowed_by: null, allowed_at: null, card_on_file: true,
+    account_status: 'active', cancel_effective_at: null, lapsed: false, state_as_of: '2026-11-26T09:00:00Z',
+    unpaid_hold: true, unpaid_hold_as_of: '2026-11-26T10:00:00Z', owed_pence: 3500, created_at: 'x', updated_at: 'x',
+  });
+  assert.equal(row.unpaidHold, true);
+  assert.equal(row.unpaidHoldAsOf?.toISOString(), '2026-11-26T10:00:00.000Z');
+});
+
+test('the unpaid-hold call: strict body, and newer or equal applies, older is stale', async () => {
+  const { parseUnpaidHold, shouldApplyHold } = await import('./ad-account.ts');
+  assert.deepEqual(parseUnpaidHold({ on: true, owedPence: 3500, holdAsOf: '2026-12-06T07:00:00.000Z' }), { on: true, owedPence: 3500, holdAsOf: '2026-12-06T07:00:00.000Z' });
+  assert.deepEqual(parseUnpaidHold({ on: false, holdAsOf: '2026-12-06T07:00:00.000Z' }), { on: false, owedPence: null, holdAsOf: '2026-12-06T07:00:00.000Z' });
+  for (const bad of [{ on: 'yes', holdAsOf: '2026-12-06T07:00:00Z' }, { on: true }, { on: true, holdAsOf: 'today' }, { on: true, holdAsOf: '2026-12-06T07:00:00Z', owedPence: -1 }, { on: true, holdAsOf: '2026-12-06T07:00:00Z', owedPence: 1.5 }, null, []]) {
+    assert.equal(parseUnpaidHold(bad), null, JSON.stringify(bad));
+  }
+  const at = new Date('2026-12-06T07:00:00Z');
+  assert.equal(shouldApplyHold(null, '2026-12-01T00:00:00Z'), true);
+  assert.equal(shouldApplyHold(at, '2026-12-06T07:00:00Z'), true);
+  assert.equal(shouldApplyHold(at, '2026-12-06T08:00:00Z'), true);
+  assert.equal(shouldApplyHold(at, '2026-12-06T06:59:59Z'), false);
+});

@@ -8,6 +8,7 @@ import { InsufficientCreditError, faceAvailableFor } from '../credit/ledger';
 import { isTrustworthyReport } from '../market/quality';
 import { completeLead } from '../leads/store';
 import { enqueueLeadDbPush } from '../leaddb/deliver';
+import { enqueueAdLeadPush } from '../leaddb/ad-deliver';
 import { parseLeadRules } from '../leads/rules';
 import type { AnalysisResult } from '../types';
 import { readWebsiteSettings } from './store-server';
@@ -445,6 +446,7 @@ export async function runWebsiteReport(leadId: string, opts: RunWebsiteReportOpt
   if (!done) return stateOf(await reread(admin, ctx), null);
 
   void enqueueLeadDbPush(leadId).catch(() => {}); // Batch 32: the report is done, so the lead database gets it (never throws, never waits)
+  void enqueueAdLeadPush(leadId).catch(() => {}); // Batch 55 step 2: a calculator lead's report phase (a no-op for a site-mode lead)
   await sendLandlordEmail({ leadId, kind: summary ? 'summary' : 'will_contact', summary });
   // Safety net for the step-1 notice (once per lead: 'already' when it went at step 1).
   await notifyOperatorOfWebsiteLead({ leadId, websiteId: report.websiteId });
@@ -486,6 +488,7 @@ async function giveUp(admin: Admin, ctx: RunContext, attempt: number, nowIso: st
   if (error) console.error(`[website-report] could not fail lead ${leadId}:`, error.message);
   const won = !error && (data ?? []).length > 0;
   if (won) {
+    void enqueueAdLeadPush(leadId).catch(() => {}); // Batch 55 step 2: a calculator lead's report_failed phase (no figures, never billable)
     await sendLandlordEmail({ leadId, kind: 'will_contact' });
     await notifyOperatorReportFailed({ leadId });
     return stateOf({ ...ctx.report, state: 'failed', dueDay: null }, null);

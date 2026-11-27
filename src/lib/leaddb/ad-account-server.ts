@@ -4,11 +4,13 @@ import { createAdminClient } from '../supabase/admin';
 import { adAccountAdminRow, type AdAccountAdminRow } from './ad-account-admin';
 import {
   rowToAdAccount,
+  shouldApplyHold,
   shouldApplyState,
   stateToRowPatch,
   type AdAccountState,
   type LeadDbAdAccount,
   type LeadDbAdAccountRow,
+  type UnpaidHoldPush,
 } from './ad-account';
 
 /**
@@ -21,7 +23,7 @@ import {
  */
 
 const COLUMNS =
-  'owner_id, ld_customer_id, link_id, allowed, allowed_by, allowed_at, card_on_file, account_status, cancel_effective_at, lapsed, state_as_of, created_at, updated_at';
+  'owner_id, ld_customer_id, link_id, allowed, allowed_by, allowed_at, card_on_file, account_status, cancel_effective_at, lapsed, state_as_of, unpaid_hold, unpaid_hold_as_of, owed_pence, created_at, updated_at';
 
 const db = () => createAdminClient();
 
@@ -52,10 +54,17 @@ export async function applyAdAccountState(ownerId: string, state: AdAccountState
   const current = await readAdAccount(ownerId);
   if (!current) return 'no_account';
   if (!shouldApplyState(current, state)) return 'stale';
+  // Batch 55 step 2: a state carrying `unpaidHold` sets the hold only when it is not older than the hold already held
+  // (an unpaid-hold call may have landed with a later time). The rest of the state applies as before.
+  const patch = stateToRowPatch(state);
+  if (patch.unpaid_hold !== undefined && !shouldApplyHold(current.unpaidHoldAsOf ?? null, state.stateAsOf)) {
+    delete patch.unpaid_hold;
+    delete patch.unpaid_hold_as_of;
+  }
   // The filter repeats the rule in SQL so two pushes landing together cannot let the older one win (UTC form: a + offset breaks a URL filter).
   const { data, error } = await db()
     .from('leaddb_ad_accounts')
-    .update({ ...stateToRowPatch(state), updated_at: new Date().toISOString() })
+    .update({ ...patch, updated_at: new Date().toISOString() })
     .eq('owner_id', ownerId)
     .or(`state_as_of.is.null,state_as_of.lte.${new Date(state.stateAsOf).toISOString()}`)
     .select('owner_id');
@@ -127,6 +136,48 @@ export async function setAdAccountAllowed(ownerId: string, allowed: boolean, adm
     throw new Error(`ad_account_allow_failed:${error.code ?? 'error'}`);
   }
   return (data ?? []).length > 0;
+}
+
+/**
+ * Batch 55 step 2 (contract section 12): the unpaid hold, on or off. Ordered by `holdAsOf` against the stored
+ * `unpaid_hold_as_of`: newer applies, equal applies again, older is 'stale'. Never touches allowed. Throws (a code only)
+ * on a database error.
+ */
+export async function applyUnpaidHold(ownerId: string, hold: UnpaidHoldPush): Promise<'applied' | 'stale' | 'no_account'> {
+  const current = await readAdAccount(ownerId);
+  if (!current) return 'no_account';
+  if (!shouldApplyHold(current.unpaidHoldAsOf ?? null, hold.holdAsOf)) return 'stale';
+  const asOf = new Date(hold.holdAsOf).toISOString();
+  const { data, error } = await db()
+    .from('leaddb_ad_accounts')
+    .update({ unpaid_hold: hold.on, unpaid_hold_as_of: asOf, owed_pence: hold.owedPence, updated_at: new Date().toISOString() })
+    .eq('owner_id', ownerId)
+    .or(`unpaid_hold_as_of.is.null,unpaid_hold_as_of.lte.${asOf}`)
+    .select('owner_id');
+  if (error) {
+    console.error('[leaddb-ad-account] hold failed:', error.code ?? 'error');
+    throw new Error(`ad_account_hold_failed:${error.code ?? 'error'}`);
+  }
+  return (data ?? []).length > 0 ? 'applied' : 'stale';
+}
+
+/**
+ * Batch 55 step 2 (contract section 9, call 4): a pack on the lead database route reached its first successful
+ * generation, so the lead database is told once (the cron sends it). Marks the owner pending only while the call has
+ * never gone. Never throws.
+ */
+export async function markPackNoticePending(ownerId: string): Promise<void> {
+  try {
+    const { error } = await db()
+      .from('leaddb_ad_accounts')
+      .update({ pack_notice_pending: true, updated_at: new Date().toISOString() })
+      .eq('owner_id', ownerId)
+      .is('pack_notice_sent_at', null)
+      .eq('pack_notice_pending', false);
+    if (error) console.error('[leaddb-ad-account] pack notice mark failed:', error.code ?? 'error');
+  } catch {
+    console.error('[leaddb-ad-account] pack notice mark failed');
+  }
 }
 
 /**
