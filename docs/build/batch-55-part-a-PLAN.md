@@ -1,5 +1,10 @@
 # Batch 55 Part A, Phase 1 (STR-Website-2): calculator, eligibility, handoff
 
+> **27 Nov 2026:** Phase 1 is merged (#185). The wire contract is now one file in the lead-database repo,
+> `docs/build/55-CONTRACT.md` (v2); the old copy here is a pointer. Order and status: lead-database `docs/build/55-finish.md` and
+> `docs/build/55-STATUS.md`.
+
+
 Branch: this session's branch (`claude/ecstatic-wright-dyz4mh`). No claim-issue system in this repo.
 
 Lead database customers (no Academy, no website, no domain) get Batch 38's three branded Facebook ads, linked to a branded
