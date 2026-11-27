@@ -238,6 +238,7 @@ export async function runAdDelivery(leadId: string, deps: AdDeliverDeps): Promis
         billableReason: billing.billable_reason,
         repeatOfLeadId: billing.repeat_of_lead_id,
         reportAttachedAt: ctx.report?.completedAt ?? nowIso,
+        lead,
       }),
     );
     if (!res.ok) {

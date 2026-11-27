@@ -189,8 +189,9 @@ export function buildAdLeadPhase(input: {
 
 /**
  * The `report` or `report_failed` phase. DEVIATION from the contract text (section 10 lists `repeat_of_si_lead_id`
- * on phase `lead` only): the landlord's postcode is not known at step 1, so the repeat is found here and sent on the
- * report phase too. It is information only; billing already carries `repeat`.
+ * and `lead` on phase `lead` only): the landlord's postcode and address are not known at step 1, so the repeat is found
+ * here and the full `lead` block is sent again on the report phase too. The repeat is information only; billing already
+ * carries `repeat`.
  */
 export function buildAdReportPhase(input: {
   ldCustomerId: string;
@@ -202,6 +203,8 @@ export function buildAdReportPhase(input: {
   billableReason: BillableReason;
   repeatOfLeadId: string | null;
   reportAttachedAt: string;
+  /** The lead row read fresh at send time: step 2's address, postcode and bedrooms arrive after the lead phase went. */
+  lead: LeadFields;
 }): AdLeadBody {
   return {
     ld_customer_id: input.ldCustomerId,
@@ -209,6 +212,8 @@ export function buildAdReportPhase(input: {
     phase: input.phase,
     is_test: input.isTest,
     repeat_of_si_lead_id: input.repeatOfLeadId,
+    // The full lead block again (the lead database fills only fields that are still empty on its side).
+    lead: adLeadDetails(input.lead),
     ...(input.phase === 'report' && input.report ? { report: input.report } : {}),
     billable: input.billable,
     billable_reason: input.billableReason,

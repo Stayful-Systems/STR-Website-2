@@ -214,7 +214,7 @@ lead database account as an `si_ad` lead. The wire contract is `docs/build/55-CO
   `/api/internal/leaddb-deliveries` drains `leaddb_ad_deliveries` after the Batch 32 drain (`?dry=1` sends nothing): phase
   `lead` (details and the ad tag read from `ad_pack_lead_links` at send time), then `report` (figures, PDF, `low_data`) or
   `report_failed`. A 409 `no_lead` sends the lead again first. `repeat_of_si_lead_id` also goes on the report phase (the
-  postcode is only known after step 2).
+  postcode is only known after step 2), and so does the full `lead` block, read fresh (LD fills only empty fields).
 - **Billing.** Decided ONCE when the first report phase is built and frozen on the row: test (`self_submit`) → not billable;
   no figures → not billable; repeat landlord inside 30 days → `repeat`; low quality → `low_data`; else `report_ran`.
   `chargeDecision(…, source: 'si_ad')` charges a low-data report; without `source` it is byte-identical. Ad leads are never
@@ -225,8 +225,9 @@ lead database account as an `si_ad` lead. The wire contract is `docs/build/55-CO
   `meeting_reached_at` once; decision in `ad-stage.ts`, own test file because it writes `leads`).
 - **First pack.** A lead database pack reaching preview marks `pack_notice_pending`; the cron sends `ad-pack-generated` once
   (404 `unknown_customer` is final).
-- **Provision.** A created or linked member is stamped management (`stampManagement`, so no /welcome quiz); a member provision
-  created gets `welcome_checked_at` with reason `leaddb_ad_route` (no welcome credit).
+- **Provision.** A created or linked member gets the management stamp written directly (no /welcome quiz; never
+  `stampManagement`, which sends a Meta conversion); a member provision created gets `welcome_checked_at` with reason
+  `leaddb_ad_route` (no welcome credit).
 - **Never.** `leads.status` and `leads.crm_pushed_at` are never written. Logs carry an id or code, never a lead, body or secret.
   The new table is not in `ACCESS_COLUMNS`. Lead panel wording for ad leads is in `lead-panel.ts` (site wording unchanged).
 - **Knowledge.** Draft `adpack_ld_ad_leads` in `seed.ts` (no price typed: the price setting is step 3) and an "Ad leads" line in

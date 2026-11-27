@@ -211,10 +211,14 @@ test('settleMember: new member (true), linked owner (false), repeat (false); nev
   assert.deepEqual(boom.out, { status: 200, body: { ok: true, code: 'created' } });
 });
 
-test('the live settleMember stamps management and, for a new member only, the welcome check with its own reason', async () => {
+test('the live settleMember writes the management stamp directly (never stampManagement or a Meta conversion), and the welcome check only for a new member', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('./provision-server.ts', import.meta.url), 'utf8');
-  const fn = src.slice(src.indexOf('async settleMember('));
-  assert.match(fn, /await stampManagement\(ownerId, 'account'\);\s*if \(!isNew\) return;/);
-  assert.match(fn, /update\(\{ welcome_checked_at: new Date\(\)\.toISOString\(\), welcome_withheld_reason: 'leaddb_ad_route' \}\)[\s\S]*?\.is\('welcome_checked_at', null\)/);
+  const codeOnly = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(codeOnly, /stampManagement|recordConversion|recordActivity|queueFunnelSync|management\/stamp-server|meta\/conversions/);
+  const fn = codeOnly.slice(codeOnly.indexOf('async settleMember('));
+  assert.match(fn, /update\(\{ signup_path: 'management', signup_path_at: nowIso, signup_path_via: 'account' \}\)\s*\.eq\('id', ownerId\)\s*\.is\('signup_path', null\)/);
+  assert.match(fn, /!\(await quizDone\(ownerId\)\)[\s\S]*?update\(\{ sourcing_alerts: false \}\)/);
+  assert.ok(fn.indexOf('if (!isNew) return;') < fn.indexOf('welcome_checked_at'));
+  assert.match(fn, /update\(\{ welcome_checked_at: nowIso, welcome_withheld_reason: 'leaddb_ad_route' \}\)[\s\S]*?\.is\('welcome_checked_at', null\)/);
 });

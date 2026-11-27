@@ -110,7 +110,8 @@ test('the report phase: figures, PDF, low_data, frozen billing and report_attach
   assert.deepEqual(await runAdDelivery(LEAD, w.deps), { ok: true, code: 'report_attached' });
   assert.deepEqual(w.posts.map((p) => p.phase), ['lead', 'report']);
   const r = w.posts[1];
-  assert.deepEqual(Object.keys(r).sort(), ['billable', 'billable_reason', 'is_test', 'ld_customer_id', 'phase', 'repeat_of_si_lead_id', 'report', 'report_attached_at', 'si_lead_id']);
+  assert.deepEqual(Object.keys(r).sort(), ['billable', 'billable_reason', 'is_test', 'ld_customer_id', 'lead', 'phase', 'repeat_of_si_lead_id', 'report', 'report_attached_at', 'si_lead_id']);
+  assert.deepEqual(r.lead, { name: 'Ann', email: 'ann@example.test', phone: '07700900123', address: '1 Test Road', postcode: 'LS1 1AA', bedrooms: '3', message: 'Enquired through your Facebook ad calculator.' });
   assert.equal(r.billable, true);
   assert.equal(r.billable_reason, 'report_ran');
   assert.equal(r.report_attached_at, '2026-12-02T14:03:11.000Z');
@@ -139,6 +140,17 @@ test('a failed report sends report_failed: never billable, no report block', asy
   assert.equal(w.posts[0].billable, false);
   assert.equal(w.posts[0].billable_reason, 'no_figures');
   assert.equal('report' in w.posts[0], false);
+  assert.equal(w.posts[0].lead?.address, '1 Test Road', 'the full lead block goes on report_failed too');
+});
+
+test('the report phase reads the lead fresh: an address added at step 2 after the lead phase went is sent', async () => {
+  const w = world({
+    row: { phase_sent: 'lead' },
+    ctx: { address: '22 Later Street', postcode: 'LS2 2BB', bedrooms: 4, result: RESULT, report: { state: 'done', qualityOk: true, selfSubmit: false, completedAt: null } },
+  });
+  await runAdDelivery(LEAD, w.deps);
+  assert.equal(w.posts[0].phase, 'report');
+  assert.deepEqual([w.posts[0].lead?.address, w.posts[0].lead?.postcode, w.posts[0].lead?.bedrooms], ['22 Later Street', 'LS2 2BB', '4']);
 });
 
 test('a test lead (the owner on their own calculator) is sent with is_test on every phase and never billable', async () => {
