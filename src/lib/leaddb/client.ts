@@ -27,7 +27,10 @@ export type LeadDbPath =
   | '/api/internal/si/link/start'
   | '/api/internal/si/link/confirm'
   | '/api/internal/si/link/revoke'
-  | '/api/internal/si/website-leads';
+  | '/api/internal/si/website-leads'
+  // Batch 55 step 2 (contract sections 9 and 10): the ad leads of a calculator site, and "first ad pack made".
+  | '/api/internal/si/ad-leads'
+  | '/api/internal/si/ad-pack-generated';
 
 export interface LeadDbResult<T = Record<string, unknown>> {
   ok: boolean;

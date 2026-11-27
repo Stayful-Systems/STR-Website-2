@@ -115,7 +115,7 @@ test('the seed plan skips a retired entry whose seed text changed', async () => 
 test('the ad pack drafts cover the tenant notice video and its voice, with the count as a placeholder', async () => {
   const { SERVICE_FACTS } = await import('./service-facts.ts');
   const adpack = SEED.filter((e) => e.slug.startsWith('adpack_'));
-  assert.deepEqual(adpack.map((e) => e.slug), ['adpack_what', 'adpack_who', 'adpack_regenerate', 'adpack_video_voice', 'adpack_video_email', 'adpack_tagging', 'adpack_not_included', 'adpack_ld_calculator', 'adpack_ld_rounds', 'adpack_audience']);
+  assert.deepEqual(adpack.map((e) => e.slug), ['adpack_what', 'adpack_who', 'adpack_regenerate', 'adpack_video_voice', 'adpack_video_email', 'adpack_tagging', 'adpack_not_included', 'adpack_ld_calculator', 'adpack_ld_rounds', 'adpack_audience', 'adpack_ld_ad_leads']);
   const voice = SEED.find((e) => e.slug === 'adpack_video_voice');
   assert.ok(voice);
   assert.match(voice.answer, /\{ad_pack_voice_changes\}/);
@@ -155,4 +155,20 @@ test('the lead database ad pack drafts exist, use the two new placeholders and t
   assert.match(SERVICE_FACTS, /LEAD DATABASE AD PACKS/);
   assert.match(SERVICE_FACTS, /\{ad_calc_reports_per_day\}/);
   assert.match(SERVICE_FACTS, /\{ad_pack_ld_round_days\}/);
+});
+
+// Batch 55 step 2: the ad leads draft. A draft, no typed figure or price (the price setting comes in step 3).
+test('the ad leads draft exists, says what is charged and what is not, and types no figure', async () => {
+  const { SERVICE_FACTS } = await import('./service-facts.ts');
+  const e = SEED.find((x) => x.slug === 'adpack_ld_ad_leads');
+  assert.ok(e);
+  assert.match(e.answer, /lead database/);
+  assert.match(e.answer, /early estimate/);
+  assert.match(e.answer, /separate lead/);
+  assert.match(e.answer, /cannot be swapped or replaced/);
+  assert.match(e.answer, /test/);
+  assert.doesNotMatch(`${e.question} ${e.variants.join(' ')} ${e.answer}`, /!|\d|£/);
+  assert.deepEqual(e.channels, ['view', 'chat']);
+  assert.match(SERVICE_FACTS, /Ad leads \(lead database route\)/);
+  assert.match(SERVICE_FACTS, /unpaid hold/);
 });

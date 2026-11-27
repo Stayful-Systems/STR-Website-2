@@ -187,3 +187,34 @@ test('parseProvisionBody: strict about every field', () => {
     assert.equal(parseProvisionBody(bad), null, JSON.stringify(bad));
   }
 });
+
+// Batch 55 step 2: the first-login fix. A created or linked member is stamped a management company; only a member this
+// call created is marked as checked for the welcome credit.
+test('settleMember: new member (true), linked owner (false), repeat (false); never on a refusal; a throw never fails the call', async () => {
+  const run = async (over: Partial<World>, settle?: (o: string, n: boolean) => Promise<void>) => {
+    const { w, deps } = world(over);
+    const settled: [string, boolean][] = [];
+    deps.settleMember = settle ?? (async (o, n) => { settled.push([o, n]); });
+    const out = await runProvision(deps, parsed());
+    return { out, settled, w };
+  };
+  const fresh = await run({});
+  assert.deepEqual(fresh.settled, [['new-owner', true]]);
+  const linked = await run({ profiles: new Map([['op@example.com', 'owner-9']]) });
+  assert.deepEqual(linked.settled, [['owner-9', false]]);
+  const repeat = await run({ byCustomer: new Map([['cust_1', account()]]) });
+  assert.deepEqual(repeat.settled, [['owner-1', false]]);
+  const refused = await run({ profiles: new Map([['op@example.com', 'owner-9']]), siteOwners: new Set(['owner-9']) });
+  assert.deepEqual(refused.settled, []);
+  assert.equal(refused.out.status, 409);
+  const boom = await run({}, async () => { throw new Error('db down'); });
+  assert.deepEqual(boom.out, { status: 200, body: { ok: true, code: 'created' } });
+});
+
+test('the live settleMember stamps management and, for a new member only, the welcome check with its own reason', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('./provision-server.ts', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('async settleMember('));
+  assert.match(fn, /await stampManagement\(ownerId, 'account'\);\s*if \(!isNew\) return;/);
+  assert.match(fn, /update\(\{ welcome_checked_at: new Date\(\)\.toISOString\(\), welcome_withheld_reason: 'leaddb_ad_route' \}\)[\s\S]*?\.is\('welcome_checked_at', null\)/);
+});

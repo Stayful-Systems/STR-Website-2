@@ -15,7 +15,7 @@ const read = (name: string) => readFileSync(new URL(`./${name}/route.ts`, import
 /** Source with comments removed, so a rule about code is not met (or broken) by prose. */
 const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '');
 
-const NAMES = ['provision', 'state', 'signin'] as const;
+const NAMES = ['provision', 'state', 'signin', 'unpaid-hold'] as const;
 const sources = Object.fromEntries(NAMES.map((n) => [n, { raw: read(n), code: code(read(n)) }])) as Record<(typeof NAMES)[number], { raw: string; code: string }>;
 
 for (const name of NAMES) {
@@ -104,8 +104,20 @@ test('signin: only for a linked customer, one magic link, lands on /leads/ads, s
   // The url and the email are not logged.
 });
 
-test('the routes sit under /api/internal/si/ad-route and are the only three', () => {
+test('unpaid-hold: unknown customer is 404, a stale call is 200, and the hold goes through applyUnpaidHold only', () => {
+  const c = sources['unpaid-hold'].code;
+  assert.match(c, /parseUnpaidHold\(body\)/);
+  assert.match(c, /readAdAccountByCustomerId\(ldCustomerId\)/);
+  assert.match(c, /code: 'unknown_customer' \}, \{ status: 404 \}/);
+  assert.match(c, /applyUnpaidHold\(account\.ownerId, hold\)/);
+  assert.ok(c.indexOf('readAdAccountByCustomerId(') < c.indexOf('applyUnpaidHold('));
+  assert.match(c, /Response\.json\(\{ ok: true, code: result \}\)/);
+  // No other write path to the table, never Zac's switch, and never called a pause.
+  assert.doesNotMatch(c, /\.(from|insert|update|upsert|delete|rpc)\(|setAdAccountAllowed|createAdAccount|allowed|pause/i);
+});
+
+test('the routes sit under /api/internal/si/ad-route and are the only five (stage has its own test file: it writes leads)', () => {
   const dir = new URL('./', import.meta.url);
   const entries = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
-  assert.deepEqual(entries, ['provision', 'signin', 'state']);
+  assert.deepEqual(entries, ['provision', 'signin', 'stage', 'state', 'unpaid-hold']);
 });

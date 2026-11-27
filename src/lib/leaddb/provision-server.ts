@@ -3,6 +3,7 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { emailKey } from '../supabase/email-key';
 import { ensureCalculatorSite } from '../websites/store-server';
+import { stampManagement } from '../management/stamp-server';
 import { applyAdAccountState, createAdAccount, readAdAccount, readAdAccountByCustomerId } from './ad-account-server';
 import type { ProvisionDeps } from './provision-run';
 
@@ -82,5 +83,19 @@ export function liveProvisionDeps(): ProvisionDeps {
     },
 
     ensureSite: (input) => ensureCalculatorSite(input),
+
+    // Batch 55 step 2: the first sign-in lands on the ads, not the /welcome quiz (stampManagement writes only while
+    // signup_path is null), and a member this call created is not given the welcome credit (the check ensureWelcomeGrant
+    // reads, stamped as done with its own reason). An existing member's welcome state is never touched.
+    async settleMember(ownerId, isNew) {
+      await stampManagement(ownerId, 'account');
+      if (!isNew) return;
+      const { error } = await db()
+        .from('profiles')
+        .update({ welcome_checked_at: new Date().toISOString(), welcome_withheld_reason: 'leaddb_ad_route' })
+        .eq('id', ownerId)
+        .is('welcome_checked_at', null);
+      if (error) console.error('[leaddb-ad-route] welcome check stamp failed:', error.code ?? 'error');
+    },
   };
 }

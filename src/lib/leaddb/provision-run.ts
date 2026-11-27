@@ -49,6 +49,13 @@ export interface ProvisionDeps {
   /** A new login (email already confirmed) with its profile row. Null on failure. */
   createMember(email: string): Promise<string | null>;
   ensureSite(input: { ownerId: string; company: string; email: string; phone: string | null }): Promise<EnsureSiteResult>;
+  /**
+   * Batch 55 step 2 (the first-login fix): the member is a management company (so the first sign-in skips the welcome
+   * quiz), and a member this call CREATED (`isNew`) is marked as already checked for the welcome credit (a lead database
+   * customer is not given it). Called when the account is created or linked, and on a repeat. Optional; must not throw
+   * (runProvision swallows it anyway), and a failure never fails the provision.
+   */
+  settleMember?(ownerId: string, isNew: boolean): Promise<void>;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -90,6 +97,7 @@ export async function runProvision(deps: ProvisionDeps, input: ProvisionInput): 
 
   // 2. The member: an existing owner with this email, or a new login.
   let ownerId = await deps.findOwnerByEmail(input.email);
+  let isNew = false;
   if (ownerId) {
     if (await deps.isTeamMember(ownerId)) return fail(409, 'conflict');
     const other = await deps.readAccountByOwner(ownerId);
@@ -99,12 +107,14 @@ export async function runProvision(deps: ProvisionDeps, input: ProvisionInput): 
   } else {
     ownerId = await deps.createMember(input.email);
     if (!ownerId) return fail(500, 'server_error');
+    isNew = true;
   }
 
   // 3. The ad account (allowed = false).
   const made = await deps.createAccount({ ownerId, ldCustomerId: input.ldCustomerId, state: input.state });
   if (made === 'conflict') return fail(409, 'conflict');
   if (made === 'exists') return finishExisting(deps, ownerId, input);
+  await settle(deps, ownerId, isNew);
 
   // 4. The calculator site.
   const site = await deps.ensureSite({ ownerId, company: input.company, email: input.email, phone: input.phone });
@@ -112,8 +122,19 @@ export async function runProvision(deps: ProvisionDeps, input: ProvisionInput): 
   return ok('created');
 }
 
+/** Batch 55 step 2: the management stamp (and, for a new member, the welcome check). Never throws. */
+async function settle(deps: ProvisionDeps, ownerId: string, isNew: boolean): Promise<void> {
+  if (!deps.settleMember) return;
+  try {
+    await deps.settleMember(ownerId, isNew);
+  } catch {
+    // The account is made; the stamp is repeated on the next provision (a repeat calls it again).
+  }
+}
+
 async function finishExisting(deps: ProvisionDeps, ownerId: string, input: ProvisionInput): Promise<ProvisionOutcome> {
   await deps.applyState(ownerId, input.state);
+  await settle(deps, ownerId, false);
   const site = await deps.ensureSite({ ownerId, company: input.company, email: input.email, phone: input.phone });
   // A site-mode website that appeared since is not this call's problem: the account exists.
   if (!site.ok && site.reason === 'failed') return fail(500, 'server_error');

@@ -1169,6 +1169,23 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['What targeting do I set on my ads?', 'Which interests should I add?', 'Should I narrow my audience to my own area?', 'What do I put for age and gender?', 'Why does the guide say not to type a budget amount in the audience step?', 'Can I add exclusions or a lookalike audience?'],
     answer: 'The guide’s Set up your audience step is the same for every customer. Choose the United Kingdom, the widest age range Facebook offers and all genders. Turn Advantage+ audience on, add the three interests it lists (Real property, Landlord and Airbnb) and use Advantage+ placements. Turn the campaign budget on without typing an amount, because you choose your own, and leave exclusions and lookalikes empty unless you have your own list. The step shows when it was last checked against Facebook’s own screen.',
   },
+  {
+    slug: 'adpack_ld_ad_leads',
+    from: 'Batch 55 step 2, lead database ad route (every calculator report reaches the customer’s lead database with its figures and the ad that brought it; low-data reports and repeat landlords are charged; ad leads are not replaceable; the owner’s own test leads are not charged)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Where do the leads from my Facebook ad calculator go, and which ones am I charged for?',
+    variants: [
+      'Do my calculator leads go to my lead database?',
+      'Am I charged for a lead with an early estimate?',
+      'Why was I charged for the same landlord twice?',
+      'Can I replace an ad lead?',
+      'Am I charged when I test my own calculator?',
+      'How do I know which ad a lead came from?',
+    ],
+    answer: 'Every landlord who uses your calculator goes into your lead database as an ad lead: their details first, then their report with its figures and the ad that brought them (or Ad unknown). Each report that runs is charged, including one labelled an early estimate because local data was limited, and a landlord who enquires again is charged as a separate lead. A report that could not be built is not charged, nor is a test made with your own details. Ad leads cannot be swapped or replaced; if something looks wrong, ask the team at {team_email}.',
+  },
   // ── Batch 35: Facebook lead forms through Google Sheets, attribution, one-tap outcomes and Your ads (drafts for Zac to approve; every figure is an ad_sheet_* setting) ──
   {
     slug: 'adsheet_what',

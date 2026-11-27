@@ -82,3 +82,27 @@ test('the card links to setup before go-live, the live address when live, and no
   assert.equal(websiteCardModel({ slug: 'acme', status: 'live' }).statusLabel, 'Live');
   assert.match(strip(read('../../../lib/websites/lead-panel.ts')), /siteHref\(\{ slug: site\.slug \}\)/);
 });
+
+// Batch 55 step 2 (rule 12): ad leads (a calculator site's leads). Website wording above is unchanged.
+test('an ad lead: the low-data detail says it is still charged, the amber label stays, and the extra lines', async () => {
+  const { AD_LEAD_LOW_DATA_DETAIL, AD_LEAD_REPEAT_LINE, AD_LEAD_NOT_REPLACEABLE, AD_LEAD_TEST_LINE, adLeadLines } = await import('../../../lib/websites/lead-panel.ts');
+  const low = reportStateText({ state: 'done', dueDay: null, qualityOk: false }, { adLead: true });
+  assert.equal(low.detail, 'There was limited local data, so the figures are an early estimate. This lead is still charged.');
+  assert.equal(low.detail, AD_LEAD_LOW_DATA_DETAIL);
+  assert.equal(low.label, reportStateText({ state: 'done', dueDay: null, qualityOk: false }).label, 'the same amber early-estimate label');
+  assert.equal(low.tone, 'warn');
+  // Site mode, and an ad lead that is not low data, read exactly as before.
+  assert.match(reportStateText({ state: 'done', dueDay: null, qualityOk: false }).detail, /You were not charged for it/);
+  assert.deepEqual(reportStateText({ state: 'done', dueDay: null, qualityOk: true }, { adLead: true }), reportStateText({ state: 'done', dueDay: null, qualityOk: true }));
+  assert.equal(AD_LEAD_REPEAT_LINE, 'This landlord enquired before. This is charged as a separate lead.');
+  assert.equal(AD_LEAD_NOT_REPLACEABLE, 'Ad leads are not replaceable.');
+  assert.deepEqual(adLeadLines({ adLead: false, repeat: true }), []);
+  assert.deepEqual(adLeadLines({ adLead: true, repeat: false }), [AD_LEAD_NOT_REPLACEABLE]);
+  assert.deepEqual(adLeadLines({ adLead: true, repeat: true }), [AD_LEAD_REPEAT_LINE, AD_LEAD_NOT_REPLACEABLE]);
+  assert.deepEqual(adLeadLines({ adLead: true, repeat: true, test: true }), [AD_LEAD_TEST_LINE, AD_LEAD_NOT_REPLACEABLE]);
+  // The panel asks the flags of adLeadPanelFacts and shows the lines; it still reads no lead details itself.
+  assert.match(panel, /adLeadPanelFacts\(leadId\)/);
+  assert.match(panel, /reportStateText\(\{ state: report\.state, dueDay: report\.due_day, qualityOk: report\.quality_ok \}, \{ adLead: ad\.adLead \}\)/);
+  const facts = strip(read('../../../lib/leaddb/ad-panel-server.ts'));
+  assert.doesNotMatch(facts, /from\('leads'\)|\bresult\b|address|postcode/);
+});

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
-import { reportStateText, websiteCardModel, type WebsiteCardInput } from "@/lib/websites/lead-panel";
+import { adLeadLines, reportStateText, websiteCardModel, type WebsiteCardInput } from "@/lib/websites/lead-panel";
+import { adLeadPanelFacts } from "@/lib/leaddb/ad-panel-server";
 
 /**
  * Batch 31 phase 12: what a website lead adds to the lead view.
@@ -12,6 +13,10 @@ import { reportStateText, websiteCardModel, type WebsiteCardInput } from "@/lib/
  * service role, and only the columns listed below: never `leads.result`, an
  * address, or a postcode. Renders nothing for a lead with no website report
  * row, so an ordinary funnel lead looks exactly as before.
+ *
+ * Batch 55 step 2: a lead from a calculator site is an ad lead (flags from adLeadPanelFacts): its low-data detail says
+ * it is still charged, a repeat landlord says so, and a plain line says ad leads are not replaceable. A website lead's
+ * wording is unchanged.
  */
 
 const REPORT_COLUMNS = "state, due_day, quality_ok, self_submit";
@@ -56,25 +61,32 @@ const TONE: Record<string, string> = {
 export async function LeadPanel({ leadId }: { leadId: string }) {
   if (!hasServiceRole()) return null;
   const db = createAdminClient();
-  const [reportRes, sourceRes] = await Promise.all([
+  const [reportRes, sourceRes, ad] = await Promise.all([
     db.from("website_reports").select(REPORT_COLUMNS).eq("lead_id", leadId).maybeSingle(),
     db.from("lead_sources").select(SOURCE_COLUMNS).eq("lead_id", leadId).maybeSingle(),
+    adLeadPanelFacts(leadId),
   ]);
   const report = reportRes.data as unknown as ReportRow | null;
   if (!report) return null;
   const source = sourceRes.data as unknown as SourceRow | null;
 
-  const text = reportStateText({ state: report.state, dueDay: report.due_day, qualityOk: report.quality_ok });
+  const text = reportStateText({ state: report.state, dueDay: report.due_day, qualityOk: report.quality_ok }, { adLead: ad.adLead });
+  const adLines = adLeadLines({ ...ad, test: report.self_submit });
   const sourceRows = source ? SOURCE_LABELS.filter(([key]) => Boolean(source[key])) : [];
 
   return (
     <section className="mt-3 rounded-xl border border-border bg-card p-4 sm:p-5" aria-label="Website enquiry">
-      <h2 className="text-sm font-semibold text-foreground">From your website</h2>
+      <h2 className="text-sm font-semibold text-foreground">{ad.adLead ? "From your Facebook ad calculator" : "From your website"}</h2>
       <p className={`mt-2 text-sm font-medium ${TONE[text.tone]}`}>Report: {text.label}</p>
       {text.detail ? <p className="mt-1 text-xs text-muted-foreground">{text.detail}</p> : null}
       {report.self_submit ? (
         <p className="mt-2 text-xs text-warning">Flagged as a self-submit: it matches your own or your team&apos;s details.</p>
       ) : null}
+      {adLines.map((line) => (
+        <p key={line} className="mt-2 text-xs text-muted-foreground">
+          {line}
+        </p>
+      ))}
 
       <div className="mt-3 border-t border-border pt-3">
         <p className="text-xs font-medium text-foreground">Where they came from</p>

@@ -144,7 +144,8 @@ test('leadDbAccountFacts: stopped never includes the card; pause is never read',
 });
 
 test('mapping: adRouteVerdict’s reason is the first eligibility reason, over every account state', () => {
-  assert.deepEqual(LEADDB_REASON_OF_VERDICT, { no_account: 'no_leaddb_account', account_stopped: 'account_stopped', no_card: 'no_card', not_allowed: 'not_allowed' });
+  // Batch 55 step 2: the unpaid hold reads as account_stopped (the same neutral wording).
+  assert.deepEqual(LEADDB_REASON_OF_VERDICT, { no_account: 'no_leaddb_account', account_stopped: 'account_stopped', unpaid_hold: 'account_stopped', no_card: 'no_card', not_allowed: 'not_allowed' });
   const accounts: (LeadDbAdAccount | null)[] = [null];
   for (const allowed of [true, false])
     for (const cardOnFile of [true, false])
@@ -152,7 +153,8 @@ test('mapping: adRouteVerdict’s reason is the first eligibility reason, over e
         for (const accountStatus of ['active', 'paused', 'past_due', 'pending_cancel', 'cancelled', 'lapsed', null])
           for (const stateAsOf of [new Date('2026-11-25T10:00:00Z'), null])
             for (const cancelEffectiveAt of [null, new Date('2026-11-20T00:00:00Z'), new Date('2026-12-20T00:00:00Z')])
-              accounts.push(account({ allowed, cardOnFile, lapsed, accountStatus, stateAsOf, cancelEffectiveAt }));
+              for (const unpaidHold of [false, true])
+                accounts.push(account({ allowed, cardOnFile, lapsed, accountStatus, stateAsOf, cancelEffectiveAt, unpaidHold }));
   for (const a of accounts) {
     const verdict = adRouteVerdict(a, NOW);
     const v = evaluateLeadDbEligibility({ isOwner: true, hasWebsite: false, ...leadDbAccountFacts(a, NOW), switchOn: true });

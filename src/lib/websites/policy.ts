@@ -175,15 +175,32 @@ export function qualityOk(parts: { complete: boolean; trustworthy: boolean }): b
 
 export type ChargeDecision =
   | { charge: false; reason: 'free_mode' | 'no_figures' | 'low_quality' }
-  | { charge: true; pence: number };
+  | { charge: true; pence: number }
+  /** Batch 55 step 2: an ad-calculator (si_ad) report with limited local data is still charged (rule 11). */
+  | { charge: true; pence: number; reason: 'low_data' };
+
+/** Where the lead came from. Absent: a website report, exactly as before. */
+export type ChargeSource = 'si_website' | 'si_ad';
 
 /**
  * Whether to charge once a report has run. Uses the mode FROZEN at step 2, never
  * the live setting. Free mode makes no charge decision at all. Charged mode
  * charges only a report that has figures and is quality OK; a low-quality or
  * failed report is never charged.
+ *
+ * Batch 55 step 2 (rules 10 and 11): `source: 'si_ad'` is a calculator report billed by the lead database, not here,
+ * so the frozen mode and price are not read: a report with no figures is not charged (`no_figures`); a low-quality one
+ * IS charged, with reason `low_data` (the quality check is only the label); anything else is charged. The pence is
+ * whatever was passed (the lead database sets the price). Test leads are decided by the caller before this is asked.
+ * Without `source`, or with 'si_website', nothing changes.
  */
-export function chargeDecision(f: { billingMode: BillingMode; pricePence: number; quality: boolean | null; hasFigures: boolean }): ChargeDecision {
+export function chargeDecision(f: { billingMode: BillingMode; pricePence: number; quality: boolean | null; hasFigures: boolean; source?: ChargeSource }): ChargeDecision {
+  if (f.source === 'si_ad') {
+    const pence = Math.max(0, Math.floor(Number.isFinite(f.pricePence) ? f.pricePence : 0));
+    if (!f.hasFigures) return { charge: false, reason: 'no_figures' };
+    if (f.quality !== true) return { charge: true, pence, reason: 'low_data' };
+    return { charge: true, pence };
+  }
   if (f.billingMode !== 'charged') return { charge: false, reason: 'free_mode' };
   if (!f.hasFigures) return { charge: false, reason: 'no_figures' };
   if (f.quality !== true) return { charge: false, reason: 'low_quality' };

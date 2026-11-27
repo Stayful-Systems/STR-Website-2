@@ -17,6 +17,7 @@ import { readAdCalcReportsPerDay } from '@/lib/websites/calc-settings-server';
 import { notifyOperatorOfWebsiteLead } from '@/lib/websites/notify-server';
 import { enqueueLeadDbPush } from '@/lib/leaddb/deliver';
 import { linkLeadToPackAd } from '@/lib/ad-packs/attribution-server';
+import { enqueueAdLeadPush } from '@/lib/leaddb/ad-deliver';
 import { domainIsLiveFor } from '@/lib/domains/store-server';
 import { siteDomain } from '@/lib/websites/urls';
 
@@ -216,6 +217,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
 
   void enqueueLeadDbPush(leadId).catch(() => {}); // Batch 32: the operator's lead database gets it too (never throws, never waits)
   void linkLeadToPackAd(leadId).catch(() => {}); // Batch 38: record which pack ad brought it (never throws, never waits)
+  void enqueueAdLeadPush(leadId).catch(() => {}); // Batch 55 step 2: a calculator lead goes to the lead database as an ad lead (never throws, never waits)
 
   // ── 7. The operator hears of the lead now, not only when a report finishes. Once per lead. ──
   await notifyOperatorOfWebsiteLead({ leadId, websiteId: site.id });

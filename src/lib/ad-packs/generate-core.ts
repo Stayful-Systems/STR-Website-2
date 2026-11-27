@@ -276,6 +276,12 @@ export type GenerateDeps = {
   pricing?: Pricing;
   /** Log a line: an event name, a pack id and a code. Never anything else. */
   log?: (event: string, fields: { packId?: string; code?: string }) => void;
+  /**
+   * Batch 55 step 2 (contract section 9, call 4): a pack on the lead database route reached a successful generation
+   * (status 'preview'). The live wiring marks the owner's "first ad pack made" call pending only while it has never
+   * gone, so it reaches the lead database once. Optional; a failure here never fails the generation.
+   */
+  onLeadDbPackGenerated?: (ownerId: string) => Promise<void>;
 };
 
 // ── Pure helpers ──
@@ -1012,6 +1018,15 @@ export function createAdPackEngine(deps: GenerateDeps) {
           if (!(await store.useRoundGrant(ownerId, grantId, nowIso))) log('round_grant_not_used', { packId: taken.id, code: 'already_used' });
         } catch (e) {
           log('round_grant_not_used', { packId: taken.id, code: e instanceof StoreError ? e.code : 'error' });
+        }
+      }
+
+      // Batch 55 step 2: tell the lead database (through the cron) that this customer has made ads. Never throws.
+      if (status === 'preview' && route === 'leaddb' && deps.onLeadDbPackGenerated) {
+        try {
+          await deps.onLeadDbPackGenerated(ownerId);
+        } catch {
+          log('pack_notice_not_marked', { packId: taken.id, code: 'error' });
         }
       }
 

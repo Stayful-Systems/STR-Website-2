@@ -47,6 +47,7 @@ const REASONS: Record<AdRouteStopReason, string> = {
   no_account: 'No account',
   account_stopped: 'Account stopped',
   no_card: 'No card on file',
+  unpaid_hold: 'Unpaid hold',
   not_allowed: 'Not allowed yet',
 };
 
