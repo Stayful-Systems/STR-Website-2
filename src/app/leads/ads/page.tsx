@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ownerIdOrNull } from "@/lib/leads/scope";
@@ -16,7 +17,7 @@ import { Calm } from "./ui";
 import { ConnectSheet } from "./ConnectSheet";
 import { YourAds } from "./YourAds";
 import { packScreen, regenView } from "./state";
-import { adViewModel, approvalVm, areaPreviewView, brandOfSettings, brandProblemText, eligibilityView, figureCallout, previewPathsOf, problemView, regenIntro, stageOf, voiceVm, type AreaPreviewView } from "./view";
+import { adViewModel, approvalVm, profileHint, areaPreviewView, brandOfSettings, brandProblemText, eligibilityView, figureCallout, previewPathsOf, problemView, regenIntro, stageOf, voiceVm, type AreaPreviewView } from "./view";
 
 export const metadata: Metadata = { title: "Your Facebook ads — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -39,7 +40,23 @@ export default async function AdsPage() {
   const { brand, problems } = brandOfSettings(elig.website.settings);
   const view = await listPackForOwner(ownerId);
   const screen = packScreen(view, new Date().getTime());
-  const previewNotice = admin && !(await readAdPacksEnabled()) ? <Calm live={false}>Admin preview: the Facebook ads switch is off, so operators cannot see this yet.</Calm> : null;
+  const adminNotice = admin && !(await readAdPacksEnabled()) ? <Calm live={false}>Admin preview: the Facebook ads switch is off, so operators cannot see this yet.</Calm> : null;
+  // Batch 55 step 5 (A7): a lead database customer with no logo or no area is told what to add and where. Never blocks.
+  const hint = elig.route === "leaddb" ? profileHint({ logoUrl: brand.logoUrl, areas: brand.areas }) : null;
+  const hintNotice = hint ? (
+    <Calm live={false}>
+      {hint.text}{" "}
+      <Link href={hint.href ?? "/leads/setup/website"} className="font-semibold underline">
+        {hint.label}
+      </Link>
+    </Calm>
+  ) : null;
+  const previewNotice = adminNotice || hintNotice ? (
+    <>
+      {adminNotice}
+      {hintNotice}
+    </>
+  ) : null;
 
   // ── The pictures are being made right now ──
   if (screen.kind === "working") {
@@ -119,7 +136,7 @@ export default async function AdsPage() {
   }
 
   // ── Making (the video is on its way), ready to look at, ready to use ──
-  const adVms = ads.map((a) => adViewModel(a, (path) => urls.get(path) ?? null, a.angle === "5b" ? view.video : null));
+  const adVms = ads.map((a) => adViewModel(a, (path) => urls.get(path) ?? null, a.angle === "5b" ? view.video : null, pack.route === "leaddb" ? { route: "leaddb" } : undefined));
   const videoState = adVms.find((a) => a.video)?.video?.card.state ?? null;
   const stage = stageOf(screen.kind, videoState);
   if (stage !== "making" && stage !== "review" && stage !== "approved") return null;

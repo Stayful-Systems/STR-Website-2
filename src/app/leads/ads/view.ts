@@ -18,6 +18,9 @@ import type { CheckId } from '../../../lib/ad-packs/checks.ts';
 import type { AdFiles, AdTexts, PackStatus } from '../../../lib/ad-packs/store-types.ts';
 import type { PackView, VideoView } from '../../../lib/ad-packs/generate-core.ts';
 import { VOICES, voiceByKey, type VoiceKey } from '../../../lib/ad-packs/voices.ts';
+// Batch 55 step 5: the lead database ads' concept lines (pure, client-safe) and the gate's ids (type only).
+import { LD_ANGLE_DEFS } from '../../../lib/ad-packs/ld-angles.ts';
+import type { LdCheckId } from '../../../lib/ad-packs/ld-gate.ts';
 
 export const ADS_PATH = '/leads/ads';
 export const GUIDE_PATH = '/leads/ads/guide';
@@ -308,13 +311,23 @@ const CHECK_PLAIN: Record<CheckId, string> = {
 };
 export const CHECK_PLAIN_IDS = Object.keys(CHECK_PLAIN) as CheckId[];
 
+/** Batch 55 step 5: the lead database ads' own reasons, in the same plain words. */
+export const LD_CHECK_PLAIN: Record<LdCheckId, string> = {
+  ld_format: 'Two of the ads came out as the same kind of ad.',
+  ld_message: 'Two of the ads said the same thing.',
+  ld_picture: 'Two of the ads looked too much alike.',
+  ld_facts: 'One line said something we cannot be sure is true for you.',
+  ld_offer: 'One ad did not say the free income report first.',
+};
+
 export type ProblemView = { title: string; lines: string[]; contact: string };
 
 /** "We couldn't finish your ads": what went wrong in plain English (one line each), never a code. */
 export function problemView(checks: { failures: readonly { check: string }[] } | null | undefined): ProblemView {
   const seen: string[] = [];
   for (const f of checks?.failures ?? []) if (!seen.includes(f.check)) seen.push(f.check);
-  const lines = seen.map((id) => (CHECK_PLAIN as Record<string, string>)[id]).filter((l): l is string => typeof l === 'string');
+  const plain: Record<string, string> = { ...CHECK_PLAIN, ...LD_CHECK_PLAIN };
+  const lines = seen.map((id) => plain[id]).filter((l): l is string => typeof l === 'string');
   return {
     title: 'We could not finish your ads',
     lines: lines.length > 0 ? lines : ['Something in your ads did not come out right.'],
@@ -490,6 +503,8 @@ export type AdVm = {
   cards: AdCardVm[];
   /** The notice ad's video, null for a picture ad. */
   video: VideoVm | null;
+  /** Batch 55 step 5 (A7): who the ad is for, in one plain line (lead database ads only). */
+  concept?: string;
   /** What can be downloaded now, by size (empty while the video is still being made). */
   downloads: DownloadGroup[];
 };
@@ -515,15 +530,20 @@ export function adViewModel(
   ad: { id: string; angle: Angle; adName: string; link: string; texts: Pick<AdTexts, 'primary' | 'headlines' | 'descriptions'>; files: AdFiles },
   urlOf: (path: string) => string | null,
   live?: Pick<VideoView, 'status' | 'code' | 'poll' | 'canRetry' | 'message'> | null,
+  /** Batch 55 step 5: the lead database route (the concept line, and 17's video). Absent: exactly as before. */
+  opts?: { route?: 'academy' | 'leaddb' },
 ): AdVm {
   const pathOf = (name: string) => ad.files.images.find((f) => f.name === name)?.path ?? null;
   const cards = groupCardFiles(ad.files.images).map((c) => {
     const path = pathOf(c.previewName);
     return { card: c.card, previewUrl: path ? urlOf(path) : null, files: c.files };
   });
-  const video = ad.angle === '5b' ? videoVm(ad.files.video, live ?? videoViewOfSlot(ad.files.video), urlOf) : null;
+  const ld = opts?.route === 'leaddb';
+  const hasVideo = ad.angle === '5b' || (ld && ad.files.video !== null);
+  const video = hasVideo ? videoVm(ad.files.video, (ad.angle === '5b' ? live : null) ?? videoViewOfSlot(ad.files.video), urlOf) : null;
   const meta = AD_TITLES[ad.angle];
   return {
+    ...(ld ? { concept: conceptLine(ad.angle) } : {}),
     id: ad.id,
     angle: ad.angle,
     number: meta?.number ?? 0,
@@ -535,6 +555,27 @@ export function adViewModel(
     video,
     downloads: downloadGroups({ cards, video }),
   };
+}
+
+// ── Batch 55 step 5 (A7): what each lead database ad is for, and what to add to the calculator ──
+
+/** "For landlords whose tenant is leaving": one plain line per ad (ld-angles.ts). */
+export function conceptLine(angle: Angle): string {
+  return LD_ANGLE_DEFS[angle]?.concept.forWho ?? '';
+}
+
+export const CALCULATOR_SETTINGS_HREF = '/leads/setup/website';
+
+/**
+ * One line when the ads were made with little to go on (no logo, or no area): what to add and where. Never blocks
+ * making the ads. Null when there is nothing to add.
+ */
+export function profileHint(p: { logoUrl: string | null; areas: readonly string[] }): NextStep | null {
+  const noLogo = !p.logoUrl;
+  const noArea = p.areas.filter((a) => String(a ?? '').trim() !== '').length === 0;
+  if (!noLogo && !noArea) return null;
+  const what = noLogo && noArea ? 'your logo and the areas you cover' : noLogo ? 'your logo' : 'the areas you cover';
+  return { text: `Your ads look best with ${what}. Add them on your calculator page and your next ads will use them.`, href: CALCULATOR_SETTINGS_HREF, label: 'Open your calculator page' };
 }
 
 // ── Looks good: why it may not be pressed yet ──

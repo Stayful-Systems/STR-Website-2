@@ -115,7 +115,7 @@ test('the seed plan skips a retired entry whose seed text changed', async () => 
 test('the ad pack drafts cover the tenant notice video and its voice, with the count as a placeholder', async () => {
   const { SERVICE_FACTS } = await import('./service-facts.ts');
   const adpack = SEED.filter((e) => e.slug.startsWith('adpack_'));
-  assert.deepEqual(adpack.map((e) => e.slug), ['adpack_what', 'adpack_who', 'adpack_regenerate', 'adpack_video_voice', 'adpack_video_email', 'adpack_tagging', 'adpack_not_included', 'adpack_ld_calculator', 'adpack_ld_rounds', 'adpack_audience', 'adpack_ld_ad_leads', 'adpack_ld_brand_from_leaddb']);
+  assert.deepEqual(adpack.map((e) => e.slug), ['adpack_what', 'adpack_who', 'adpack_regenerate', 'adpack_video_voice', 'adpack_video_email', 'adpack_tagging', 'adpack_not_included', 'adpack_ld_calculator', 'adpack_ld_rounds', 'adpack_audience', 'adpack_ld_ad_leads', 'adpack_ld_brand_from_leaddb', 'adpack_ld_creative']);
   const voice = SEED.find((e) => e.slug === 'adpack_video_voice');
   assert.ok(voice);
   assert.match(voice.answer, /\{ad_pack_voice_changes\}/);

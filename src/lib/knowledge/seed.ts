@@ -1203,6 +1203,24 @@ export const SEED: readonly SeedEntry[] = [
     ],
     answer: 'We bring your logo, brand colour, areas and fee across from your lead database account when your calculator is set up and whenever you press Make my ads, but only into parts that are still empty or still hold what came across last time. Anything you change on the brand screen stays as you set it. If we could not read your logo, your company name is shown instead; you can upload one on the brand screen. Your ads use your main area unless you pick another, and the smallest bedroom size you take when there is enough local data.',
   },
+  {
+    slug: 'adpack_ld_creative',
+    from: 'Batch 55 step 5 (Phase 2), lead database ad route (the three ads are built from an example report in the customer’s brand: a phone video of the calculator and the report, a carousel of report pages and a magnifier video; each ad is for one kind of landlord; frame one and the first line say who it is for and the free report; every money figure on the report pages is blurred except the one labelled example; the address reads Example property; a voiceover on both videos; checked before the customer sees them; a second customer in the same area gets a different look; when the example report cannot be made the simpler look is used)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What are my three Facebook ads, and what do they show?',
+    variants: [
+      'Why does my ad show a report?',
+      'Whose property is in the example report?',
+      'Why are the figures blurred in my ad?',
+      'Is the example report a real landlord’s?',
+      'Why does my ad look different from another company’s in my area?',
+      'Why did I get the plain version of my ads?',
+      'Who is each of my ads for?',
+    ],
+    answer: 'Each ad is for one kind of landlord: a tenant leaving, a move abroad, or the new renting rules. They are made from an example report in your brand for an example property in your main area, never a real landlord’s home: a phone video of your calculator and the report, a set of report pages, and a video with a magnifier over nearby listings. Every page says Example report and its money figures are blurred except one labelled example. Both videos have a voiceover. We check the ads before you see them. If the example report cannot be made, you get the simpler look.',
+  },
   // ── Batch 35: Facebook lead forms through Google Sheets, attribution, one-tap outcomes and Your ads (drafts for Zac to approve; every figure is an ad_sheet_* setting) ──
   {
     slug: 'adsheet_what',
