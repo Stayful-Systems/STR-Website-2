@@ -64,32 +64,35 @@ export function CoveragePicker(p: CoveragePickerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, keys, preview, onState]);
 
-  useEffect(() => {
-    if (mode !== "areas" || !first) {
-      setPreview(null);
-      return;
-    }
+  /** Ask for the figure preview of the first chosen place (only from a handler or once on mount, never in render). */
+  function loadPreview(key: string) {
     const mine = ++asked.current;
-    setPreview(null);
-    areaPreview(first)
+    if (!key) return;
+    areaPreview(key)
       .then((view) => { if (mine === asked.current) setPreview(view); })
       .catch(() => { if (mine === asked.current) setPreview(areaPreviewView({ error: "not_enough_data" })); });
-  }, [mode, first, areaPreview]);
-
-  function pickAreas() {
-    setMode("areas");
-    if (keys.length === 0 && start.preset.length > 0) setKeys(start.preset);
   }
 
-  const choice = (value: CoverageFormMode, title: string, help: string, onPick: () => void) => (
-    <label className={`flex min-h-14 cursor-pointer items-start gap-3 rounded-xl border-2 p-4 ${mode === value ? "border-[#3b5735] bg-[#3b5735]/5" : "border-border bg-white"}`}>
-      <input type="radio" name={`${p.formId}-coverage-choice`} checked={mode === value} onChange={onPick} className="mt-1 size-6 shrink-0 accent-[#3b5735]" />
-      <span>
-        <span className={`block text-lg font-semibold ${INK}`}>{title}</span>
-        <span className={`mt-1 block text-base leading-relaxed ${SOFT}`}>{help}</span>
-      </span>
-    </label>
-  );
+  function apply(nextMode: CoverageFormMode, nextKeys: string[]) {
+    const nextFirst = nextMode === "areas" ? (nextKeys[0] ?? "") : "";
+    const nowFirst = mode === "areas" ? first : "";
+    setMode(nextMode);
+    setKeys(nextKeys);
+    if (nextFirst !== nowFirst) {
+      setPreview(null);
+      loadPreview(nextFirst);
+    }
+  }
+
+  useEffect(() => {
+    if (start.mode === "areas" && start.keys[0]) loadPreview(start.keys[0]);
+    // Once, for a form that opens on chosen areas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function pickAreas() {
+    apply("areas", keys.length === 0 && start.preset.length > 0 ? start.preset : keys);
+  }
 
   return (
     <fieldset className={`${card} min-w-0 space-y-3`}>
@@ -97,8 +100,8 @@ export function CoveragePicker(p: CoveragePickerProps) {
       <input type="hidden" name="coverage" value={mode} />
       {mode === "areas" ? keys.map((k) => <input key={k} type="hidden" name="coverageArea" value={k} />) : null}
       <div className="clear-both space-y-3">
-        {choice("uk", COVERAGE_UK_TITLE, COVERAGE_UK_HELP, () => setMode("uk"))}
-        {choice("areas", COVERAGE_AREAS_TITLE, COVERAGE_AREAS_HELP, pickAreas)}
+        <Choice name={`${p.formId}-coverage-choice`} picked={mode === "uk"} title={COVERAGE_UK_TITLE} help={COVERAGE_UK_HELP} onPick={() => apply("uk", keys)} />
+        <Choice name={`${p.formId}-coverage-choice`} picked={mode === "areas"} title={COVERAGE_AREAS_TITLE} help={COVERAGE_AREAS_HELP} onPick={pickAreas} />
       </div>
 
       {mode === "areas" ? (
@@ -108,7 +111,7 @@ export function CoveragePicker(p: CoveragePickerProps) {
               {keys.map((k) => (
                 <li key={k} className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-border bg-white px-3 py-2">
                   <span className={`min-w-0 break-words text-base ${INK}`}>{labelOf(k)}</span>
-                  <button type="button" onClick={() => setKeys((l) => l.filter((x) => x !== k))} className={`${btnSecondary} min-h-11 shrink-0 px-3 py-2`} aria-label={`Remove ${labelOf(k)}`}>
+                  <button type="button" onClick={() => apply(mode, keys.filter((x) => x !== k))} className={`${btnSecondary} min-h-11 shrink-0 px-3 py-2`} aria-label={`Remove ${labelOf(k)}`}>
                     Remove
                   </button>
                 </li>
@@ -121,7 +124,7 @@ export function CoveragePicker(p: CoveragePickerProps) {
           {keys.length < MAX_COVERAGE_AREAS ? (
             <div>
               <label htmlFor={`${p.formId}-coverage-add`} className={`block text-base font-semibold ${INK}`}>{COVERAGE_ADD_LABEL}</label>
-              <select id={`${p.formId}-coverage-add`} value="" onChange={(e) => setKeys((l) => addCoverageKey(l, e.target.value))} className={fieldCls}>
+              <select id={`${p.formId}-coverage-add`} value="" onChange={(e) => apply(mode, addCoverageKey(keys, e.target.value))} className={fieldCls}>
                 <option value="">{COVERAGE_ADD_PLACEHOLDER}</option>
                 {yours.length > 0 ? (
                   <optgroup label={COVERAGE_YOURS_GROUP}>
@@ -138,5 +141,17 @@ export function CoveragePicker(p: CoveragePickerProps) {
         </div>
       ) : null}
     </fieldset>
+  );
+}
+
+function Choice(p: { name: string; picked: boolean; title: string; help: string; onPick: () => void }) {
+  return (
+    <label className={`flex min-h-14 cursor-pointer items-start gap-3 rounded-xl border-2 p-4 ${p.picked ? "border-[#3b5735] bg-[#3b5735]/5" : "border-border bg-white"}`}>
+      <input type="radio" name={p.name} checked={p.picked} onChange={p.onPick} className="mt-1 size-6 shrink-0 accent-[#3b5735]" />
+      <span>
+        <span className={`block text-lg font-semibold ${INK}`}>{p.title}</span>
+        <span className={`mt-1 block text-base leading-relaxed ${SOFT}`}>{p.help}</span>
+      </span>
+    </label>
   );
 }
