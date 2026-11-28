@@ -450,15 +450,18 @@ test('the lead database reasons are plain sentences with a next step, no code le
   assert.equal(eligibilityView(['no_card', 'not_allowed']).message, eligibilitySentence('no_card'), 'the most basic is said');
 });
 
-test('Batch 55 step 5 (A7): each lead database ad says who it is for; the hint says what to add and where, only when something is missing', async () => {
-  const { conceptLine, profileHint, adViewModel, CALCULATOR_SETTINGS_HREF } = await import('./view.ts');
+test('Batch 55 step 5 (A7): each lead database ad says who it is for; the hint says where to add a logo, only without one, never a link', async () => {
+  const { conceptLine, profileHint, adViewModel } = await import('./view.ts');
   assert.equal(conceptLine('5b'), 'For landlords whose tenant is leaving');
   assert.match(conceptLine('3a'), /moving abroad/);
   assert.match(conceptLine('17'), /renting rules/);
-  assert.equal(profileHint({ logoUrl: 'https://x.test/l.png', areas: ['Leeds'] }), null);
-  const h = profileHint({ logoUrl: null, areas: [] })!;
-  assert.equal(h.href, CALCULATOR_SETTINGS_HREF);
-  assert.match(h.text, /logo and the areas you cover/);
+  assert.equal(profileHint({ logoUrl: 'https://x.test/l.png' }), null);
+  const h = profileHint({ logoUrl: null })!;
+  assert.equal(h.href, undefined, 'no link away from the ads screen');
+  assert.equal(h.label, undefined);
+  assert.match(h.text, /logo/);
+  assert.match(h.text, /More options/);
+  assert.doesNotMatch(h.text, /calculator|website|settings|\bpage\b|areas/i);
   const ad = { id: 'a', angle: '17' as const, adName: 'x', link: 'https://x.test/', texts: { primary: [], headlines: [], descriptions: [] }, files: { images: [], video: { status: 'queued' as const } } };
   const ld = adViewModel(ad, () => null, null, { route: 'leaddb' });
   assert.equal(ld.concept, conceptLine('17'));
@@ -486,16 +489,30 @@ test('coverage picker: the customer’s own areas first, chosen places left out,
   assert.deepEqual(coverageStart({ mode: 'areas', keys: ['YO', 'ZZ', 'YO'], suggested: [], options }), { mode: 'areas', keys: ['YO'], preset: [] });
 });
 
-test('brand problems: the lead database route says what to set and where, never "get in touch"; the Academy wording is unchanged', async () => {
-  const { BRAND_FIRST_LINK, CALCULATOR_SETTINGS_HREF } = await import('./view.ts');
+test('brand problems: the lead database route says the brand card’s own field messages, with no link; the Academy wording is unchanged', async () => {
+  const v = await import('./view.ts');
+  assert.equal(brandProblemText('company', 'leaddb'), 'Add your company name.');
+  assert.equal(brandProblemText('colour', 'leaddb'), 'Pick a brand colour.');
+  assert.equal(brandProblemText('company', 'leaddb'), v.BRAND_NAME_MISSING);
+  assert.equal(brandProblemText('colour', 'leaddb'), v.BRAND_COLOUR_MISSING);
   for (const p of ['company', 'colour'] as const) {
-    const ld = brandProblemText(p, 'leaddb');
-    assert.match(ld, /calculator page first/);
-    assert.doesNotMatch(ld, /get in touch/i);
+    assert.doesNotMatch(brandProblemText(p, 'leaddb'), /get in touch|calculator|website|settings|\bpage\b/i);
     assert.equal(brandProblemText(p), brandProblemText(p, 'academy'));
     assert.match(brandProblemText(p), /get in touch/);
   }
-  assert.match(brandProblemText('colour', 'leaddb'), /brand colour/);
-  assert.match(brandProblemText('company', 'leaddb'), /company name/);
-  assert.deepEqual({ ...BRAND_FIRST_LINK }, { href: CALCULATOR_SETTINGS_HREF, label: 'Set your branding' });
+  // The Academy sentences are pinned word for word.
+  assert.equal(brandProblemText('company'), 'Your website has no company name yet, so we cannot put it on your ads. Please get in touch and we will sort it out.');
+  assert.equal(brandProblemText('colour'), 'Your website has no brand colour yet, so we cannot colour your ads. Please get in touch and we will sort it out.');
+  assert.ok(!('BRAND_FIRST_LINK' in v) && !('CALCULATOR_SETTINGS_HREF' in v), 'no link to the calculator page is left');
+});
+
+test('the brand card (lead database route) never says website, calculator, settings or page', async () => {
+  const v = await import('./view.ts');
+  const said = [v.BRAND_CARD_TITLE, v.BRAND_CARD_HELP, v.BRAND_NAME_LABEL, v.BRAND_NAME_MISSING, v.BRAND_NAME_TOO_LONG, v.BRAND_NAME_REFUSED, v.BRAND_COLOUR_MISSING, v.BRAND_LOGO_LABEL, v.BRAND_LOGO_NONE, v.BRAND_LOGO_ADD, v.BRAND_LOGO_CHANGE, v.BRAND_LOGO_ADDING, v.BRAND_LOGO_SAVED, v.BRAND_LOGO_HELP, v.BRAND_LOGO_TOO_BIG, v.BRAND_LOGO_FAILED, v.BRAND_SAVE_FAILED];
+  for (const s of said) {
+    assert.ok(s.length > 0);
+    assert.doesNotMatch(s, /website|calculator|settings|\bpages?\b/i, s);
+    assert.doesNotMatch(s, LOOKS_LIKE_A_CODE, s);
+  }
+  assert.equal(v.BRAND_LOGO_MAX_BYTES, 900_000);
 });

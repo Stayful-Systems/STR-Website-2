@@ -161,6 +161,12 @@ Zac's notes: `docs/build/batch-55-part-a-PLAN.md`; the wire contract for the lea
   (`round-limit.ts`; a failed run, an admin run and a hand edit never count). Extra rounds only by an admin grant
   (`ad_pack_round_grants`, reason required). `ad_pack_ld_monthly_cap_pence` is the route's own backstop; the Academy
   cap sums academy runs only. Admin: `LeadDbAccounts.tsx`, `leaddb-actions.ts`, `ld-admin-run.ts`.
+- **Brand on the ads screen.** A lead database customer sets company name, colour (both required) and an optional
+  logo in the Your brand card at the top of `/leads/ads` (`BrandCard.tsx`, start and "Make new ads"), never on a
+  website or calculator screen. Name and colour go with Make my ads: `checkBrandInput` (1–80 chars, `#RRGGBB`), then
+  `deps.saveBrand` before generating (only when changed); the logo uploads at once (`brandLogoOp`). Both write through
+  `src/lib/websites/calculator-brand-server.ts`, shared with `calculator-actions.ts`, so `settings_edited` is stamped
+  first. No logo is type-only with no tick. The Academy wording and tick are unchanged (tests pin them).
 - **Audience step.** Replaced for everyone (Academy and lead database) by `targeting-recipe.ts`; update `LAST_CHECKED`
   whenever it is re-checked against Meta's screen. No amount is typed in it.
 - **Never log.** Log lines carry an id or code at most, never a lead, email, phone, body, signature, secret or sign-in

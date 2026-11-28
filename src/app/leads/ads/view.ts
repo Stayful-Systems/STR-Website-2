@@ -180,13 +180,34 @@ const PROBLEM_TEXT: Record<BrandProblem, string> = {
   colour: `Your website has no brand colour yet, so we cannot colour your ads. ${GET_IN_TOUCH}`,
 };
 
-/**
- * Batch 55 (lead database route): the customer sets their own company name, colour and logo on their calculator page,
- * so the sentence says what to set and where, never "get in touch". The Academy wording above is unchanged.
- */
+// ── Batch 55: the brand card (lead database route only) ──
+// A lead database customer has no website, so their company name, colour and logo are set on the ads screen itself,
+// as the first card of making the ads. No word on it names a website, a calculator, settings or a page.
+
+export const BRAND_CARD_TITLE = 'Your brand';
+export const BRAND_CARD_HELP = 'Your ads show your company name, colour and logo.';
+export const BRAND_NAME_LABEL = 'Company name';
+export const BRAND_NAME_MISSING = 'Add your company name.';
+export const BRAND_NAME_TOO_LONG = 'Your company name can be up to 80 characters.';
+export const BRAND_NAME_REFUSED = 'That company name cannot be used. Please type it as it is, with nothing added.';
+export const BRAND_COLOUR_MISSING = 'Pick a brand colour.';
+export const BRAND_LOGO_LABEL = 'Logo (optional)';
+export const BRAND_LOGO_NONE = 'No logo? Your ads show your company name instead.';
+export const BRAND_LOGO_ADD = 'Add your logo';
+export const BRAND_LOGO_CHANGE = 'Change your logo';
+export const BRAND_LOGO_ADDING = 'Adding your logo…';
+export const BRAND_LOGO_SAVED = 'Logo saved. Your new ads will use it.';
+/** The largest logo the brand card sends (a server action carries about 1 MB; the calculator's upload box uses the same). */
+export const BRAND_LOGO_MAX_BYTES = 900_000;
+export const BRAND_LOGO_HELP = 'Use a PNG or JPEG under 1 MB.';
+export const BRAND_LOGO_TOO_BIG = 'That logo is over 1 MB. Please choose a smaller PNG or JPEG.';
+export const BRAND_LOGO_FAILED = 'That logo could not be saved. Please try a PNG or JPEG under 1 MB.';
+export const BRAND_SAVE_FAILED = 'We could not save your brand just now. Please try again.';
+
+/** Batch 55 (lead database route): the brand card's own field messages, never "get in touch" and never a link. */
 const LD_PROBLEM_TEXT: Record<BrandProblem, string> = {
-  company: 'Add your company name on your calculator page first. Your ads show it.',
-  colour: 'Choose your brand colour on your calculator page first. Your ads use it.',
+  company: BRAND_NAME_MISSING,
+  colour: BRAND_COLOUR_MISSING,
 };
 
 export function brandProblemText(p: BrandProblem, route: 'academy' | 'leaddb' = 'academy'): string {
@@ -616,28 +637,20 @@ export function adViewModel(
   };
 }
 
-// ── Batch 55 step 5 (A7): what each lead database ad is for, and what to add to the calculator ──
+// ── Batch 55 step 5 (A7): what each lead database ad is for, and what to add ──
 
 /** "For landlords whose tenant is leaving": one plain line per ad (ld-angles.ts). */
 export function conceptLine(angle: Angle): string {
   return LD_ANGLE_DEFS[angle]?.concept.forWho ?? '';
 }
 
-export const CALCULATOR_SETTINGS_HREF = '/leads/setup/website';
-
-/** The lead database route's way to fix a brand problem: their own calculator page. */
-export const BRAND_FIRST_LINK = { href: CALCULATOR_SETTINGS_HREF, label: 'Set your branding' } as const;
-
 /**
- * One line when the ads were made with little to go on (no logo, or no area): what to add and where. Never blocks
- * making the ads. Null when there is nothing to add.
+ * Batch 55: one line under ads made without a logo, saying where to add one: the brand card when making new ads.
+ * Never a link and never blocks. Areas are chosen in the coverage picker, so they are not mentioned. Null with a logo.
  */
-export function profileHint(p: { logoUrl: string | null; areas: readonly string[] }): NextStep | null {
-  const noLogo = !p.logoUrl;
-  const noArea = p.areas.filter((a) => String(a ?? '').trim() !== '').length === 0;
-  if (!noLogo && !noArea) return null;
-  const what = noLogo && noArea ? 'your logo and the areas you cover' : noLogo ? 'your logo' : 'the areas you cover';
-  return { text: `Your ads look best with ${what}. Add them on your calculator page and your next ads will use them.`, href: CALCULATOR_SETTINGS_HREF, label: 'Open your calculator page' };
+export function profileHint(p: { logoUrl: string | null }): NextStep | null {
+  if (p.logoUrl) return null;
+  return { text: 'Your ads look best with your logo. You can add it when you make new ads, under More options.' };
 }
 
 // ── Looks good: why it may not be pressed yet ──

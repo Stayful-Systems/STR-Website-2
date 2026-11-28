@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { AdsState, DownloadState, PollState, UploadState } from "./ops";
+import type { AdsState, DownloadState, LogoState, PollState, UploadState } from "./ops";
 import type { AreaPreviewView } from "./view";
 
 /**
@@ -31,6 +31,8 @@ export interface AdsActions {
   recordCopy(adId: string, kind: string, index: number): Promise<void>;
   uploadPhoto(formData: FormData): Promise<UploadState>;
   areaPreview(areaKey: string): Promise<AreaPreviewView>;
+  /** Batch 55: the brand card's logo (lead database route only); the form carries one file named "logo". */
+  uploadBrandLogo(formData: FormData): Promise<LogoState>;
 }
 
 const Ctx = createContext<AdsActions | null>(null);

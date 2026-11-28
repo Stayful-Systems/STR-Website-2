@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ownerIdOrNull } from "@/lib/leads/scope";
@@ -18,7 +17,7 @@ import { Calm } from "./ui";
 import { ConnectSheet } from "./ConnectSheet";
 import { YourAds } from "./YourAds";
 import { packScreen, regenView } from "./state";
-import { adViewModel, approvalVm, BRAND_FIRST_LINK, profileHint, areaPreviewView, brandOfSettings, brandProblemText, eligibilityView, figureCallout, previewPathsOf, problemView, regenIntro, stageOf, voiceVm, type AreaPreviewView } from "./view";
+import { adViewModel, approvalVm, profileHint, areaPreviewView, brandOfSettings, brandProblemText, eligibilityView, figureCallout, previewPathsOf, problemView, regenIntro, stageOf, voiceVm, type AreaPreviewView } from "./view";
 
 export const metadata: Metadata = { title: "Your Facebook ads — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -42,22 +41,9 @@ export default async function AdsPage() {
   const view = await listPackForOwner(ownerId);
   const screen = packScreen(view, new Date().getTime());
   const adminNotice = admin && !(await readAdPacksEnabled()) ? <Calm live={false}>Admin preview: the Facebook ads switch is off, so operators cannot see this yet.</Calm> : null;
-  // Batch 55 step 5 (A7): a lead database customer with no logo or no area is told what to add and where. Never blocks.
-  const hint = elig.route === "leaddb" ? profileHint({ logoUrl: brand.logoUrl, areas: brand.areas }) : null;
-  const hintNotice = hint ? (
-    <Calm live={false}>
-      {hint.text}{" "}
-      <Link href={hint.href ?? "/leads/setup/website"} className="font-semibold underline">
-        {hint.label}
-      </Link>
-    </Calm>
-  ) : null;
-  const previewNotice = adminNotice || hintNotice ? (
-    <>
-      {adminNotice}
-      {hintNotice}
-    </>
-  ) : null;
+  const previewNotice = adminNotice;
+  // Batch 55: a lead database customer sets their brand on this screen (the brand card), never somewhere else.
+  const brandCard = elig.route === "leaddb" ? { companyName: brand.company, brandColour: brand.brandColour, logoUrl: brand.logoUrl } : null;
 
   // ── The pictures are being made right now ──
   if (screen.kind === "working") {
@@ -95,8 +81,8 @@ export default async function AdsPage() {
             initialAreaPreview={initialAreaPreview}
             initialPhotos={[]}
             hasLogo={brand.logoUrl !== null}
-            problems={problems.map((pr) => brandProblemText(pr, leadDb ? "leaddb" : "academy"))}
-            {...(leadDb ? { problemLink: BRAND_FIRST_LINK } : {})}
+            problems={brandCard ? [] : problems.map((pr) => brandProblemText(pr))}
+            {...(brandCard ? { brand: brandCard } : {})}
             failedBefore={failedBefore}
             {...(leadDb ? { coverage: { options: areas, suggested, initialMode: "uk" as const, initialKeys: [] } } : {})}
           />
@@ -132,13 +118,17 @@ export default async function AdsPage() {
       initialAreaPreview={regenPreview}
       initialPhotos={initialPhotos}
       hasLogo={brand.logoUrl !== null}
-      problems={problems.map((pr) => brandProblemText(pr, pack.route === "leaddb" ? "leaddb" : "academy"))}
-      {...(pack.route === "leaddb" ? { problemLink: BRAND_FIRST_LINK } : {})}
+      problems={brandCard ? [] : problems.map((pr) => brandProblemText(pr))}
+      {...(brandCard ? { brand: brandCard } : {})}
       blockReason={regen.reason}
       {...(regenCoverage ? { coverage: regenCoverage } : {})}
     />
   ) : null;
   const intro = regen.left > 0 || regen.reason ? regenIntro(regen.left, regen.reason) : null;
+  // Batch 55 step 5 (A7): ads made without a logo say where to add one (the brand card under More options), only while
+  // new ads can be made. Never a link, never blocks.
+  const hint = brandCard && regenerate ? profileHint({ logoUrl: brand.logoUrl }) : null;
+  const hintNotice = hint ? <Calm live={false}>{hint.text}</Calm> : null;
 
   // ── The ads did not come out right ──
   if (screen.kind === "checks_failed") {
@@ -169,6 +159,7 @@ export default async function AdsPage() {
         more={stage === "making" ? null : <MoreOptions pack={packRef} voice={voice} canChangeVoice={stage === "review"} regenerate={regenerate} regenIntro={intro} />}
       />
       {previewNotice}
+      {hintNotice}
       {stage === "approved" ? <ConnectSheet forms={adVms.map((a, i) => ({ id: a.id, title: a.heading, questions: ads[i].leadForm }))} /> : null}
       {stage === "approved" ? <YourAds ownerId={ownerId} ads={ads.map((a) => ({ id: a.id, ownerId: a.ownerId, code: a.code, angle: a.angle }))} /> : null}
     </LiveActions>

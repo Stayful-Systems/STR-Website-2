@@ -27,6 +27,11 @@
  *   poll       (38b) read only: the pack id must be the owner's; answers with the video, approve and voice
  *              fields of view.ts (PollView) and nothing else: no id, no code, no path, no secret
  *   video url  (38b) a one-hour view link for a file of the owner's own READY video (or its poster) only
+ *   brand      (Batch 55, lead database route only) the company name and colour sent with Make my ads are checked
+ *              here (name 1 to 80 characters, colour #RRGGBB) and saved to the owner's OWN calculator site
+ *              (deps.saveBrand, the calculator's own save path) before the ads are made; the Academy route ignores them
+ *   logo       (Batch 55, lead database route only) a PNG or JPEG under 1 MB, saved as the owner's own calculator
+ *              logo (deps.uploadBrandLogo, the calculator's own upload path)
  *
  * Nothing here returns a database field, an internal code or a raw error: every
  * refusal is one plain sentence.
@@ -40,13 +45,18 @@ import type { AdRoute, PackEligibilityReason } from '../../../lib/ad-packs/eligi
 import { checkPhoto, cleanPhotoRefs, MAX_UPLOADS_PER_OWNER, PHOTO_MESSAGES, uploadRef } from '../../../lib/ad-packs/photos.ts';
 import type { PackAdRow } from '../../../lib/ad-packs/store-types.ts';
 import { isVoiceKey, type VoiceKey } from '../../../lib/ad-packs/voices.ts';
-import { areaPreviewView, brandOfSettings, brandProblemText, copyTargetExists, eligibilitySentence, isCopyKind, LOGO_REFUSAL, plainRefusal, pollViewOf, isVideoFileName, VIDEO_POSTER_NAME, type AreaPreviewInput, type AreaPreviewView, type CopyKind, type PollView, type SiteBrandInput } from './view.ts';
+import { validateCompany } from '../setup/website/steps.ts';
+import { areaPreviewView, brandOfSettings, brandProblemText, BRAND_COLOUR_MISSING, BRAND_LOGO_FAILED, BRAND_LOGO_MAX_BYTES, BRAND_LOGO_TOO_BIG, BRAND_NAME_MISSING, BRAND_NAME_REFUSED, BRAND_NAME_TOO_LONG, BRAND_SAVE_FAILED, copyTargetExists, eligibilitySentence, isCopyKind, LOGO_REFUSAL, plainRefusal, pollViewOf, isVideoFileName, VIDEO_POSTER_NAME, type AreaPreviewInput, type AreaPreviewView, type CopyKind, type PollView, type SiteBrandInput } from './view.ts';
 
 export type AdsState = { ok?: boolean; error?: string; notice?: string };
 export type UploadState = { ok: true; ref: string; previewUrl: string | null } | { ok: false; error: string };
 export type DownloadState = { ok: true; url: string } | { ok: false; error: string };
 /** The answer to a poll: the lightweight video / approve / voice fields, or nothing (signed out, not the owner's pack). */
 export type PollState = ({ ok: true } & PollView) | { ok: false };
+/** The brand card's logo upload: the saved logo's address (shown back to the owner only), or one plain sentence. */
+export type LogoState = { ok: true; url: string } | { ok: false; error: string };
+
+export { BRAND_LOGO_MAX_BYTES };
 
 export const MESSAGES = {
   signed_out: 'Please sign in again.',
@@ -61,6 +71,13 @@ export const MESSAGES = {
   coverage: 'Please choose Anywhere in the UK, or choose your areas.',
   coverage_none: 'Please choose at least one place, or pick Anywhere in the UK.',
   coverage_many: `You can choose up to ${MAX_COVERAGE_AREAS} places.`,
+  brand_name: BRAND_NAME_MISSING,
+  brand_name_long: BRAND_NAME_TOO_LONG,
+  brand_name_refused: BRAND_NAME_REFUSED,
+  brand_colour: BRAND_COLOUR_MISSING,
+  brand_save: BRAND_SAVE_FAILED,
+  logo_too_big: BRAND_LOGO_TOO_BIG,
+  logo_failed: BRAND_LOGO_FAILED,
 } as const;
 
 export type Session = { ok: true; ownerId: string; email: string | null; admin: boolean } | { ok: false; reason: 'signed_out' | 'member' };
@@ -115,6 +132,14 @@ export interface AdsDeps {
    * takes one area as before.
    */
   areaOptions?(): Promise<AreaOption[]>;
+  /**
+   * Batch 55 (brand on the ads screen), the lead database route only: save the company name and colour to the owner's
+   * own calculator site through the calculator's own save path (which marks changed fields edited first, so the lead
+   * database push never overwrites them). Optional: absent, a brand change is refused.
+   */
+  saveBrand?(ownerId: string, brand: { companyName: string; brandColour: string }): Promise<{ ok: boolean }>;
+  /** The same route only: store a checked PNG or JPEG as the owner's own calculator logo; its address, or not ok. */
+  uploadBrandLogo?(ownerId: string, bytes: Uint8Array): Promise<{ ok: true; url: string } | { ok: false }>;
 }
 
 const sessionError = (s: Extract<Session, { ok: false }>): string => MESSAGES[s.reason];
@@ -135,7 +160,24 @@ async function ownPack(deps: AdsDeps, ownerId: string, packId: unknown): Promise
  * `coverage` ('uk' | 'areas') and `coverageAreas` (the chosen keys, in order) are read on the lead database route only
  * (Phase 3); the Academy route ignores them.
  */
-export type GenerateInput = { packId?: unknown; areaKey?: unknown; photoRefs?: unknown; typeOnly?: unknown; voiceKey?: unknown; coverage?: unknown; coverageAreas?: unknown };
+export type GenerateInput = { packId?: unknown; areaKey?: unknown; photoRefs?: unknown; typeOnly?: unknown; voiceKey?: unknown; coverage?: unknown; coverageAreas?: unknown; companyName?: unknown; brandColour?: unknown };
+
+export type BrandChoice = { ok: true; companyName: string; brandColour: string } | { ok: false; error: string };
+
+/**
+ * Batch 55 (brand on the ads screen): the brand card's company name (1 to 80 characters, the setup's own word rule)
+ * and colour (#RRGGBB, kept lower case), checked. Pure.
+ */
+export function checkBrandInput(input: { companyName?: unknown; brandColour?: unknown }): BrandChoice {
+  const name = typeof input.companyName === 'string' ? input.companyName.replace(/\s+/g, ' ').trim() : '';
+  if (name === '') return { ok: false, error: MESSAGES.brand_name };
+  if (name.length > 80) return { ok: false, error: MESSAGES.brand_name_long };
+  const colour = typeof input.brandColour === 'string' ? input.brandColour.trim() : '';
+  if (!/^#[0-9a-f]{6}$/i.test(colour)) return { ok: false, error: MESSAGES.brand_colour };
+  const checked = validateCompany({ companyName: name, brandColour: colour });
+  if (!checked.ok || !checked.value.brandColour) return { ok: false, error: MESSAGES.brand_name_refused };
+  return { ok: true, companyName: checked.value.companyName, brandColour: checked.value.brandColour };
+}
 
 export type CoverageChoice = { ok: true; areaKey: string; coverage: Coverage } | { ok: false; error: string };
 
@@ -190,7 +232,19 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
   const mine = await ownPack(deps, s.ownerId, input.packId);
   if (!mine.ok) return { error: MESSAGES.not_found };
 
-  const { brand, problems } = brandOfSettings(elig.website.settings);
+  // Batch 55 (brand on the ads screen): on the lead database route the brand card sends the company name and colour
+  // with the form. They are checked now, used for these ads, and saved (below, once everything else is checked) only
+  // when they differ from what is stored. The Academy route never reads them.
+  let settings = elig.website.settings;
+  let brandToSave: { companyName: string; brandColour: string } | null = null;
+  if (leadDbRoute && (input.companyName !== undefined || input.brandColour !== undefined)) {
+    const sent = checkBrandInput(input);
+    if (!sent.ok) return { error: sent.error };
+    const storedColour = String(settings.brandColour ?? '').trim().toLowerCase();
+    if (sent.companyName !== String(settings.companyName ?? '').trim() || sent.brandColour !== storedColour) brandToSave = { companyName: sent.companyName, brandColour: sent.brandColour };
+    settings = { ...settings, companyName: sent.companyName, brandColour: sent.brandColour };
+  }
+  const { brand, problems } = brandOfSettings(settings);
   // Batch 55 step 5: on the lead database route, no area picked means the customer's main area, and the figure rests on
   // the lowest bedroom count they take. The Academy route reads neither.
   const hints = leadDbRoute && deps.leadDbPackHints ? await deps.leadDbPackHints(s.ownerId, brand.areas ?? []) : null;
@@ -211,12 +265,19 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
   if (photos === null) return { error: MESSAGES.photos };
 
   if (problems.length > 0) return { error: brandProblemText(problems[0], leadDbRoute ? 'leaddb' : 'academy') };
-  const typeOnly = input.typeOnly === true || input.typeOnly === 'on' || input.typeOnly === 'true';
+  // A lead database customer is never asked to tick a box: no logo simply means the company name is shown instead.
+  const typeOnly = leadDbRoute || input.typeOnly === true || input.typeOnly === 'on' || input.typeOnly === 'true';
   if (brand.logoUrl === null && !typeOnly) return { error: LOGO_REFUSAL };
   // 38b: the voice for the video. Absent (a regenerate keeps the pack's voice) is fine; anything else must be one of the three.
   const voiceSent = input.voiceKey !== undefined && input.voiceKey !== null && input.voiceKey !== '';
   if (voiceSent && !isVoiceKey(input.voiceKey)) return { error: MESSAGES.voice };
   const voiceKey: VoiceKey | undefined = voiceSent && isVoiceKey(input.voiceKey) ? input.voiceKey : undefined;
+
+  // Everything is checked: the brand card's changes are saved to the owner's own calculator site, then the ads are made.
+  if (brandToSave) {
+    const saved = deps.saveBrand ? await deps.saveBrand(s.ownerId, brandToSave) : { ok: false };
+    if (!saved.ok) return { error: MESSAGES.brand_save };
+  }
 
   const result = await deps.generate({
     ownerId: s.ownerId,
@@ -308,6 +369,26 @@ export async function uploadPhotoOp(deps: AdsDeps, input: { bytes: Uint8Array | 
   const stored = await deps.upload(ref, input.bytes as Uint8Array, checked.contentType);
   if (!stored.ok) return { ok: false, error: PHOTO_MESSAGES.failed };
   return { ok: true, ref, previewUrl: await deps.previewUrl(s.ownerId, ref) };
+}
+
+// ── The brand card's logo (Batch 55, lead database route only) ──
+
+const isPngOrJpeg = (b: Uint8Array): boolean => (b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) || (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff);
+
+export async function brandLogoOp(deps: AdsDeps, input: { bytes: Uint8Array | null }): Promise<LogoState> {
+  const s = await deps.session();
+  if (!s.ok) return { ok: false, error: sessionError(s) };
+  const elig = await deps.eligibility(s.ownerId, { admin: s.admin });
+  if (!elig.eligible) return { ok: false, error: eligibilityError(elig) };
+  // The Academy route's logo is its website's: only the lead database route sets one here.
+  if (elig.route !== 'leaddb') return { ok: false, error: MESSAGES.not_eligible };
+  const bytes = input.bytes;
+  if (!bytes || bytes.length === 0) return { ok: false, error: MESSAGES.logo_failed };
+  if (bytes.length > BRAND_LOGO_MAX_BYTES) return { ok: false, error: MESSAGES.logo_too_big };
+  if (!isPngOrJpeg(bytes)) return { ok: false, error: MESSAGES.logo_failed };
+  if (!deps.uploadBrandLogo) return { ok: false, error: MESSAGES.logo_failed };
+  const out = await deps.uploadBrandLogo(s.ownerId, bytes);
+  return out.ok ? { ok: true, url: out.url } : { ok: false, error: MESSAGES.logo_failed };
 }
 
 // ── The area step ──

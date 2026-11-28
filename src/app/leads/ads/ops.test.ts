@@ -4,7 +4,7 @@ import { harness, type Harness } from '../../../lib/ad-packs/test-store.ts';
 import { signedDownloadUrlWith } from '../../../lib/ad-packs/download.ts';
 import { PHOTO_MAX_BYTES, uploadRef, MAX_UPLOADS_PER_OWNER } from '../../../lib/ad-packs/photos.ts';
 import { buildActivityCall } from '../../../lib/activity/event.ts';
-import { approveOp, areaPreviewOp, changeVoiceOp, chooseCoverage, copyOp, downloadOp, generateOp, MESSAGES, pollPackOp, retryVideoOp, uploadPhotoOp, videoUrlOp, type AdsDeps, type EligibilityFacts, type Session } from './ops.ts';
+import { approveOp, areaPreviewOp, brandLogoOp, changeVoiceOp, checkBrandInput, chooseCoverage, copyOp, downloadOp, generateOp, MESSAGES, pollPackOp, retryVideoOp, uploadPhotoOp, videoUrlOp, type AdsDeps, type EligibilityFacts, type Session } from './ops.ts';
 import { isCopyKind, PLAIN_CODES, VOICE_UNAVAILABLE_TEXT } from './view.ts';
 import { VIDEO_ACTION_CODES } from '../../../lib/ad-packs/generate-core.ts';
 
@@ -811,13 +811,124 @@ test('generate, Academy route: coverage sent by a form is ignored and nothing ne
   assert.ok(!s.h.store.writes.some((w) => w.includes('coverage')), 'the Academy update patch is unchanged');
 });
 
-test('generate, lead database route: a missing colour or company name points to their calculator page, never "get in touch"', async () => {
+// ── Batch 55: the brand is set on the ads screen (lead database route only) ──
+
+type BrandSave = { ownerId: string; companyName: string; brandColour: string };
+function brandSaves(s: ReturnType<typeof setup>, ok = true): BrandSave[] {
+  const saved: BrandSave[] = [];
+  s.deps.saveBrand = async (ownerId, b) => {
+    saved.push({ ownerId, ...b });
+    return { ok };
+  };
+  return saved;
+}
+const sentBrand = (s: ReturnType<typeof setup>) => (s.calls.generated[0].input as unknown as { brand: { company: string; brandColour: string | null; logoUrl: string | null }; typeOnly: boolean });
+
+test('brand input: a name of 1 to 80 characters and a #RRGGBB colour, each refused in the card’s own words', () => {
+  assert.deepEqual(checkBrandInput({ companyName: '  Acme   Lets ', brandColour: '#1F6F5C' }), { ok: true, companyName: 'Acme Lets', brandColour: '#1f6f5c' });
+  assert.deepEqual(checkBrandInput({ companyName: ' ', brandColour: '#1F6F5C' }), { ok: false, error: MESSAGES.brand_name });
+  assert.deepEqual(checkBrandInput({ brandColour: '#1F6F5C' }), { ok: false, error: MESSAGES.brand_name });
+  assert.deepEqual(checkBrandInput({ companyName: 'x'.repeat(81), brandColour: '#1F6F5C' }), { ok: false, error: MESSAGES.brand_name_long });
+  assert.equal(checkBrandInput({ companyName: 'x'.repeat(80), brandColour: '#1F6F5C' }).ok, true);
+  for (const bad of ['', '1F6F5C', '#1F6F5', '#GGGGGG', 'red', null, 12]) assert.deepEqual(checkBrandInput({ companyName: 'Acme', brandColour: bad }), { ok: false, error: MESSAGES.brand_colour }, String(bad));
+  assert.equal(MESSAGES.brand_name, 'Add your company name.');
+  assert.equal(MESSAGES.brand_colour, 'Pick a brand colour.');
+});
+
+test('generate, lead database route: a missing name or colour is the brand card’s own message, with no link and no calculator page', async () => {
   const s = setup();
   s.eligible({ ...LEADDB, website: { id: 'calc-site-1', settings: { ...SETTINGS, brandColour: null } } });
-  const colour = (await generateOp(s.deps, input)).error ?? '';
-  assert.match(colour, /brand colour on your calculator page first/);
-  assert.doesNotMatch(colour, /get in touch/i);
+  assert.deepEqual(await generateOp(s.deps, input), { error: 'Pick a brand colour.' });
   s.eligible({ ...LEADDB, website: { id: 'calc-site-1', settings: { ...SETTINGS, companyName: ' ' } } });
-  assert.match((await generateOp(s.deps, input)).error ?? '', /company name on your calculator page first/);
+  assert.deepEqual(await generateOp(s.deps, input), { error: 'Add your company name.' });
+  // Sent with the form but empty or wrong: refused the same way, nothing saved, nothing made.
+  const saved = brandSaves(s);
+  assert.deepEqual(await generateOp(s.deps, { ...input, companyName: '', brandColour: '#1F6F5C' }), { error: MESSAGES.brand_name });
+  assert.deepEqual(await generateOp(s.deps, { ...input, companyName: 'Acme Lets', brandColour: 'blue' }), { error: MESSAGES.brand_colour });
+  assert.deepEqual(saved, []);
   assert.equal(s.calls.generate, 0);
+});
+
+test('generate, lead database route: the card’s name and colour are saved for the session’s owner first, then the ads use them', async () => {
+  const s = setup();
+  s.eligible({ ...LEADDB, website: { id: 'calc-site-1', settings: { ...SETTINGS, companyName: '', brandColour: null } } });
+  const saved = brandSaves(s);
+  assert.deepEqual(await generateOp(s.deps, { ...input, companyName: 'Acme Lets', brandColour: '#2E3D2B', ownerId: OWNER_B } as never), { ok: true });
+  assert.deepEqual(saved, [{ ownerId: OWNER_A, companyName: 'Acme Lets', brandColour: '#2e3d2b' }], 'saved once, for the session’s owner, never the form’s');
+  assert.equal(sentBrand(s).brand.company, 'Acme Lets');
+  assert.equal(sentBrand(s).brand.brandColour, '#2e3d2b');
+});
+
+test('generate, lead database route: an unchanged brand is not saved again; a failed save makes nothing', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  const saved = brandSaves(s);
+  assert.deepEqual(await generateOp(s.deps, { ...input, companyName: ' Brightstone Stays ', brandColour: '#1f6f5c' }), { ok: true });
+  assert.deepEqual(saved, [], 'the same name and colour (in other letters) is not a change');
+  const t = setup();
+  t.eligible(LEADDB);
+  brandSaves(t, false);
+  assert.deepEqual(await generateOp(t.deps, { ...input, companyName: 'New Name', brandColour: '#1f6f5c' }), { error: MESSAGES.brand_save });
+  assert.equal(t.calls.generate, 0);
+  // No save path at all: a change is refused rather than made with an unsaved brand.
+  const u = setup();
+  u.eligible(LEADDB);
+  assert.deepEqual(await generateOp(u.deps, { ...input, companyName: 'New Name', brandColour: '#1f6f5c' }), { error: MESSAGES.brand_save });
+});
+
+test('generate, lead database route: nothing is saved when another field is refused', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  const saved = brandSaves(s);
+  assert.deepEqual(await generateOp(s.deps, { ...input, areaKey: 'not a place', companyName: 'New Name', brandColour: '#000000' }), { error: MESSAGES.area });
+  assert.deepEqual(await generateOp(s.deps, { ...input, photoRefs: ['../elsewhere.jpg'], companyName: 'New Name', brandColour: '#000000' }), { error: MESSAGES.photos });
+  assert.deepEqual(saved, []);
+});
+
+test('generate, lead database route: no logo is made with the company name instead, with no tick box', async () => {
+  const s = setup();
+  s.eligible({ ...LEADDB, website: { id: 'calc-site-1', settings: { ...SETTINGS, logoUrl: null } } });
+  assert.deepEqual(await generateOp(s.deps, { ...input, typeOnly: false }), { ok: true });
+  assert.equal(sentBrand(s).typeOnly, true);
+  assert.equal(sentBrand(s).brand.logoUrl, null);
+});
+
+test('generate, Academy route: a brand sent with the form is ignored, nothing is saved, and the old sentences and tick stand', async () => {
+  const s = setup();
+  const saved = brandSaves(s);
+  assert.deepEqual(await generateOp(s.deps, { ...input, companyName: 'Someone Else', brandColour: '#000000' }), { ok: true });
+  assert.deepEqual(saved, []);
+  assert.equal(sentBrand(s).brand.company, 'Brightstone Stays');
+  assert.equal(sentBrand(s).brand.brandColour, '#1f6f5c');
+  const t = setup();
+  t.eligible({ ...ELIGIBLE, website: { id: 'site-1', settings: { ...SETTINGS, brandColour: null } } });
+  assert.match((await generateOp(t.deps, { ...input, companyName: 'X', brandColour: '#000000' })).error ?? '', /Your website has no brand colour yet/);
+  t.eligible({ ...ELIGIBLE, website: { id: 'site-1', settings: { ...SETTINGS, logoUrl: null } } });
+  assert.match((await generateOp(t.deps, input)).error ?? '', /tick the box/);
+  assert.equal(t.calls.generate, 0);
+});
+
+const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+
+test('brand logo: lead database route only, a PNG or JPEG under the limit, stored for the session’s owner', async () => {
+  const s = setup();
+  const stored: string[] = [];
+  s.deps.uploadBrandLogo = async (ownerId, bytes) => {
+    stored.push(`${ownerId}:${bytes.length}`);
+    return { ok: true, url: 'https://ours.test/brand/logo.png' };
+  };
+  // The Academy route's logo is its website's.
+  assert.deepEqual(await brandLogoOp(s.deps, { bytes: PNG }), { ok: false, error: MESSAGES.not_eligible });
+  s.eligible(LEADDB);
+  assert.deepEqual(await brandLogoOp(s.deps, { bytes: PNG }), { ok: true, url: 'https://ours.test/brand/logo.png' });
+  assert.deepEqual(await brandLogoOp(s.deps, { bytes: JPG }), { ok: true, url: 'https://ours.test/brand/logo.png' });
+  assert.deepEqual(stored, [`${OWNER_A}:${PNG.length}`, `${OWNER_A}:${JPG.length}`]);
+  assert.deepEqual(await brandLogoOp(s.deps, { bytes: Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9]) }), { ok: false, error: MESSAGES.logo_failed });
+  assert.deepEqual(await brandLogoOp(s.deps, { bytes: new Uint8Array(900_001).fill(0xff) }), { ok: false, error: MESSAGES.logo_too_big });
+  assert.deepEqual(await brandLogoOp(s.deps, { bytes: null }), { ok: false, error: MESSAGES.logo_failed });
+  assert.equal(stored.length, 2);
+  s.deps.uploadBrandLogo = async () => ({ ok: false });
+  assert.deepEqual(await brandLogoOp(s.deps, { bytes: PNG }), { ok: false, error: MESSAGES.logo_failed });
+  s.as({ ok: false, reason: 'member' });
+  assert.deepEqual(await brandLogoOp(s.deps, { bytes: PNG }), { ok: false, error: MESSAGES.member });
 });
