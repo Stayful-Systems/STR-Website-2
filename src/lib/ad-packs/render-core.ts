@@ -74,7 +74,8 @@ import { fitsCap } from './settings.ts';
 import { isVoiceKey, type VoiceKey } from './voices.ts';
 import { estimateVoicePence, type SynthesiseResult, type VoiceCode } from './voice-core.ts';
 import { StoreError, type AdFileRef, type AdPackStore, type PackAdRow, type PackRow, type RunResult, type VideoBrand } from './store-types.ts';
-import type { AdVideo, AdVideoReady, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
+import type { AdVideo, AdVideoReady, RenderKind, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
+import { isRenderKind } from './render-store.ts';
 
 // ── Interfaces ──
 
@@ -379,12 +380,13 @@ export type EnqueueResult =
   | { ok: false; code: 'invalid_input' | 'store_failed' };
 
 /** Queue the render of a stored pack version (insert-if-missing; never throws). */
-export async function enqueueRender(store: Pick<RenderStore, 'enqueue'>, input: { packId: string; version: number; voiceKey: string }): Promise<EnqueueResult> {
+export async function enqueueRender(store: Pick<RenderStore, 'enqueue'>, input: { packId: string; version: number; voiceKey: string; /** Batch 55 step 5; absent is 'notice'. */ kind?: RenderKind }): Promise<EnqueueResult> {
   if (!input || typeof input.packId !== 'string' || input.packId === '' || !Number.isInteger(input.version) || input.version < 1 || !isVoiceKey(input.voiceKey)) {
     return { ok: false, code: 'invalid_input' };
   }
+  if (input.kind !== undefined && !isRenderKind(input.kind)) return { ok: false, code: 'invalid_input' };
   try {
-    const { inserted, row } = await store.enqueue(input.packId, input.version, input.voiceKey);
+    const { inserted, row } = input.kind && input.kind !== 'notice' ? await store.enqueue(input.packId, input.version, input.voiceKey, input.kind) : await store.enqueue(input.packId, input.version, input.voiceKey);
     return { ok: true, inserted, renderId: row.id, state: row.state };
   } catch {
     return { ok: false, code: 'store_failed' };

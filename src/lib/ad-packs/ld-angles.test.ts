@@ -8,6 +8,7 @@ import { ANGLE_DEFS, SCRIPT_5B } from './angles.ts';
 import { CTA_LINE, LD_ANGLE_DEFS, ldConceptFor, renderLdPack, renderLdTexts, type LdBrand } from './ld-angles.ts';
 import { factsFor, checkLineAgainstFacts } from './facts.ts';
 import { AD_FORMATS, CONCEPT_ID_RE } from './concepts.ts';
+import { MAX_SCRIPT_LINES } from './captions.ts';
 
 const AGG = { bedrooms: 3, sample_count: 14, avg_gross_revenue: 48_200, avg_net_revenue: 31_000, avg_occupancy: 71.4 };
 
@@ -46,6 +47,7 @@ for (const c of CUSTOMERS) {
       assert.equal(pack[a].screenLines.at(-1), CTA_LINE);
       assert.ok(!pack[a].screenLines[0].includes('?'), pack[a].screenLines[0]);
       if (pack[a].script) {
+        assert.ok(pack[a].script!.length >= 3 && pack[a].script!.length <= MAX_SCRIPT_LINES, 'the renderer maps 3 to 5 lines');
         assert.match(pack[a].script![0], /\bfree\b.*\breport\b/i);
         assert.equal(pack[a].script!.at(-1), `${CTA_LINE}.`);
       }

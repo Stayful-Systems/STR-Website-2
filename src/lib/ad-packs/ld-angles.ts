@@ -109,8 +109,7 @@ export const LD_ANGLE_DEFS: Record<Angle, LdAngleDef> = {
     ],
     script: [
       'Landlords in {area}, here is a free report on what your property could earn as a short let.',
-      'Has your tenant handed in their notice? Before you sign another one up for a year, see the figures.',
-      'It takes about a minute. The report shows a short let against a long let, the occupancy, and a twelve-month forecast.',
+      'Has your tenant handed in their notice? Before another year-long tenancy, the report shows a short let against a long let, the occupancy, and a twelve-month forecast.',
       '{figure|}',
       '{company} runs it all, and you stay the owner. {fee}',
       'Get your free income report.',

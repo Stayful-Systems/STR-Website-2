@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import nodePath from 'node:path';
 import type { MemoryAdPackStore } from './test-store.ts';
 import type { PackRow } from './store-types.ts';
-import { RENDER_STATES, type NotifyOutcome, type RenderCounts, type RenderDone, type RenderFinish, type RenderRequeue, type RenderRow, type RenderStore } from './render-store.ts';
+import { RENDER_STATES, kindOf, type RenderKind, type NotifyOutcome, type RenderCounts, type RenderDone, type RenderFinish, type RenderRequeue, type RenderRow, type RenderStore } from './render-store.ts';
 import type { SandboxLike, SandboxRun, StorageLike } from './render-core.ts';
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -28,15 +28,16 @@ export class MemoryRenderStore implements RenderStore {
     return this.clock().toISOString();
   }
 
-  async enqueue(packId: string, version: number, voiceKey: string) {
-    const existing = [...this.rows.values()].find((r) => r.packId === packId && r.version === version);
+  async enqueue(packId: string, version: number, voiceKey: string, kind: RenderKind = 'notice') {
+    const existing = [...this.rows.values()].find((r) => r.packId === packId && r.version === version && kindOf(r) === kind);
     if (existing) return { inserted: false, row: clone(existing) };
-    this.writes.push('enqueue');
+    this.writes.push(kind === 'notice' ? 'enqueue' : `enqueue:${kind}`);
     const now = this.stamp();
     const row: RenderRow = {
       id: `render-${++this.seq}`,
       packId,
       version,
+      ...(kind !== 'notice' ? { kind } : {}),
       voiceKey,
       state: 'queued',
       sandboxId: null,
@@ -136,17 +137,18 @@ export class MemoryRenderStore implements RenderStore {
     return 'requeued';
   }
 
-  async getRender(packId: string, version: number) {
-    const r = [...this.rows.values()].find((x) => x.packId === packId && x.version === version);
+  async getRender(packId: string, version: number, kind: RenderKind = 'notice') {
+    const r = [...this.rows.values()].find((x) => x.packId === packId && x.version === version && kindOf(x) === kind);
     return r ? clone(r) : null;
   }
 
   async requeueRender(i: RenderRequeue) {
-    const r = [...this.rows.values()].find((x) => x.packId === i.packId && x.version === i.version);
+    const kind = i.kind ?? 'notice';
+    const r = [...this.rows.values()].find((x) => x.packId === i.packId && x.version === i.version && kindOf(x) === kind);
     if (!r) {
       this.writes.push('requeue:insert');
       const now = this.stamp();
-      const row: RenderRow = { id: `render-${++this.seq}`, packId: i.packId, version: i.version, voiceKey: i.voiceKey, state: 'queued', sandboxId: null, attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null, costPence: 0, errorCode: null, files: null, createdAt: now, updatedAt: now, notifiedAt: null, notifiedOutcome: null };
+      const row: RenderRow = { id: `render-${++this.seq}`, packId: i.packId, version: i.version, ...(kind !== 'notice' ? { kind } : {}), voiceKey: i.voiceKey, state: 'queued', sandboxId: null, attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null, costPence: 0, errorCode: null, files: null, createdAt: now, updatedAt: now, notifiedAt: null, notifiedOutcome: null };
       this.rows.set(row.id, row);
       return clone(row);
     }
