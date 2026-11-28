@@ -60,6 +60,8 @@ export type AdVideoReady = {
   durationSeconds: number;
   /** The voice key the video was made with ('jane' | 'olivia' | 'oliver'). */
   voice: string;
+  /** Batch 55 step 5: the first frame's picture measure (ld-gate.ts), on the lead database videos only. */
+  firstFrame?: { hist: number[]; thumb: number[] };
 };
 
 /**
@@ -315,7 +317,9 @@ export function parseAdVideo(raw: unknown): AdVideo | null {
   const videos = Array.isArray(o.videos) ? o.videos.map(fileRef).filter((f): f is AdFileRef => f !== null) : [];
   const poster = fileRef(o.poster);
   if (videos.length === 0 || !poster) return null;
-  return { status: 'ready', videos, poster, durationSeconds: Number(o.durationSeconds) || 0, voice: typeof o.voice === 'string' ? o.voice : '' };
+  const ff = o.firstFrame as { hist?: unknown; thumb?: unknown } | undefined;
+  const firstFrame = ff && Array.isArray(ff.hist) && Array.isArray(ff.thumb) && ff.hist.length === 64 && ff.thumb.length === 1024 ? { hist: ff.hist.map(Number), thumb: ff.thumb.map(Number) } : null;
+  return { status: 'ready', videos, poster, durationSeconds: Number(o.durationSeconds) || 0, voice: typeof o.voice === 'string' ? o.voice : '', ...(firstFrame ? { firstFrame } : {}) };
 }
 
 export function toRenderRow(r: Record<string, unknown>): RenderRow {

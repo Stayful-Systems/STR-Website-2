@@ -60,6 +60,7 @@ function realDeps(): GenerateDeps {
       return {
         enqueue: (i) => enqueueRender(renders, i),
         get: (packId, version) => renders.getRender(packId, version),
+        getKind: (packId, version, kind) => renders.getRender(packId, version, kind),
         requeue: (i) => renders.requeueRender(i),
       };
     })(),

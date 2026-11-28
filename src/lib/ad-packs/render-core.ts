@@ -77,6 +77,7 @@ import { StoreError, type AdFileRef, type AdPackStore, type PackAdRow, type Pack
 import type { AdVideo, AdVideoReady, RenderKind, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
 import { isRenderKind, kindOf } from './render-store.ts';
 import { runExampleRow, type ExampleDeps } from './example-step.ts';
+import { runVideoV2Row } from './video-v2-step.ts';
 
 // ── Interfaces ──
 
@@ -484,6 +485,7 @@ export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; li
 async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings): Promise<RenderLine> {
   // Batch 55 step 5 (Phase 2): an example report row has its own step (example-step.ts).
   if (kindOf(row) === 'example_report') return runExampleRow(deps, row, settings);
+  if (kindOf(row) === 'phone' || kindOf(row) === 'loupe') return runVideoV2Row(deps, row, settings);
   const log = deps.log ?? (() => {});
   const spend: Spend = { voicePence: 0, sandboxSeconds: 0, sandboxId: null, videos: [], startedMs: deps.now().getTime() };
   let pack: PackRow | null = null;
@@ -644,8 +646,17 @@ const isMp4 = (b: Uint8Array) => b.length > 12 && b[4] === 0x66 && b[5] === 0x74
 const isPng = (b: Uint8Array) => b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
 
 /** The voiceover: the version's stored files when they match the script, else a fresh (paid) one. */
-async function voiceFor(deps: RenderDeps, ownerId: string, pack: PackRow, row: RenderRow, lines: string[], spend: Spend, capCheck: (voiceWorstPence: number) => Promise<void>): Promise<{ audio: Uint8Array; script: BriefScript }> {
-  const paths = voicePaths(ownerId, pack.id, row.version);
+export async function voiceFor(
+  deps: RenderDeps,
+  ownerId: string,
+  pack: PackRow,
+  row: RenderRow,
+  lines: string[],
+  spend: { voicePence: number },
+  capCheck: (voiceWorstPence: number) => Promise<void>,
+  /** Batch 55 step 5: the phone and loupe videos keep their own voice cache (voice-<kind>.mp3); absent, the notice one. */
+  paths: { audio: string; script: string } = voicePaths(ownerId, pack.id, row.version),
+): Promise<{ audio: Uint8Array; script: BriefScript }> {
   const [audio, scriptBytes] = [await deps.storage.get(paths.audio), await deps.storage.get(paths.script)];
   if (audio && audio.byteLength > 0 && scriptBytes) {
     try {

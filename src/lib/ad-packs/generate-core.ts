@@ -62,7 +62,7 @@ import { DEFAULT_LOOK, ldFallbackCards, renderLdTexts, type Look } from './ld-an
 import { chooseLook } from './ld-gate.ts';
 import { AD_ROUTES, type AdRoute } from './eligibility.ts';
 import { adLink, adName } from './links.ts';
-import { isRetryableRenderCode, type AdVideo, type RenderRequeue, type RenderRow, type RenderState } from './render-store.ts';
+import { isRetryableRenderCode, type AdVideo, type RenderKind, type RenderRequeue, type RenderRow, type RenderState } from './render-store.ts';
 import type { EnqueueResult } from './render-core.ts';
 import { fitsCap, SANDBOX_SECONDS_CAP, type AdPackSettings } from './settings.ts';
 import { estimateVoicePence, MAX_VOICE_CHARACTERS } from './voice-core.ts';
@@ -265,6 +265,8 @@ export interface RenderQueue {
   enqueue(i: { packId: string; version: number; voiceKey: VoiceKey }): Promise<EnqueueResult>;
   /** The version's render row, or null. */
   get(packId: string, version: number): Promise<RenderRow | null>;
+  /** Batch 55 step 5: the version's row of another kind (phone, loupe, example_report). Optional. */
+  getKind?(packId: string, version: number, kind: RenderKind): Promise<RenderRow | null>;
   /** Reset the version's render to start again; null while a worker is running it. */
   requeue(i: RenderRequeue): Promise<RenderRow | null>;
 }
@@ -451,7 +453,13 @@ function videoCheckPassed(checks: ChecksOutput | null | undefined): boolean {
  * Why approvePack would refuse, or null when it would accept: the pack is in 'preview', every check passes (the
  * video check included) and the 5b video is ready. No image-only fallback: the pack is approved with all 3 ads.
  */
-export function approvalBlock(pack: PackRow, slot: AdVideo | null | undefined, render: RenderRow | null): { code: ApproveCode; message: string } | null {
+export function approvalBlock(
+  pack: PackRow,
+  slot: AdVideo | null | undefined,
+  render: RenderRow | null,
+  /** Batch 55 step 5: the lead database pack's other video slot (17's loupe); it must be ready too when there is one. */
+  otherSlot?: AdVideo | null,
+): { code: ApproveCode; message: string } | null {
   if (pack.status !== 'preview') return { code: 'not_preview', message: NOT_PREVIEW_MESSAGE };
   if (!pack.checks || pack.checks.ok !== true) return { code: 'not_preview', message: NOT_PREVIEW_MESSAGE };
   const v = videoViewOf(slot, render, pack.status);
@@ -460,6 +468,7 @@ export function approvalBlock(pack: PackRow, slot: AdVideo | null | undefined, r
   // Fail closed: "ok" alone is not enough. The video check must have actually RUN on this video (the worker records
   // it with the render) and passed; a pack that was never video-checked is not approvable.
   if (!videoCheckPassed(pack.checks)) return { code: 'video_pending', message: VIDEO_MESSAGES.still_checking };
+  if (otherSlot && otherSlot.status !== 'ready') return otherSlot.status === 'failed' ? { code: 'video_failed', message: videoFailedMessage(otherSlot.code) } : { code: 'video_pending', message: VIDEO_MESSAGES.video_pending };
   return null;
 }
 
@@ -1219,6 +1228,15 @@ export function createAdPackEngine(deps: GenerateDeps) {
     }
   }
 
+  /** The render row behind the 5b video: the notice row, or on the lead database route the phone row when there is one. */
+  async function renderFor5b(pack: PackRow): Promise<RenderRow | null> {
+    if (pack.route === 'leaddb' && deps.renders.getKind) {
+      const phone = await deps.renders.getKind(pack.id, pack.version, 'phone');
+      if (phone) return phone;
+    }
+    return deps.renders.get(pack.id, pack.version);
+  }
+
   async function approvePack(req: { ownerId: string; expectedVersion?: number }): Promise<ApproveResult> {
     const no = (code: ApproveCode, message: string): ApproveResult => ({ ok: false, code, message });
     if (!req || typeof req.ownerId !== 'string' || !UUID_RE.test(req.ownerId)) return no('invalid_input', GENERATE_MESSAGES.invalid_input);
@@ -1231,7 +1249,9 @@ export function createAdPackEngine(deps: GenerateDeps) {
       // 38b: all three ads or none. The 5b video must be ready and every check (the video's included) must pass.
       const ads = await store.listAds(req.ownerId, pack.id);
       const slot = ads.find((a) => a.angle === '5b' && a.version === pack.version)?.files.video ?? null;
-      const block = approvalBlock(pack, slot, await deps.renders.get(pack.id, pack.version));
+      // Batch 55 step 5: a lead database pack's 5b video is the phone render (or the notice fallback), and 17's loupe must be ready too.
+      const other = pack.route === 'leaddb' ? (ads.find((a) => a.angle === '17' && a.version === pack.version)?.files.video ?? null) : undefined;
+      const block = approvalBlock(pack, slot, await renderFor5b(pack), other);
       if (block) return no(block.code, block.message);
       const updated = await store.updatePack(req.ownerId, pack.id, { status: 'approved', approvedAt: pack.approvedAt ?? deps.now().toISOString() }, { from: ['preview'] });
       if (!updated) return no('not_preview', 'Only a pack that is ready to look at can be approved.');
@@ -1247,7 +1267,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
     if (typeof ownerId !== 'string' || ownerId === '') return null;
     const pack = await store.getPack(ownerId);
     if (!pack) return null;
-    const [all, settings, renderRow] = await Promise.all([store.listAds(ownerId, pack.id), store.readSettings(), deps.renders.get(pack.id, pack.version)]);
+    const [all, settings, renderRow] = await Promise.all([store.listAds(ownerId, pack.id), store.readSettings(), renderFor5b(pack)]);
     const ads = all.filter((a) => a.version === pack.version);
     const showAds = pack.status === 'preview' || pack.status === 'approved' || (pack.status === 'failed' && pack.generatedAt !== null && pack.checks?.ok === true);
     const slot = ads.find((a) => a.angle === '5b')?.files.video ?? null;
@@ -1267,7 +1287,9 @@ export function createAdPackEngine(deps: GenerateDeps) {
         free: state.free,
         blocked: state.blocked,
       },
-      approval: ((b) => (b ? { ok: false as const, ...b } : { ok: true as const }))(approvalBlock(pack, slot, renderRow)),
+      approval: ((b) => (b ? { ok: false as const, ...b } : { ok: true as const }))(
+        approvalBlock(pack, slot, renderRow, pack.route === 'leaddb' ? (ads.find((a) => a.angle === '17')?.files.video ?? null) : undefined),
+      ),
     };
   }
 

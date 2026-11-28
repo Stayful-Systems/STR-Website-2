@@ -369,6 +369,7 @@ export function harness(opts: { pricing?: Pricing; now?: Date; /** Batch 55 step
         return enqueueRender(h.renders, i);
       },
       get: (packId, version) => h.renders.getRender(packId, version),
+      getKind: (packId, version, kind) => h.renders.getRender(packId, version, kind),
       requeue: (i) => h.renders.requeueRender(i),
     },
     deleteFiles: async (paths) => {

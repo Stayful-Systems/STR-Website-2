@@ -245,14 +245,22 @@ const HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$
  * The video check on its own (runChecks calls it; the render worker calls it after a render and merges the
  * result into the pack's stored checks with mergeVideoChecks). Plain words in `detail`, no codes.
  */
-export function videoChecks(videos: readonly CheckVideo[]): { failures: CheckFailure[]; warnings: CheckWarning[] } {
+/** Batch 55 step 5: the expected files of a video by its name prefix ('notice' is VIDEO_SIZES; 'phone' and 'loupe' the same sizes). */
+export function videoSizesFor(prefix: 'notice' | 'phone' | 'loupe'): Record<string, { width: number; height: number }> {
+  if (prefix === 'notice') return VIDEO_SIZES;
+  return Object.fromEntries(Object.entries(VIDEO_SIZES).map(([k, v]) => [k.replace(/^notice-/, `${prefix}-`), v]));
+}
+
+export function videoChecks(videos: readonly CheckVideo[], opts: { prefix?: 'notice' | 'phone' | 'loupe'; angle?: Angle } = {}): { failures: CheckFailure[]; warnings: CheckWarning[] } {
   const failures: CheckFailure[] = [];
   const fail = (rule: string, where: string, detail: string) => failures.push({ check: 'video', rule, where, detail });
   const list = Array.isArray(videos) ? videos : [];
   const seen = new Set<string>();
+  const sizes = videoSizesFor(opts.prefix ?? 'notice');
+  const angle = opts.angle ?? '5b';
   for (const v of list) {
-    const where = `ad 5b ${v.name}`;
-    const size = VIDEO_SIZES[v.name];
+    const where = `ad ${angle} ${v.name}`;
+    const size = sizes[v.name];
     if (!size) {
       fail('video_name', where, 'This is not one of the three video files the pack should have.');
     } else {
@@ -264,7 +272,7 @@ export function videoChecks(videos: readonly CheckVideo[]): { failures: CheckFai
     if (v.hasAudio !== true) fail('video_audio', where, 'The video has no sound.');
     if (!Number.isFinite(v.captionCount) || v.captionCount < 1) fail('video_captions', where, 'The video has no captions on screen.');
   }
-  for (const name of Object.keys(VIDEO_SIZES)) if (!seen.has(name)) fail('video_missing', `ad 5b ${name}`, 'This video file is missing.');
+  for (const name of Object.keys(sizes)) if (!seen.has(name)) fail('video_missing', `ad ${angle} ${name}`, 'This video file is missing.');
   return { failures, warnings: [] };
 }
 
@@ -302,9 +310,11 @@ export function mergeLdPictureChecks(prev: ChecksOutput | null | undefined, ads:
  * The pack's stored checks with the video check (re)done: earlier `video` failures are dropped, the new ones are
  * added, and `ok` and `results` are recomputed. Everything else in `prev` is kept as it was. A null `prev` starts empty.
  */
-export function mergeVideoChecks(prev: ChecksOutput | null | undefined, videos: readonly CheckVideo[]): ChecksOutput {
-  const v = videoChecks(videos);
-  const failures = [...(prev?.failures ?? []).filter((f) => f.check !== 'video'), ...v.failures];
+export function mergeVideoChecks(prev: ChecksOutput | null | undefined, videos: readonly CheckVideo[], opts?: { prefix: 'phone' | 'loupe'; angle: Angle }): ChecksOutput {
+  const v = videoChecks(videos, opts ?? {});
+  // Batch 55 step 5: a lead database pack has two videos; each merge replaces only its own ad's video failures.
+  const mine = (f: CheckFailure) => f.check === 'video' && (opts === undefined || f.where.startsWith(`ad ${opts.angle} `));
+  const failures = [...(prev?.failures ?? []).filter((f) => !mine(f)), ...v.failures];
   const warnings = [...(prev?.warnings ?? []).filter((w) => w.check !== 'video'), ...v.warnings];
   return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings, true, hasLdRows(prev)) };
 }

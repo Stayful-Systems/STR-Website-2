@@ -61,6 +61,13 @@ export type ExampleDeps = {
   /** The branded report PDF (the customer's brand, never the default one). */
   renderPdf: (result: AnalysisResult, brand: ExampleBrand) => Promise<Uint8Array>;
   /** The 3a carousel from the stored pages (images.tsx, lead database route). Optional: left out, 3a keeps its fallback cards. */
+  /**
+   * The two phone frames of the 5b video (the calculator, then the form filled with the example), drawn with Satori from
+   * the customer's calculator design (ld-images.tsx). Optional: left out, the phone video cannot be made (fallback).
+   */
+  renderPhoneFrames?: (a: { company: string; brandColour: string | null; logoRef: string | null; areaLabel: string; bedrooms: number | null }) => Promise<Uint8Array[]>;
+  /** The picture measure of a PNG (sharp in the live wiring): 64-bin histogram and 32x32 grey thumbnail. */
+  measurePng?: (png: Uint8Array) => Promise<{ hist: number[]; thumb: number[] }>;
   renderCarousel?: (a: { pages: { png: Uint8Array; width: number; height: number }[]; captions: string[]; brand: { company: string; brandColour: string; logoUrl: string | null }; base: 'cream' | 'white' }) => Promise<CarouselImage[]>;
 };
 
