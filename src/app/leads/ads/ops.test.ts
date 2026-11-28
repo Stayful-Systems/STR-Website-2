@@ -768,6 +768,7 @@ test('generate, lead database route: nationwide is sent with the main area as th
   const pack = await s.h.store.getPack(OWNER_A);
   assert.equal(pack?.coverage, 'uk');
   assert.deepEqual(pack?.coverageAreas, []);
+  assert.equal(pack?.status, 'preview', 'the lead database gate passes the nationwide wording');
   const ads = await s.h.store.listAds(OWNER_A, pack!.id);
   assert.ok(ads.every((a) => a.texts.primary.every((t) => t.includes('across the UK'))));
 });
@@ -783,6 +784,7 @@ test('generate, lead database route: chosen areas are sent, stored in order, and
   const pack = await s.h.store.getPack(OWNER_A);
   assert.equal(pack?.coverage, 'areas');
   assert.deepEqual(pack?.coverageAreas, ['Leeds', 'York', 'Harrogate']);
+  assert.equal(pack?.status, 'preview', 'the lead database gate passes the areas wording');
   const ads = await s.h.store.listAds(OWNER_A, pack!.id);
   assert.ok(ads.every((a) => a.texts.primary.every((t) => t.includes('manages short lets in Leeds, York and Harrogate.'))));
   // Refusals send nothing.
