@@ -27,6 +27,22 @@ import type { AdFileRef } from './store-types.ts';
 import type { PackRow } from './store-types.ts';
 
 export const RENDER_STATES = ['queued', 'running', 'done', 'failed'] as const;
+
+/**
+ * Batch 55 step 5 (Phase 2): what a render row makes (ad_pack_renders.kind; (pack_id, version, kind) is unique).
+ *   notice          the batch 38 notice video of the 5b ad (the Academy's only kind; the lead database's fallback)
+ *   example_report  the example report a lead database pack is built from, and its masked page pictures
+ *   phone           the lead database 5b video: the calculator on a phone, then the report (report_walk.py)
+ *   loupe           the lead database 17 video: a report page under a moving magnifier (loupe.py)
+ * A row without a kind is a notice row: RenderRow.kind is left out for it, so every batch 38 row reads as before.
+ */
+export const RENDER_KINDS = ['notice', 'example_report', 'phone', 'loupe'] as const;
+export type RenderKind = (typeof RENDER_KINDS)[number];
+export const isRenderKind = (v: unknown): v is RenderKind => typeof v === 'string' && (RENDER_KINDS as readonly string[]).includes(v);
+/** The kind of a row (absent is 'notice'). */
+export const kindOf = (r: { kind?: RenderKind | null }): RenderKind => r.kind ?? 'notice';
+/** The video kinds and the ad whose `files.video` slot they fill. */
+export const VIDEO_KIND_ANGLE: Record<Exclude<RenderKind, 'example_report'>, '5b' | '17'> = { notice: '5b', phone: '5b', loupe: '17' };
 export type RenderState = (typeof RENDER_STATES)[number];
 
 /**
@@ -44,6 +60,8 @@ export type AdVideoReady = {
   durationSeconds: number;
   /** The voice key the video was made with ('jane' | 'olivia' | 'oliver'). */
   voice: string;
+  /** Batch 55 step 5: the first frame's picture measure (ld-gate.ts), on the lead database videos only. */
+  firstFrame?: { hist: number[]; thumb: number[] };
 };
 
 /**
@@ -61,6 +79,8 @@ export type RenderRow = {
   id: string;
   packId: string;
   version: number;
+  /** Batch 55 step 5: left out for a notice row (the batch 38 kind), so those rows read exactly as before. */
+  kind?: RenderKind;
   voiceKey: string;
   state: RenderState;
   sandboxId: string | null;
@@ -71,6 +91,8 @@ export type RenderRow = {
   costPence: number;
   errorCode: string | null;
   files: AdVideoReady | null;
+  /** Batch 55 step 5: an example_report row's pages, once done (left out on every other row). */
+  example?: ExampleReady;
   createdAt: string;
   updatedAt: string;
   /**
@@ -106,6 +128,12 @@ export const RENDER_CODES = [
   'voice_timeout',
   'voice_bad_response',
   'voice_failed',
+  // Batch 55 step 5 (Phase 2): the example report step (never blocks the pack: the fallback look is used and the code kept).
+  'example_failed',
+  'example_thin',
+  'example_no_figures',
+  'pages_failed',
+  'no_example',
 ] as const;
 export type RenderCode = (typeof RENDER_CODES)[number];
 
@@ -117,7 +145,32 @@ export type RenderFinish = {
   sandboxId: string | null;
   finishedAt: string | null;
 };
-export type RenderDone = { costPence: number; sandboxId: string | null; files: AdVideoReady; finishedAt: string };
+export type RenderDone = { costPence: number; sandboxId: string | null; files: AdVideoReady | ExampleReady; finishedAt: string };
+
+/**
+ * Batch 55 step 5: what a finished example_report row holds (ad_pack_renders.files): the masked pages in the bucket,
+ * the loupe's three stops (fractions of a page), how many £ words were blurred, and whether the figures came from a
+ * fresh run or a stripped finished report. Never an address, a title or a figure.
+ */
+export type ExampleReady = {
+  status: 'example';
+  pages: AdFileRef[];
+  targets: { page: number; x: number; y: number; w: number; h: number }[];
+  masked: number;
+  source: 'run' | 'snapshot';
+};
+
+export function parseExampleReady(raw: unknown): ExampleReady | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (o.status !== 'example' || !Array.isArray(o.pages)) return null;
+  const pages = o.pages.map(fileRef).filter((f): f is AdFileRef => f !== null);
+  if (pages.length === 0) return null;
+  const targets = Array.isArray(o.targets)
+    ? (o.targets as Record<string, unknown>[]).map((t) => ({ page: int(t?.page), x: Number(t?.x), y: Number(t?.y), w: Number(t?.w), h: Number(t?.h) })).filter((t) => [t.x, t.y, t.w, t.h].every(Number.isFinite))
+    : [];
+  return { status: 'example', pages, targets, masked: int(o.masked), source: o.source === 'snapshot' ? 'snapshot' : 'run' };
+}
 
 export type RenderCounts = Record<RenderState, number>;
 
@@ -126,7 +179,7 @@ export type RenderCounts = Record<RenderState, number>;
  * `keepAttempts` (an operator's retry) leaves `attempts` as it is, so the tries of the row add up and
  * retryVideo can stop them; without it (a voice change) attempts start again at 0.
  */
-export type RenderRequeue = { packId: string; version: number; voiceKey: string; keepAttempts?: boolean };
+export type RenderRequeue = { packId: string; version: number; voiceKey: string; keepAttempts?: boolean; /** Absent is 'notice'. */ kind?: RenderKind };
 
 /**
  * Codes a retry cannot fix: the voice is not in the account (change the voice instead), a brief the
@@ -140,7 +193,7 @@ export interface RenderStore {
    * Queue the version's render, if it has none yet. Returns the row and whether
    * it was inserted. A failed row is left as it is (a voice change makes a new version).
    */
-  enqueue(packId: string, version: number, voiceKey: string): Promise<{ inserted: boolean; row: RenderRow }>;
+  enqueue(packId: string, version: number, voiceKey: string, kind?: RenderKind): Promise<{ inserted: boolean; row: RenderRow }>;
   /** Queued rows, oldest first. */
   listQueued(limit: number): Promise<RenderRow[]>;
   /** Running rows whose lease ended before the instant. */
@@ -169,7 +222,7 @@ export interface RenderStore {
   /** Set the files of one pack ad (only if the ad belongs to the owner). */
   setAdFiles(ownerId: string, packAdId: string, files: Record<string, unknown>): Promise<boolean>;
   /** The version's render row, or null. */
-  getRender(packId: string, version: number): Promise<RenderRow | null>;
+  getRender(packId: string, version: number, kind?: RenderKind): Promise<RenderRow | null>;
   /**
    * Reset the version's render to start again (a voice change, or a retry of a failed render): state queued,
    * attempts 0 (kept when `keepAttempts`), error, files, lease and finish time cleared, voice_key = the given one, cost kept. Creates the row
@@ -264,7 +317,9 @@ export function parseAdVideo(raw: unknown): AdVideo | null {
   const videos = Array.isArray(o.videos) ? o.videos.map(fileRef).filter((f): f is AdFileRef => f !== null) : [];
   const poster = fileRef(o.poster);
   if (videos.length === 0 || !poster) return null;
-  return { status: 'ready', videos, poster, durationSeconds: Number(o.durationSeconds) || 0, voice: typeof o.voice === 'string' ? o.voice : '' };
+  const ff = o.firstFrame as { hist?: unknown; thumb?: unknown } | undefined;
+  const firstFrame = ff && Array.isArray(ff.hist) && Array.isArray(ff.thumb) && ff.hist.length === 64 && ff.thumb.length === 1024 ? { hist: ff.hist.map(Number), thumb: ff.thumb.map(Number) } : null;
+  return { status: 'ready', videos, poster, durationSeconds: Number(o.durationSeconds) || 0, voice: typeof o.voice === 'string' ? o.voice : '', ...(firstFrame ? { firstFrame } : {}) };
 }
 
 export function toRenderRow(r: Record<string, unknown>): RenderRow {
@@ -274,6 +329,7 @@ export function toRenderRow(r: Record<string, unknown>): RenderRow {
     id: String(r.id),
     packId: String(r.pack_id),
     version: int(r.version, 1),
+    ...(isRenderKind(r.kind) && r.kind !== 'notice' ? { kind: r.kind } : {}),
     voiceKey: String(r.voice_key ?? ''),
     state,
     sandboxId: typeof r.sandbox_id === 'string' && r.sandbox_id !== '' ? r.sandbox_id : null,
@@ -284,6 +340,7 @@ export function toRenderRow(r: Record<string, unknown>): RenderRow {
     costPence: int(r.cost_pence),
     errorCode: typeof r.error_code === 'string' && r.error_code !== '' ? r.error_code : null,
     files: video && video.status === 'ready' ? video : null,
+    ...(r.kind === 'example_report' && parseExampleReady(r.files) ? { example: parseExampleReady(r.files) as ExampleReady } : {}),
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
     notifiedAt: typeof r.notified_at === 'string' ? r.notified_at : null,
@@ -292,4 +349,4 @@ export function toRenderRow(r: Record<string, unknown>): RenderRow {
 }
 
 export const RENDER_COLUMNS =
-  'id, pack_id, version, voice_key, state, sandbox_id, attempts, lease_until, started_at, finished_at, cost_pence, error_code, files, created_at, updated_at, notified_at, notified_outcome';
+  'id, pack_id, version, kind, voice_key, state, sandbox_id, attempts, lease_until, started_at, finished_at, cost_pence, error_code, files, created_at, updated_at, notified_at, notified_outcome';

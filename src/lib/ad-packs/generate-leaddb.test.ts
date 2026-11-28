@@ -183,11 +183,44 @@ test('A6: every lead database ad records its concept and format; Academy ads car
   const ads = await h.store.listAds(OWNER_A, r.packId);
   assert.deepEqual(
     ads.map((a) => [a.angle, a.conceptId, a.format]).sort(),
-    [['17', '17-v1', 'type_cards'], ['3a', '3a-v1', 'type_cards'], ['5b', '5b-v1', 'notice_video']],
+    [['17', '17-rules-changed', 'loupe'], ['3a', '3a-moving-abroad', 'report_carousel'], ['5b', '5b-tenant-leaving', 'phone_recording']],
   );
   const academy = harness();
   const ra = ok(await academy.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input() }));
   for (const a of await academy.store.listAds(OWNER_A, ra.packId)) {
     assert.ok(!('conceptId' in a) && !('format' in a), 'an Academy row has no concept or format keys at all');
   }
+});
+
+// ── Batch 55 step 5 (Phase 2): the lead database copy, the gate and the same-area look ──
+
+const OWNER_B = '4a0b3d22-2222-4222-8222-222222222222';
+
+test('Phase 2: a lead database pack carries the ld copy and screen lines, passes the gate, and the Academy pack does not change', async () => {
+  const h = harness();
+  const r = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb() }));
+  assert.equal(r.checks.ok, true, JSON.stringify(r.checks.failures));
+  assert.ok(r.checks.results.some((x) => x.check === 'ld_format' && x.ok));
+  const ads = await h.store.listAds(OWNER_A, r.packId);
+  for (const a of ads) {
+    assert.ok(a.texts.primary[0].startsWith(a.angle === '3a' ? 'Homeowners in ' : 'Landlords in '), a.texts.primary[0]);
+    assert.ok(a.texts.ld && a.texts.ld.screenLines.at(-1) === 'Get your free income report');
+    assert.deepEqual(a.texts.ld.look, { base: 'cream', hook: 'a' });
+  }
+  assert.ok(ads.find((a) => a.angle === '17')?.texts.brand, 'the loupe video has its pinned brand too');
+  const academy = harness();
+  const ra = ok(await academy.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input() }));
+  assert.ok(!ra.checks.results.some((x) => x.check.startsWith('ld_')));
+  for (const a of await academy.store.listAds(OWNER_A, ra.packId)) assert.ok(!('ld' in a.texts));
+});
+
+test('Phase 2: a second customer in the same main area gets the other base and frame one, at no extra cost or round', async () => {
+  const h = harness();
+  const first = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb() }));
+  const second = ok(await h.engine.generatePack({ ownerId: OWNER_B, by: 'operator', input: leadDb({ sitePath: 'harbour-calc', brand: { company: 'Harbour & Pine', logoUrl: 'https://cdn.example.test/hp.png', brandColour: '#1f4e79', feePct: 15, areas: ['Nottingham'], photoUrl: null } }) }));
+  const a1 = (await h.store.listAds(OWNER_A, first.packId)).find((a) => a.angle === '5b')!;
+  const a2 = (await h.store.listAds(OWNER_B, second.packId)).find((a) => a.angle === '5b')!;
+  assert.notDeepEqual(a2.texts.ld?.look, a1.texts.ld?.look);
+  assert.notEqual(a2.texts.ld?.screenLines[0], a1.texts.ld?.screenLines[0]);
+  assert.equal(second.costPence, first.costPence);
 });

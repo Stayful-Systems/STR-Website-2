@@ -114,6 +114,26 @@ begin
     raise exception 'the vercel sandbox_cpu_second unit cost must exist and be above zero';
   end if;
 
+  -- Batch 55 step 5 (Phase 2): one row per kind per version; a row without a kind is a notice row; the kinds are closed.
+  -- The pack above was deleted (cascade check), so these checks use a fresh pack.
+  insert into public.ad_packs (owner_id, operator_code) values (u, 'SSSSSS') returning id into p;
+  insert into public.ad_pack_renders (pack_id, version, voice_key) values (p, 1, 'jane') returning id into r;
+  if (select kind from public.ad_pack_renders where id = r) <> 'notice' then raise exception 'a row without a kind must be a notice row'; end if;
+  insert into public.ad_pack_renders (pack_id, version, voice_key, kind) values (p, 1, 'jane', 'example_report');
+  insert into public.ad_pack_renders (pack_id, version, voice_key, kind) values (p, 1, 'jane', 'phone');
+  insert into public.ad_pack_renders (pack_id, version, voice_key, kind) values (p, 1, 'jane', 'loupe');
+  begin
+    insert into public.ad_pack_renders (pack_id, version, voice_key, kind) values (p, 1, 'jane', 'loupe');
+    raise exception 'a second loupe row of one pack version must be refused';
+  exception when unique_violation then null; end;
+  begin
+    insert into public.ad_pack_renders (pack_id, version, voice_key, kind) values (p, 3, 'jane', 'carousel');
+    raise exception 'an unknown kind must be refused';
+  exception when check_violation then null; end;
+  if exists (select 1 from pg_constraint where conname = 'ad_pack_renders_pack_version_key') then
+    raise exception 'the old (pack_id, version) key must be gone once (pack_id, version, kind) is there';
+  end if;
+
   raise notice 'adpacks render smoke: ok';
 end $$;
 

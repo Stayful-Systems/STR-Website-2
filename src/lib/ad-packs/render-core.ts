@@ -74,7 +74,10 @@ import { fitsCap } from './settings.ts';
 import { isVoiceKey, type VoiceKey } from './voices.ts';
 import { estimateVoicePence, type SynthesiseResult, type VoiceCode } from './voice-core.ts';
 import { StoreError, type AdFileRef, type AdPackStore, type PackAdRow, type PackRow, type RunResult, type VideoBrand } from './store-types.ts';
-import type { AdVideo, AdVideoReady, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
+import type { AdVideo, AdVideoReady, RenderKind, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
+import { isRenderKind, kindOf } from './render-store.ts';
+import { runExampleRow, type ExampleDeps } from './example-step.ts';
+import { runVideoV2Row } from './video-v2-step.ts';
 
 // ── Interfaces ──
 
@@ -109,8 +112,10 @@ export type RenderDeps = {
   synth: (i: { voiceKey: VoiceKey; lines: readonly string[]; packId: string }) => Promise<SynthesiseResult>;
   storage: StorageLike;
   fetchImage: (ref: string) => Promise<FetchedImage>;
-  /** The files of ad-render/ that go into the sandbox (explicit list). */
-  rendererFiles: () => Promise<RendererFile[]>;
+  /** The files of ad-render/ that go into the sandbox (explicit list; RENDERER_FILES when none is given). */
+  rendererFiles: (list?: readonly string[]) => Promise<RendererFile[]>;
+  /** Batch 55 step 5 (Phase 2): the example report step and the new videos (example-step.ts). Left out: no example report is made (fallback look). */
+  example?: ExampleDeps;
   /** Raw pence per sandbox CPU-second (the unit_costs row; the seed when unreadable). */
   sandboxCpuSecondPence: () => Promise<number>;
   renderSettings: () => Promise<RenderSettings>;
@@ -179,7 +184,7 @@ const VOICE_CODE_OF: Record<VoiceCode, string> = {
   failed: 'voice_failed',
 };
 
-class RenderFail extends Error {
+export class RenderFail extends Error {
   readonly code: string;
   constructor(code: string) {
     super(code);
@@ -362,9 +367,9 @@ export function scriptLinesOf(ad: Pick<PackAdRow, 'texts'>): string[] {
 }
 
 /** Read ad-render/ files from disk (explicit list), relative to the process's working folder. */
-export async function loadRendererFiles(root: string = path.join(/*turbopackIgnore: true*/ process.cwd(), 'ad-render')): Promise<RendererFile[]> {
+export async function loadRendererFiles(root: string = path.join(/*turbopackIgnore: true*/ process.cwd(), 'ad-render'), list: readonly string[] = RENDERER_FILES): Promise<RendererFile[]> {
   const out: RendererFile[] = [];
-  for (const rel of RENDERER_FILES) {
+  for (const rel of list) {
     try {
       out.push({ path: `ad-render/${rel}`, content: new Uint8Array(await readFile(path.join(/*turbopackIgnore: true*/ root, rel))) });
     } catch {
@@ -379,12 +384,13 @@ export type EnqueueResult =
   | { ok: false; code: 'invalid_input' | 'store_failed' };
 
 /** Queue the render of a stored pack version (insert-if-missing; never throws). */
-export async function enqueueRender(store: Pick<RenderStore, 'enqueue'>, input: { packId: string; version: number; voiceKey: string }): Promise<EnqueueResult> {
+export async function enqueueRender(store: Pick<RenderStore, 'enqueue'>, input: { packId: string; version: number; voiceKey: string; /** Batch 55 step 5; absent is 'notice'. */ kind?: RenderKind }): Promise<EnqueueResult> {
   if (!input || typeof input.packId !== 'string' || input.packId === '' || !Number.isInteger(input.version) || input.version < 1 || !isVoiceKey(input.voiceKey)) {
     return { ok: false, code: 'invalid_input' };
   }
+  if (input.kind !== undefined && !isRenderKind(input.kind)) return { ok: false, code: 'invalid_input' };
   try {
-    const { inserted, row } = await store.enqueue(input.packId, input.version, input.voiceKey);
+    const { inserted, row } = input.kind && input.kind !== 'notice' ? await store.enqueue(input.packId, input.version, input.voiceKey, input.kind) : await store.enqueue(input.packId, input.version, input.voiceKey);
     return { ok: true, inserted, renderId: row.id, state: row.state };
   } catch {
     return { ok: false, code: 'store_failed' };
@@ -477,6 +483,9 @@ export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; li
 
 /** One claimed row, start to finish. Never throws. */
 async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings): Promise<RenderLine> {
+  // Batch 55 step 5 (Phase 2): an example report row has its own step (example-step.ts).
+  if (kindOf(row) === 'example_report') return runExampleRow(deps, row, settings);
+  if (kindOf(row) === 'phone' || kindOf(row) === 'loupe') return runVideoV2Row(deps, row, settings);
   const log = deps.log ?? (() => {});
   const spend: Spend = { voicePence: 0, sandboxSeconds: 0, sandboxId: null, videos: [], startedMs: deps.now().getTime() };
   let pack: PackRow | null = null;
@@ -588,7 +597,7 @@ async function applyVideoChecks(deps: RenderDeps, pack: PackRow, version: number
 }
 
 /** The cost on the pack and in the month's runs (the generator's cap reads ad_pack_runs). Never throws. */
-async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean, errorCode: string | undefined, version: number, seconds: number): Promise<void> {
+export async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean, errorCode: string | undefined, version: number, seconds: number, kind?: string): Promise<void> {
   const log = deps.log ?? (() => {});
   try {
     const fresh = await deps.packs.getPack(pack.ownerId);
@@ -597,7 +606,7 @@ async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean
     log('render_pack_cost_failed', { packId: pack.id, code: 'store_failed' });
   }
   try {
-    const result: RunResult & { kind: 'render'; renderSeconds: number } = {
+    const result: RunResult & { kind: 'render'; renderSeconds: number; renderKind?: string } = {
       outcome: ok ? 'preview' : 'failed',
       ...(errorCode ? { errorCode } : {}),
       version,
@@ -609,6 +618,8 @@ async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean
       checkWarnings: 0,
       kind: 'render',
       renderSeconds: Math.round(seconds),
+      // Batch 55 step 5: which render row it was (left out for the notice video, as before).
+      ...(kind && kind !== 'notice' ? { renderKind: kind } : {}),
     };
     await deps.packs.insertRun(pack.ownerId, { packId: pack.id, version, by: 'admin', costPence: cost, result });
   } catch {
@@ -616,9 +627,9 @@ async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean
   }
 }
 
-type Asset = { path: string; content: Uint8Array };
+export type Asset = { path: string; content: Uint8Array };
 
-async function fetchAsset(deps: RenderDeps, ref: string, base: string): Promise<Asset | null> {
+export async function fetchAsset(deps: RenderDeps, ref: string, base: string): Promise<Asset | null> {
   try {
     const got = await deps.fetchImage(ref);
     const bytes = got.bytes;
@@ -635,8 +646,17 @@ const isMp4 = (b: Uint8Array) => b.length > 12 && b[4] === 0x66 && b[5] === 0x74
 const isPng = (b: Uint8Array) => b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
 
 /** The voiceover: the version's stored files when they match the script, else a fresh (paid) one. */
-async function voiceFor(deps: RenderDeps, ownerId: string, pack: PackRow, row: RenderRow, lines: string[], spend: Spend, capCheck: (voiceWorstPence: number) => Promise<void>): Promise<{ audio: Uint8Array; script: BriefScript }> {
-  const paths = voicePaths(ownerId, pack.id, row.version);
+export async function voiceFor(
+  deps: RenderDeps,
+  ownerId: string,
+  pack: PackRow,
+  row: RenderRow,
+  lines: string[],
+  spend: { voicePence: number },
+  capCheck: (voiceWorstPence: number) => Promise<void>,
+  /** Batch 55 step 5: the phone and loupe videos keep their own voice cache (voice-<kind>.mp3); absent, the notice one. */
+  paths: { audio: string; script: string } = voicePaths(ownerId, pack.id, row.version),
+): Promise<{ audio: Uint8Array; script: BriefScript }> {
   const [audio, scriptBytes] = [await deps.storage.get(paths.audio), await deps.storage.get(paths.script)];
   if (audio && audio.byteLength > 0 && scriptBytes) {
     try {

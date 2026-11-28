@@ -10771,3 +10771,55 @@ alter table public.ad_pack_ads add constraint ad_pack_ads_concept_check
   check (concept_id is null or concept_id ~ '^[a-z0-9][a-z0-9-]{0,39}$');
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 55 step 5 (Phase 2): example report, new videos and the gate
+-- =========================
+-- A lead database pack (ad_packs.route = 'leaddb') is built from an EXAMPLE
+-- REPORT in the customer's brand (spec docs/build/55c-customer-ad-creative.md
+-- in lead-database, A2 to A5). The example report and the two new videos are
+-- queued as their own rows of ad_pack_renders, so no request or cron pass ever
+-- holds a long job. Every statement is guarded or "if not exists", so a re-run
+-- changes nothing. No table, function, policy or grant. The Academy route is
+-- unchanged: its rows keep kind 'notice' (the column's default).
+--
+--   ad_pack_renders.kind   what the row makes:
+--                            notice          the batch 38 notice video (5b)
+--                            example_report  the example report and its masked
+--                                            page pictures (files: the pages)
+--                            phone           the lead database 5b video (the
+--                                            calculator on a phone, then the
+--                                            report): ad-render/report_walk.py
+--                            loupe           the lead database 17 video (a
+--                                            report page under a magnifier):
+--                                            ad-render/loupe.py
+--   unique (pack_id, version, kind) replaces unique (pack_id, version): one row
+--   per kind per version. The new key is added first (guarded), then the old
+--   one is dropped on every run, so the table is never without a key.
+--
+-- The example report is NEVER saved to analyser_reports: it is house spend
+-- (billed to nobody), its cost goes on ad_pack_runs like a render, and its
+-- address reads "Example property, <area>". A failed example report never
+-- blocks the pack: the fallback look (notice video, type-only cards) is made
+-- and the code is kept on the row (example_failed, example_thin,
+-- example_no_figures, pages_failed, no_example).
+--
+-- leads.status and leads.crm_pushed_at are NEVER written by this. No column
+-- here is in ACCESS_COLUMNS.
+
+alter table public.ad_pack_renders add column if not exists kind text not null default 'notice';
+alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_kind_check;
+alter table public.ad_pack_renders add constraint ad_pack_renders_kind_check
+  check (kind in ('notice', 'example_report', 'phone', 'loupe'));
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'ad_pack_renders_pack_version_kind_key' and conrelid = 'public.ad_pack_renders'::regclass) then
+    alter table public.ad_pack_renders add constraint ad_pack_renders_pack_version_kind_key unique (pack_id, version, kind);
+  end if;
+end $$;
+-- Dropped on EVERY run, not only the first: the Batch 38b block above re-adds the old
+-- (pack_id, version) key whenever it is missing, so a re-run must drop it again or a
+-- second render kind for the same pack version would be refused.
+alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_pack_version_key;
+
+notify pgrst, 'reload schema';

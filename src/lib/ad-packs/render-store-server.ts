@@ -57,16 +57,17 @@ export async function readSandboxCpuSecondPence(): Promise<number> {
 
 export function createLiveRenderStore(): RenderStore {
   return {
-    async enqueue(packId, version, voiceKey) {
+    async enqueue(packId, version, voiceKey, kind = 'notice') {
       if (!UUID.test(packId)) throw new StoreError('invalid_pack');
+      // Batch 55 step 5: (pack_id, version, kind) is the unique key; a notice row is written without the column (its default).
       const { data, error } = await admin()
         .from('ad_pack_renders')
-        .upsert({ pack_id: packId, version, voice_key: voiceKey }, { onConflict: 'pack_id,version', ignoreDuplicates: true })
+        .upsert({ pack_id: packId, version, voice_key: voiceKey, ...(kind !== 'notice' ? { kind } : {}) }, { onConflict: 'pack_id,version,kind', ignoreDuplicates: true })
         .select(RENDER_COLUMNS);
       if (error) fail('ad_pack_renders enqueue', error);
       const inserted = (data ?? [])[0];
       if (inserted) return { inserted: true, row: toRenderRow(inserted as Record<string, unknown>) };
-      const { data: existing, error: readError } = await admin().from('ad_pack_renders').select(RENDER_COLUMNS).eq('pack_id', packId).eq('version', version).maybeSingle();
+      const { data: existing, error: readError } = await admin().from('ad_pack_renders').select(RENDER_COLUMNS).eq('pack_id', packId).eq('version', version).eq('kind', kind).maybeSingle();
       if (readError) fail('ad_pack_renders read', readError);
       if (!existing) throw new StoreError('enqueue_lost');
       return { inserted: false, row: toRenderRow(existing as Record<string, unknown>) };
@@ -181,14 +182,14 @@ export function createLiveRenderStore(): RenderStore {
       return data ? toPackRow(data as Record<string, unknown>) : null;
     },
 
-    async getRender(packId, version) {
+    async getRender(packId, version, kind = 'notice') {
       if (!UUID.test(packId)) return null;
-      const { data, error } = await admin().from('ad_pack_renders').select(RENDER_COLUMNS).eq('pack_id', packId).eq('version', version).maybeSingle();
+      const { data, error } = await admin().from('ad_pack_renders').select(RENDER_COLUMNS).eq('pack_id', packId).eq('version', version).eq('kind', kind).maybeSingle();
       if (error) fail('ad_pack_renders read', error);
       return data ? toRenderRow(data as Record<string, unknown>) : null;
     },
 
-    async requeueRender({ packId, version, voiceKey, keepAttempts }) {
+    async requeueRender({ packId, version, voiceKey, keepAttempts, kind = 'notice' }) {
       if (!UUID.test(packId)) throw new StoreError('invalid_pack');
       const nowIso = new Date().toISOString();
       // An existing row is reset in place, but only while no worker has it (conditional on state <> running).
@@ -197,15 +198,16 @@ export function createLiveRenderStore(): RenderStore {
         .update({ state: 'queued', ...(keepAttempts === true ? {} : { attempts: 0 }), error_code: null, files: null, voice_key: voiceKey, lease_until: null, started_at: null, finished_at: null, notified_at: null, notified_outcome: null, updated_at: nowIso })
         .eq('pack_id', packId)
         .eq('version', version)
+        .eq('kind', kind)
         .neq('state', 'running')
         .select(RENDER_COLUMNS);
       if (error) fail('ad_pack_renders requeue', error);
       const updated = (data ?? [])[0];
       if (updated) return toRenderRow(updated as Record<string, unknown>);
-      const { data: existing, error: readError } = await admin().from('ad_pack_renders').select('id').eq('pack_id', packId).eq('version', version).maybeSingle();
+      const { data: existing, error: readError } = await admin().from('ad_pack_renders').select('id').eq('pack_id', packId).eq('version', version).eq('kind', kind).maybeSingle();
       if (readError) fail('ad_pack_renders read', readError);
       if (existing) return null; // running: left alone
-      const { data: inserted, error: insertError } = await admin().from('ad_pack_renders').insert({ pack_id: packId, version, voice_key: voiceKey }).select(RENDER_COLUMNS).maybeSingle();
+      const { data: inserted, error: insertError } = await admin().from('ad_pack_renders').insert({ pack_id: packId, version, voice_key: voiceKey, ...(kind !== 'notice' ? { kind } : {}) }).select(RENDER_COLUMNS).maybeSingle();
       if (insertError) fail('ad_pack_renders insert', insertError);
       return inserted ? toRenderRow(inserted as Record<string, unknown>) : null;
     },

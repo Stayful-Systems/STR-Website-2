@@ -449,3 +449,21 @@ test('the lead database reasons are plain sentences with a next step, no code le
   assert.equal(new Set(LEADDB_ONLY_REASONS.map((r) => eligibilitySentence(r))).size, LEADDB_ONLY_REASONS.length, 'each reads differently');
   assert.equal(eligibilityView(['no_card', 'not_allowed']).message, eligibilitySentence('no_card'), 'the most basic is said');
 });
+
+test('Batch 55 step 5 (A7): each lead database ad says who it is for; the hint says what to add and where, only when something is missing', async () => {
+  const { conceptLine, profileHint, adViewModel, CALCULATOR_SETTINGS_HREF } = await import('./view.ts');
+  assert.equal(conceptLine('5b'), 'For landlords whose tenant is leaving');
+  assert.match(conceptLine('3a'), /moving abroad/);
+  assert.match(conceptLine('17'), /renting rules/);
+  assert.equal(profileHint({ logoUrl: 'https://x.test/l.png', areas: ['Leeds'] }), null);
+  const h = profileHint({ logoUrl: null, areas: [] })!;
+  assert.equal(h.href, CALCULATOR_SETTINGS_HREF);
+  assert.match(h.text, /logo and the areas you cover/);
+  const ad = { id: 'a', angle: '17' as const, adName: 'x', link: 'https://x.test/', texts: { primary: [], headlines: [], descriptions: [] }, files: { images: [], video: { status: 'queued' as const } } };
+  const ld = adViewModel(ad, () => null, null, { route: 'leaddb' });
+  assert.equal(ld.concept, conceptLine('17'));
+  assert.ok(ld.video, 'the loupe is a video on the lead database route');
+  const academy = adViewModel({ ...ad, files: { images: [], video: null } }, () => null, null);
+  assert.ok(!('concept' in academy));
+  assert.equal(academy.video, null);
+});

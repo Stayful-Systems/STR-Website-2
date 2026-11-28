@@ -118,3 +118,22 @@ test('the reading level stays low: no sentence on the screens is long', () => {
   }
   assert.deepEqual(long, []);
 });
+
+test('Batch 55 step 5 (A7): the concept lines, the calculator hint and the gate’s reasons are plain', async () => {
+  const { conceptLine, profileHint, LD_CHECK_PLAIN } = await import('./view.ts');
+  const { LD_CHECK_IDS } = await import('../../../lib/ad-packs/ld-gate.ts');
+  const said: string[] = [];
+  for (const a of ['5b', '3a', '17'] as const) said.push(conceptLine(a));
+  for (const p of [{ logoUrl: null, areas: [] }, { logoUrl: null, areas: ['Leeds'] }, { logoUrl: 'https://x.test/l.png', areas: [] }]) {
+    const h = profileHint(p)!;
+    said.push(h.text, h.label ?? '');
+  }
+  for (const id of LD_CHECK_IDS) said.push(LD_CHECK_PLAIN[id]);
+  const problem = problemView({ failures: LD_CHECK_IDS.map((check) => ({ check })) });
+  said.push(...problem.lines);
+  for (const s of said) {
+    assert.ok(s.length > 0);
+    assert.doesNotMatch(s, BANNED, s);
+  }
+  assert.equal(problem.lines.length, LD_CHECK_IDS.length, 'every gate reason has its own plain line');
+});

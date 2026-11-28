@@ -57,9 +57,12 @@ import { ANGLES, operatorCode as allocateOperatorCode, packCode, type Angle } fr
 import { cleanLines } from './captions.ts';
 import { conceptFor } from './concepts.ts';
 import { buildFigure, type Figure, type FigureAgg } from './figures.ts';
+import { factsFor } from './facts.ts';
+import { DEFAULT_LOOK, ldFallbackCards, renderLdTexts, type Look } from './ld-angles.ts';
+import { chooseLook } from './ld-gate.ts';
 import { AD_ROUTES, type AdRoute } from './eligibility.ts';
 import { adLink, adName } from './links.ts';
-import { isRetryableRenderCode, type AdVideo, type RenderRequeue, type RenderRow, type RenderState } from './render-store.ts';
+import { isRetryableRenderCode, type AdVideo, type RenderKind, type RenderRequeue, type RenderRow, type RenderState } from './render-store.ts';
 import type { EnqueueResult } from './render-core.ts';
 import { fitsCap, SANDBOX_SECONDS_CAP, type AdPackSettings } from './settings.ts';
 import { estimateVoicePence, MAX_VOICE_CHARACTERS } from './voice-core.ts';
@@ -262,6 +265,8 @@ export interface RenderQueue {
   enqueue(i: { packId: string; version: number; voiceKey: VoiceKey }): Promise<EnqueueResult>;
   /** The version's render row, or null. */
   get(packId: string, version: number): Promise<RenderRow | null>;
+  /** Batch 55 step 5: the version's row of another kind (phone, loupe, example_report). Optional. */
+  getKind?(packId: string, version: number, kind: RenderKind): Promise<RenderRow | null>;
   /** Reset the version's render to start again; null while a worker is running it. */
   requeue(i: RenderRequeue): Promise<RenderRow | null>;
 }
@@ -288,7 +293,17 @@ export type GenerateDeps = {
    * gone, so it reaches the lead database once. Optional; a failure here never fails the generation.
    */
   onLeadDbPackGenerated?: (ownerId: string) => Promise<void>;
+  /**
+   * Batch 55 step 5 (55c A2): the queue of example reports a lead database pack is built from. Left out (the tests that
+   * are not about it, and the Academy wiring), no example report is queued and none is priced.
+   */
+  exampleReports?: ExampleReportQueue;
 };
+
+/** Batch 55 step 5: queue the version's example report (render-store kind 'example_report'); never throws. */
+export interface ExampleReportQueue {
+  enqueue(i: { packId: string; version: number; voiceKey: VoiceKey }): Promise<EnqueueResult>;
+}
 
 // ── Pure helpers ──
 
@@ -328,6 +343,13 @@ export function estimateRawPence(angles: readonly Angle[], video?: VideoEstimate
   void angles;
   return video ? estimateVideoPence(video) : 0;
 }
+
+/**
+ * Batch 55 step 5 (55c A2): the worst-case raw cost of the example report a lead database pack is built from (the
+ * report engine's paid lookups; 55c puts a report at roughly 45 to 90p). PROPOSED: the top of that range, priced into the
+ * generation's estimate so the whole pack stays inside ad_pack_max_raw_pence. The worker records what it really cost.
+ */
+export const EXAMPLE_REPORT_ESTIMATE_PENCE = 90;
 
 /** The lines the 5b voiceover will say for a brand and figure (what renderScript gives, one string per line). */
 function voiceLinesFor(input: GenerateInput, source: AreaSource | null, figure: Figure | null): string[] {
@@ -431,7 +453,13 @@ function videoCheckPassed(checks: ChecksOutput | null | undefined): boolean {
  * Why approvePack would refuse, or null when it would accept: the pack is in 'preview', every check passes (the
  * video check included) and the 5b video is ready. No image-only fallback: the pack is approved with all 3 ads.
  */
-export function approvalBlock(pack: PackRow, slot: AdVideo | null | undefined, render: RenderRow | null): { code: ApproveCode; message: string } | null {
+export function approvalBlock(
+  pack: PackRow,
+  slot: AdVideo | null | undefined,
+  render: RenderRow | null,
+  /** Batch 55 step 5: the lead database pack's other video slot (17's loupe); it must be ready too when there is one. */
+  otherSlot?: AdVideo | null,
+): { code: ApproveCode; message: string } | null {
   if (pack.status !== 'preview') return { code: 'not_preview', message: NOT_PREVIEW_MESSAGE };
   if (!pack.checks || pack.checks.ok !== true) return { code: 'not_preview', message: NOT_PREVIEW_MESSAGE };
   const v = videoViewOf(slot, render, pack.status);
@@ -440,6 +468,7 @@ export function approvalBlock(pack: PackRow, slot: AdVideo | null | undefined, r
   // Fail closed: "ok" alone is not enough. The video check must have actually RUN on this video (the worker records
   // it with the render) and passed; a pack that was never video-checked is not approvable.
   if (!videoCheckPassed(pack.checks)) return { code: 'video_pending', message: VIDEO_MESSAGES.still_checking };
+  if (otherSlot && otherSlot.status !== 'ready') return otherSlot.status === 'failed' ? { code: 'video_failed', message: videoFailedMessage(otherSlot.code) } : { code: 'video_pending', message: VIDEO_MESSAGES.video_pending };
   return null;
 }
 
@@ -517,13 +546,37 @@ function cardText(c: Card): string {
   return [c.headline, ...c.body, c.cta, c.big ?? ''].filter(Boolean).join('\n');
 }
 
-function planAds(a: { input: GenerateInput; source: AreaSource; figure: Figure | null; operator: string; version: number }): PlannedAd[] {
+function planAds(a: { input: GenerateInput; source: AreaSource; figure: Figure | null; operator: string; version: number; look?: Look }): PlannedAd[] {
   const brand = { company: a.input.brand.company.trim(), area: a.source.areaLabel, bedrooms: a.source.bedrooms, feePct: a.input.brand.feePct ?? null };
   const domain = a.input.domain.trim().toLowerCase();
+  const ld = a.input.route === 'leaddb';
   return ANGLES.map((angle): PlannedAd => {
     const code = packCode(a.operator, angle, a.version);
-    const texts: AdTexts = { ...renderTexts({ angle, brand, figure: a.figure }) };
+    let texts: AdTexts;
     let cards: Card[] = [];
+    if (ld) {
+      // Batch 55 step 5 (Phase 2): the lead database copy (ld-angles.ts). The cards are the type-only fallback (3a, 17)
+      // until the example report's pages replace them; 5b and 17 are videos with a voiceover.
+      const r = renderLdTexts({ angle, brand: { company: brand.company, area: brand.area, feePct: brand.feePct }, figure: a.figure, look: a.look ?? DEFAULT_LOOK });
+      texts = { primary: r.primary, headlines: r.headlines, descriptions: r.descriptions, ld: { screenLines: r.screenLines, look: a.look ?? DEFAULT_LOOK, ...(r.script ? { scriptLines: r.script } : {}) } };
+      if (r.script) texts.script = r.script.join('\n\n');
+      if (angle !== '5b') {
+        cards = ldFallbackCards(r);
+        texts.cardsText = cards.map(cardText);
+      }
+      return {
+        angle,
+        n: a.version,
+        code,
+        adName: adName(code, angle),
+        link: adLink(a.input.sitePath !== undefined ? { domain, sitePath: a.input.sitePath, code, operatorCode: a.operator } : { domain, code, operatorCode: a.operator }),
+        texts,
+        leadForm: [...angleDef(angle).leadFormQuestions],
+        cards,
+        video: angle === '5b' ? 'coming' : null,
+      };
+    }
+    texts = { ...renderTexts({ angle, brand, figure: a.figure }) };
     if (angle === '5b') {
       texts.script = renderScript({ brand, figure: a.figure }).text;
     } else {
@@ -569,6 +622,25 @@ function checkInputOf(a: { input: GenerateInput; source: AreaSource; figure: Fig
     operatorCode: a.operator,
     domain: a.input.domain.trim().toLowerCase(),
     ...(a.input.route === 'leaddb' && a.input.sitePath !== undefined ? { sitePath: a.input.sitePath } : {}),
+    // Batch 55 step 5 (55c A5): the lead database gate (formats, no shared line, offer first, the facts list).
+    ...(a.input.route === 'leaddb' ? { ld: ldGateInputOf(a) } : {}),
+  };
+}
+
+function ldGateInputOf(a: { input: GenerateInput; source: AreaSource; figure: Figure | null; planned: PlannedAd[] }): NonNullable<CheckInput['ld']> {
+  const company = a.input.brand.company.trim();
+  const areas = [a.source.areaLabel, ...(a.input.brand.areas ?? [])];
+  const bedrooms = typeof a.input.bedrooms === 'number' ? a.input.bedrooms : a.source.bedrooms;
+  return {
+    ads: a.planned.map((p) => ({
+      angle: p.angle,
+      format: conceptFor(p.angle).format,
+      texts: { primary: p.texts.primary, headlines: p.texts.headlines, descriptions: p.texts.descriptions },
+      screenLines: p.texts.ld?.screenLines ?? [],
+      script: p.texts.ld?.scriptLines ?? null,
+    })),
+    facts: factsFor({ company, areas, feePct: a.input.brand.feePct ?? null, figure: a.figure, bedrooms }),
+    areaLabel: a.source.areaLabel,
   };
 }
 
@@ -773,6 +845,24 @@ export function createAdPackEngine(deps: GenerateDeps) {
   }
 
   /**
+   * Batch 55 step 5 (55c A2, A3): the worst case of a lead database pack, before any paid call: the example report, the
+   * sandbox that turns its pages into pictures, and the two videos (5b and 17), each with its voiceover. Inside
+   * ad_pack_max_raw_pence like every generation.
+   */
+  async function leadDbEstimate(settings: AdPackSettings, input: GenerateInput, source: AreaSource | null, figure: Figure | null, voiceKey: VoiceKey): Promise<number> {
+    const brand = { company: input.brand.company.trim(), area: source?.areaLabel ?? input.areaKey, feePct: input.brand.feePct ?? null };
+    // Without an example report queue (deps.exampleReports) nothing but the 5b video is made (the fallback look), so
+    // only that is priced; with it, the report, its picture sandbox and the loupe video (17) as well.
+    const angles = deps.exampleReports ? (['5b', '17'] as const) : (['5b'] as const);
+    let total = deps.exampleReports ? EXAMPLE_REPORT_ESTIMATE_PENCE + (await videoEstimateFor(settings, [], voiceKey)) : 0;
+    for (const angle of angles) {
+      const lines = renderLdTexts({ angle, brand, figure }).script ?? [];
+      total += await videoEstimateFor(settings, lines.length > 0 ? lines : ['x'.repeat(Math.min(MAX_VOICE_CHARACTERS, 600))], voiceKey);
+    }
+    return total;
+  }
+
+  /**
    * The same two caps generatePack applies, for an operation that pays for one more render (a voice change, a retry).
    * Batch 55: the month is summed over the pack's own route, and the lead database route answers to its own backstop.
    */
@@ -853,7 +943,11 @@ export function createAdPackEngine(deps: GenerateDeps) {
       const figure: Figure | null =
         'error' in source ? null : buildFigure({ area_label: source.areaLabel, agg: source.agg, feePct: input.brand.feePct ?? null, netIncludesFee: NET_INCLUDES_MANAGEMENT_FEE, minSamples: settings.minAreaSamples });
       // Worst case, before any paid call: the images (free), the voiceover and the render sandbox at its time limit.
-      const estimate = pricing.estimate(ANGLES) + (await videoEstimateFor(settings, voiceLinesFor(input, 'error' in source ? null : source, figure), voiceKey));
+      const estimate =
+        pricing.estimate(ANGLES) +
+        (route === 'leaddb'
+          ? await leadDbEstimate(settings, input, 'error' in source ? null : source, figure, voiceKey)
+          : await videoEstimateFor(settings, voiceLinesFor(input, 'error' in source ? null : source, figure), voiceKey));
 
       // 1-4: the rules and the cost guard, before any paid call.
       let block: Refusal | null = null;
@@ -888,10 +982,14 @@ export function createAdPackEngine(deps: GenerateDeps) {
         return fail('not_enough_data', pack?.id);
       }
 
+      // Batch 55 step 5 (55c A5, same area): the base and frame one, chosen so the pack never starts like another
+      // customer's latest pack in the same main area. Free: no new voice, no new report, never a round.
+      const look: Look | undefined = route === 'leaddb' ? chooseLook(store.otherLooksInArea ? await store.otherLooksInArea(ownerId, source.areaKey) : []).look : undefined;
+
       // A dry run: the whole plan, nothing written, nothing rendered, nothing uploaded.
       if (dry) {
         const operator = pack?.operatorCode ?? allocateOperatorCode(ownerId, await store.takenOperatorCodes());
-        const planned = planAds({ input, source, figure, operator, version });
+        const planned = planAds({ input, source, figure, operator, version, look });
         const files = new Map<Angle, { name: string; width: number; height: number }[]>();
         for (const p of planned) files.set(p.angle, plannedImageNames(p.angle, p.cards.length));
         const checks = runChecks(checkInputOf({ input, source, figure, operator, planned, files }));
@@ -936,7 +1034,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
       }
       const taken = held;
       const operator = taken.operatorCode;
-      const planned = planAds({ input, source, figure, operator, version });
+      const planned = planAds({ input, source, figure, operator, version, look });
 
       const imagesByAngle = new Map<Angle, AdFileRef[]>();
       const checkFiles = new Map<Angle, { name: string; width: number; height: number }[]>();
@@ -986,7 +1084,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
         adName: p.adName,
         link: p.link,
         // 5b only: the video's pinned look, stored with the ad so the worker never reads the live website settings.
-        texts: p.angle === '5b' ? { ...p.texts, brand: videoBrandOf(input, source, figure) } : p.texts,
+        texts: p.angle === '5b' || (route === 'leaddb' && p.angle === '17') ? { ...p.texts, brand: videoBrandOf(input, source, figure) } : p.texts,
         leadForm: p.leadForm,
         // The 5b slot is 'queued' once the pack is good enough to render ('preview'), else 'coming' (no video is made for a failed pack).
         files: { images: imagesByAngle.get(p.angle) ?? [], video: p.video === 'coming' ? (status === 'preview' ? { status: 'queued' } : { status: 'coming' }) : null } satisfies AdFiles,
@@ -1072,7 +1170,20 @@ export function createAdPackEngine(deps: GenerateDeps) {
       // 7: the video. Only a pack that passed its checks is rendered (no paid call for a pack nobody will see).
       let video: GenerateOk['video'] = { status: 'coming' };
       if (status === 'preview') {
-        const q = await queueVideo(ownerId, taken.id, version, voiceKey, stored.find((a) => a.angle === '5b')?.id ?? null);
+        // Batch 55 step 5 (55c A2): a lead database pack is built from its example report first (its own queued row);
+        // the worker then queues the phone and loupe videos, or the notice video as the fallback. Without that queue, or
+        // when it cannot be queued, the notice video is queued straight away (the fallback look), as before.
+        let queuedExample = false;
+        if (route === 'leaddb' && deps.exampleReports) {
+          try {
+            const e = await deps.exampleReports.enqueue({ packId: taken.id, version, voiceKey });
+            queuedExample = e.ok;
+            if (!e.ok) log('example_enqueue_failed', { packId: taken.id, code: e.code });
+          } catch {
+            log('example_enqueue_failed', { packId: taken.id, code: 'store_failed' });
+          }
+        }
+        const q = queuedExample ? ({ ok: true } as const) : await queueVideo(ownerId, taken.id, version, voiceKey, stored.find((a) => a.angle === '5b')?.id ?? null);
         video = q.ok ? { status: 'queued' } : { status: 'failed', code: q.code };
       }
 
@@ -1117,6 +1228,15 @@ export function createAdPackEngine(deps: GenerateDeps) {
     }
   }
 
+  /** The render row behind the 5b video: the notice row, or on the lead database route the phone row when there is one. */
+  async function renderFor5b(pack: PackRow): Promise<RenderRow | null> {
+    if (pack.route === 'leaddb' && deps.renders.getKind) {
+      const phone = await deps.renders.getKind(pack.id, pack.version, 'phone');
+      if (phone) return phone;
+    }
+    return deps.renders.get(pack.id, pack.version);
+  }
+
   async function approvePack(req: { ownerId: string; expectedVersion?: number }): Promise<ApproveResult> {
     const no = (code: ApproveCode, message: string): ApproveResult => ({ ok: false, code, message });
     if (!req || typeof req.ownerId !== 'string' || !UUID_RE.test(req.ownerId)) return no('invalid_input', GENERATE_MESSAGES.invalid_input);
@@ -1129,7 +1249,9 @@ export function createAdPackEngine(deps: GenerateDeps) {
       // 38b: all three ads or none. The 5b video must be ready and every check (the video's included) must pass.
       const ads = await store.listAds(req.ownerId, pack.id);
       const slot = ads.find((a) => a.angle === '5b' && a.version === pack.version)?.files.video ?? null;
-      const block = approvalBlock(pack, slot, await deps.renders.get(pack.id, pack.version));
+      // Batch 55 step 5: a lead database pack's 5b video is the phone render (or the notice fallback), and 17's loupe must be ready too.
+      const other = pack.route === 'leaddb' ? (ads.find((a) => a.angle === '17' && a.version === pack.version)?.files.video ?? null) : undefined;
+      const block = approvalBlock(pack, slot, await renderFor5b(pack), other);
       if (block) return no(block.code, block.message);
       const updated = await store.updatePack(req.ownerId, pack.id, { status: 'approved', approvedAt: pack.approvedAt ?? deps.now().toISOString() }, { from: ['preview'] });
       if (!updated) return no('not_preview', 'Only a pack that is ready to look at can be approved.');
@@ -1145,7 +1267,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
     if (typeof ownerId !== 'string' || ownerId === '') return null;
     const pack = await store.getPack(ownerId);
     if (!pack) return null;
-    const [all, settings, renderRow] = await Promise.all([store.listAds(ownerId, pack.id), store.readSettings(), deps.renders.get(pack.id, pack.version)]);
+    const [all, settings, renderRow] = await Promise.all([store.listAds(ownerId, pack.id), store.readSettings(), renderFor5b(pack)]);
     const ads = all.filter((a) => a.version === pack.version);
     const showAds = pack.status === 'preview' || pack.status === 'approved' || (pack.status === 'failed' && pack.generatedAt !== null && pack.checks?.ok === true);
     const slot = ads.find((a) => a.angle === '5b')?.files.video ?? null;
@@ -1165,7 +1287,9 @@ export function createAdPackEngine(deps: GenerateDeps) {
         free: state.free,
         blocked: state.blocked,
       },
-      approval: ((b) => (b ? { ok: false as const, ...b } : { ok: true as const }))(approvalBlock(pack, slot, renderRow)),
+      approval: ((b) => (b ? { ok: false as const, ...b } : { ok: true as const }))(
+        approvalBlock(pack, slot, renderRow, pack.route === 'leaddb' ? (ads.find((a) => a.angle === '17')?.files.video ?? null) : undefined),
+      ),
     };
   }
 

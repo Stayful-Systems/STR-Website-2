@@ -262,3 +262,37 @@ an optional `profile` inside `provision`; spec `docs/build/55c-customer-ad-creat
   code at most, never the logo link, colour, areas or fee.
 - **Knowledge.** Draft `adpack_ld_brand_from_leaddb` in `seed.ts` (no figure) and a "Brand from the lead database" line in
   the LEAD DATABASE AD PACKS block of `service-facts.ts`.
+
+# Batch 55 step 5 (Phase 2): example report, three concepts in three formats, and the gate
+
+Lead database packs only (`ad_packs.route = 'leaddb'`); the Academy route, `angles.ts`, `SCRIPT_5B`, `images.tsx`, `notice.py`
+and brief v1 are unchanged. Spec `docs/build/55c-customer-ad-creative.md` in lead-database (A2 to A5, A7). Schema: the
+"Batch 55 step 5 (Phase 2)" block.
+
+- **Copy (A4).** `ld-angles.ts`: fixed templates (PROPOSED wording) for `5b-tenant-leaving` (phone_recording), `3a-moving-abroad`
+  (report_carousel), `17-rules-changed` (loupe). Offer first (audience + area + free + report in the first 125 characters), no
+  question in a first sentence, "you stay the owner", last line "Get your free income report"; two frame-one wordings; voiceovers
+  for 5b and 17 (3 to 5 lines). `facts.ts` is the per-customer facts list; `checkLineAgainstFacts` checks every line.
+- **Gate (A5).** `ld-gate.ts`, run by `runChecks` only when given `ld` (rows `ld_*` after the batch 38 ones): three formats, no line
+  in two ads (the CTA excepted), offer first, facts, and the picture measure (4-bin histogram overlap < 80, thumbnail correlation
+  < 70) merged by the render step (`mergeLdPictureChecks`). Same area: `chooseLook` picks base (cream/white) and hook (a/b) away
+  from other customers' latest packs in the main area (`store.otherLooksInArea`), free, never a round.
+- **Example report (A2).** Its own queued row (`ad_pack_renders.kind = 'example_report'`; unique key `(pack_id, version, kind)`;
+  a notice row is written and read without the column). `example-step.ts`: "Example property, <area>" at
+  `AREA_REPRESENTATIVE_POSTCODE`, run as house spend (`example-server.ts`, billedUserId null, NEVER saved to `analyser_reports`),
+  else a stripped `analyser_reports.raw_response`; `exampleResultFor` neutralises address, comparable titles, rental addresses,
+  EPC, council tax and due diligence; the result is kept (`example/result.json`) so a retry never pays twice. The branded PDF
+  (always the customer's brand) goes into the sandbox with poppler-utils: `ad-render/example_pages.py` blurs every £ word from its
+  exact `pdftotext -bbox-layout` box, stamps "Example report" on every page, finds the loupe stops from the headings. Failure never
+  blocks: notice video queued, formats `FALLBACK_FORMAT`, code kept on the row and the run row (`renderKind`).
+- **Videos (A3).** Kinds `phone` (5b, `report_walk.py`) and `loupe` (17, `loupe.py`), brief v2 (`brief-v2.ts`), shared
+  `ld_common.py` (imports notice.py's captions and video.py's encode). Base cream or white; brand colour only on the logo strip,
+  headline bar, caption highlight and end button; content y 270 to 1250; 4:5 and 1:1 cut from the solid 9:16, never blurred. Own
+  voice cache per kind (`voice-<kind>.mp3`). `video-v2-step.ts`; approval needs the loupe too. Only the 5b video emails.
+- **3a and phone frames.** `ld-images.tsx`: the report-page carousel (page whole in a ~960 px card, one caption, logo strip,
+  CTA card) and the two DRAWN phone frames (Satori, LeadForm's labels; no Playwright); `measurePng` (sharp).
+- **Screen (A7).** Each lead database ad shows its concept line; no logo or no area shows one line linking to the calculator page
+  (`profileHint`); generation is never blocked.
+- **Tests.** Python: `python3 -m unittest discover -s ad-render/tests` (run with `PYTHONDONTWRITEBYTECODE=1`: a `__pycache__`
+  under ad-render fails `render-assets.test.ts`).
+- **Knowledge.** Draft `adpack_ld_creative` in `seed.ts` (no figure) and an "Ad creative" line in `service-facts.ts`.

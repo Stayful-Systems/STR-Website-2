@@ -7,7 +7,8 @@
  */
 import { isAngle } from './codes.ts';
 import { CONCEPT_ID_RE, isAdFormat } from './concepts.ts';
-import type { AdFileRef, AdFiles, AdTexts, NewAd, PackAdRow, PackPatch, PackRow, PackStatus, RunBy, RunResult, RunRow, VideoBrand } from './store-types.ts';
+import type { AdFileRef, AdFiles, AdTexts, LdTexts, NewAd, PackAdRow, PackPatch, PackRow, PackStatus, RunBy, RunResult, RunRow, VideoBrand } from './store-types.ts';
+import { isLook } from './ld-gate.ts';
 import { PACK_STATUSES } from './store-types.ts';
 import type { LeadFormQuestion } from './angles.ts';
 import type { ChecksOutput } from './checks.ts';
@@ -100,6 +101,18 @@ export function parseTexts(raw: unknown): AdTexts {
   if (Array.isArray(o.cardsText)) out.cardsText = strings(o.cardsText);
   const brand = parseVideoBrand(o.brand);
   if (brand) out.brand = brand;
+  const ld = parseLdTexts(o.ld);
+  if (ld) out.ld = ld;
+  return out;
+}
+
+/** Batch 55 step 5: the lead database ad's pinned screen lines and look, or null (an Academy ad never has them). */
+function parseLdTexts(raw: unknown): LdTexts | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (!Array.isArray(o.screenLines) || !isLook(o.look)) return null;
+  const out: LdTexts = { screenLines: strings(o.screenLines), look: { base: o.look.base, hook: o.look.hook } };
+  if (Array.isArray(o.scriptLines)) out.scriptLines = strings(o.scriptLines);
   return out;
 }
 

@@ -72,6 +72,7 @@ export function AdCard({ ad, pack, voice }: { ad: AdVm; pack: { id: string; vers
     <section aria-label={ad.heading} className="flex min-w-0 flex-col gap-4 rounded-2xl border border-border bg-card p-4">
       <header>
         <h2 className={`text-xl font-bold leading-snug ${INK}`}>{ad.heading}</h2>
+        {ad.concept ? <p className={`mt-1 text-base font-semibold leading-snug ${INK}`}>{ad.concept}</p> : null}
         <p className={`mt-1 text-base leading-snug ${SOFT}`}>{ad.blurb}</p>
       </header>
 
