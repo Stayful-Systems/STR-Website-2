@@ -219,7 +219,7 @@ function UploadBlock({ ad }: { ad: GuideAd }) {
 type Phase = "pick" | "step" | "done";
 
 /** `initial` is only for the development preview, to open a particular screen; the real page never passes it. */
-export function GuideWizard({ ads, shots, packId, initial }: { ads: GuideAd[]; shots: string[]; packId: string; initial?: { phase: Phase; adId?: string; index?: number } }) {
+export function GuideWizard({ ads, shots, packId, initial, audienceChecklist }: { ads: GuideAd[]; shots: string[]; packId: string; initial?: { phase: Phase; adId?: string; index?: number }; /** Batch 55 step 5 (Phase 3): the lead database pack's own audience lines (its location); absent, the step's own. */ audienceChecklist?: string[] }) {
   const adIds = ads.map((a) => a.id);
   const key = guideStorageKey(packId);
   const [phase, setPhase] = useState<Phase>(initial?.phase ?? "pick");
@@ -330,6 +330,7 @@ export function GuideWizard({ ads, shots, packId, initial }: { ads: GuideAd[]; s
   // ── 2. A step ──
   const i = clampStep(index, TOTAL);
   const step = GUIDE_STEPS[i];
+  const checklist = step.id === "set-audience" && audienceChecklist ? audienceChecklist : step.checklist;
   const items = copyListFor(step.copy.kind, ad.copy);
   const wordingKey = `${ad.id}:${step.copy.kind}`;
   const last = i === TOTAL - 1;
@@ -353,9 +354,9 @@ export function GuideWizard({ ads, shots, packId, initial }: { ads: GuideAd[]; s
       <div aria-live="polite">
         <h2 className={`text-2xl font-bold leading-snug ${INK}`}>{step.action}</h2>
         {step.detail ? <p className={`mt-2 text-lg leading-relaxed ${SOFT}`}>{step.detail}</p> : null}
-        {step.checklist ? (
+        {checklist ? (
           <ol className={`mt-3 list-decimal space-y-2 pl-6 text-lg leading-relaxed ${INK}`}>
-            {step.checklist.map((line) => (
+            {checklist.map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ol>
