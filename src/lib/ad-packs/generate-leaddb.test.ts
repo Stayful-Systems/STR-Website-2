@@ -224,3 +224,52 @@ test('Phase 2: a second customer in the same main area gets the other base and f
   assert.notEqual(a2.texts.ld?.screenLines[0], a1.texts.ld?.screenLines[0]);
   assert.equal(second.costPence, first.costPence);
 });
+
+// ── Batch 55 step 5 (Phase 3): coverage ──
+
+test('coverage: a lead database pack stores its coverage; an admin regenerate with none keeps it; the Academy refuses one', async () => {
+  const h = harness();
+  const r = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb({ coverage: { mode: 'areas', areas: ['Leeds', 'York', 'Harrogate'] } }) }));
+  assert.equal(r.checks.ok, true, JSON.stringify(r.checks.failures));
+  let pack = await h.store.getPack(OWNER_A);
+  assert.equal(pack?.coverage, 'areas');
+  assert.deepEqual(pack?.coverageAreas, ['Leeds', 'York', 'Harrogate']);
+  // The figure still rests on the area asked for, and says its own real area.
+  assert.equal(pack?.areaKey, 'NG7');
+  assert.equal(pack?.areaLabel, 'Lenton, Nottingham');
+  const r2 = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'admin', input: leadDb() }));
+  assert.equal(r2.checks.ok, true);
+  pack = await h.store.getPack(OWNER_A);
+  assert.deepEqual(pack?.coverageAreas, ['Leeds', 'York', 'Harrogate']);
+  const ads = (await h.store.listAds(OWNER_A, pack!.id)).filter((a) => a.version === pack!.version);
+  assert.ok(ads.every((a) => a.texts.primary.every((t) => t.includes('manages short lets in Leeds, York and Harrogate.'))));
+  // Bad coverage, or any coverage on the Academy route, is invalid input.
+  const h2 = harness();
+  assert.equal(code(await h2.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input({ coverage: { mode: 'uk', areas: [] } }) })), 'invalid_input');
+  assert.equal(code(await h2.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb({ coverage: { mode: 'areas', areas: [] } }) })), 'invalid_input');
+});
+
+test('coverage: a lead database pack made before Phase 3 (coverage null) keeps its one-area wording and stores it', async () => {
+  const h = harness();
+  ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb() }));
+  const pack = await h.store.getPack(OWNER_A);
+  assert.equal(pack?.coverage, 'areas');
+  assert.deepEqual(pack?.coverageAreas, ['Lenton, Nottingham']);
+  const ads = await h.store.listAds(OWNER_A, pack!.id);
+  assert.ok(ads.every((a) => a.texts.primary.every((t) => t.slice(0, 125).includes('in Lenton, Nottingham'))));
+});
+
+test('coverage: nationwide ads say the UK, and the Academy pack writes no coverage at all', async () => {
+  const h = harness();
+  const r = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb({ coverage: { mode: 'uk', areas: [] } }) }));
+  assert.equal(r.checks.ok, true, JSON.stringify(r.checks.failures));
+  const pack = await h.store.getPack(OWNER_A);
+  const ads = await h.store.listAds(OWNER_A, pack!.id);
+  assert.ok(ads.every((a) => a.texts.primary.every((t) => t.startsWith('Landlords across the UK') || t.startsWith('Homeowners across the UK'))));
+  assert.ok(ads.every((a) => (a.texts.ld?.screenLines[0] ?? '').includes('across the UK')));
+  const academy = harness();
+  ok(await academy.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input() }));
+  const ap = await academy.store.getPack(OWNER_A);
+  assert.equal(ap?.coverage, null);
+  assert.ok(!academy.store.writes.some((w) => w.includes('coverage')));
+});

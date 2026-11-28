@@ -52,6 +52,36 @@ export const RECIPE_ITEMS: readonly RecipeItem[] = [
   },
 ];
 
+/** The radius the guide asks for around each chosen town (Phase 3, lead database packs with chosen areas). */
+export const AREA_RADIUS_MILES = 25;
+
+/**
+ * Batch 55 step 5 (Phase 3): the seven settings for one LEAD DATABASE pack, whose location follows where its ads say
+ * the customer works. Nationwide: "United Kingdom, living in or recently in", with no note about narrowing it. Chosen
+ * areas: each town with a 25 mile radius, the towns listed. Every other item is RECIPE_ITEMS unchanged. The Academy
+ * guide keeps RECIPE_ITEMS exactly (it never calls this). LAST_CHECKED is not moved: the radius wording was not
+ * re-checked against Meta's screen.
+ */
+export function recipeItemsFor(coverage: { mode: 'uk' } | { mode: 'areas'; areas: readonly string[] }): RecipeItem[] {
+  const location: RecipeItem =
+    coverage.mode === 'uk' || coverage.areas.length === 0
+      ? { id: 'location', label: 'Location', setting: 'United Kingdom, living in or recently in' }
+      : {
+          id: 'location',
+          label: 'Location',
+          setting: `Add ${coverage.areas.length === 1 ? 'this town' : 'each of these towns'} with a ${AREA_RADIUS_MILES} mile radius: ${listTowns(coverage.areas)}`,
+          note: 'Choose people living in or recently in these places. Remove United Kingdom if Facebook added it.',
+        };
+  return RECIPE_ITEMS.map((item) => (item.id === 'location' ? location : item));
+}
+
+function listTowns(areas: readonly string[]): string {
+  const n = areas.map((a) => String(a).replace(/\s+/g, ' ').trim()).filter(Boolean);
+  // A district label has its own comma ("Lenton, Nottingham"), so such a list is split with semicolons.
+  const sep = n.some((x) => x.includes(',')) ? '; ' : ', ';
+  return n.length <= 1 ? (n[0] ?? '') : `${n.slice(0, -1).join(sep)} and ${n[n.length - 1]}`;
+}
+
 /** One line of the checklist: "Label: setting." and the note, if any. */
 export const recipeLine = (item: RecipeItem): string => `${item.label}: ${item.setting}.${item.note ? ` ${item.note}` : ''}`;
 

@@ -133,6 +133,29 @@ begin
   select count(*) into n from pg_constraint where conrelid = 'public.ad_pack_ads'::regclass and conname = 'ad_pack_ads_concept_check';
   if n <> 1 then raise exception 'ad_pack_ads_concept_check must exist'; end if;
 
+  -- ── Batch 55 step 5 (Phase 3): coverage ──
+  select count(*) into n from information_schema.columns
+   where table_schema = 'public' and table_name = 'ad_packs'
+     and ((column_name = 'coverage' and data_type = 'text' and is_nullable = 'YES')
+       or (column_name = 'coverage_areas' and data_type = 'ARRAY' and is_nullable = 'NO' and column_default like '''{}''%'));
+  if n <> 2 then raise exception 'ad_packs.coverage (text, nullable) and coverage_areas (text[], not null, default {}) must exist (found %)', n; end if;
+  select count(*) into n from pg_constraint
+   where conrelid = 'public.ad_packs'::regclass and conname in ('ad_packs_coverage_check', 'ad_packs_coverage_areas_check');
+  if n <> 2 then raise exception 'ad_packs coverage checks must exist (found % of 2)', n; end if;
+  if not public.ad_pack_coverage_areas_ok('{}'::text[]) or not public.ad_pack_coverage_areas_ok(array['Leeds', 'York']) then
+    raise exception 'ad_pack_coverage_areas_ok must accept an empty list and short names';
+  end if;
+  if public.ad_pack_coverage_areas_ok(array['a','b','c','d','e','f','g','h','i','j','k'])
+     or public.ad_pack_coverage_areas_ok(array[''])
+     or public.ad_pack_coverage_areas_ok(array[repeat('x', 81)])
+     or public.ad_pack_coverage_areas_ok(array['Leeds', null]) then
+    raise exception 'ad_pack_coverage_areas_ok must refuse 11 entries, an empty name, an 81-character name and a null';
+  end if;
+  select count(*) into n from pg_constraint
+   where conrelid = 'public.ad_packs'::regclass and conname = 'ad_packs_coverage_check'
+     and pg_get_constraintdef(oid) like '%uk%' and pg_get_constraintdef(oid) like '%areas%';
+  if n <> 1 then raise exception 'ad_packs_coverage_check must allow only uk and areas'; end if;
+
   raise notice 'batch55 smoke: ok';
 end $$;
 

@@ -9,7 +9,8 @@
  *   renderPhoneFrames  5b, the two phone frames of the phone recording, DRAWN (Zac: no Playwright) from the customer's
  *                      calculator design: their colour and logo, the step-two form as LeadForm.tsx shows it ("Property
  *                      address", "Postcode", "Bedrooms", "Sleeps (guests)", "Show my estimate"), empty then filled
- *                      with the example ("Example property, <area>").
+ *                      with the example ("Example property, <area>"). Phase 3: <area> is the area the EXAMPLE
+ *                      figure comes from (ad_packs.area_label), never the coverage list: the frame shows one property.
  *   measurePng         the picture measure the gate reads (ld-gate.ts): a 4-bin per channel histogram and a 32x32
  *                      grey thumbnail, with sharp.
  *

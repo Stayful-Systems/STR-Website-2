@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   GUIDE_STEPS,
+  audienceChecklistFor,
   availableShots,
   clampStep,
   copyListFor,
@@ -27,7 +28,7 @@ import {
   withStep,
   wordingLabel,
 } from './guide.ts';
-import { INTERESTS, LAST_CHECKED, OBJECTIVE_PROPOSED, RECIPE_ITEMS, recipeLine } from './targeting-recipe.ts';
+import { AREA_RADIUS_MILES, INTERESTS, LAST_CHECKED, OBJECTIVE_PROPOSED, RECIPE_ITEMS, recipeItemsFor, recipeLine } from './targeting-recipe.ts';
 
 const sentences = (s: string) => s.split(/[.!?](?:\s+|$)/).filter((x) => x.trim() !== '');
 const allText = () => JSON.stringify(GUIDE_STEPS);
@@ -345,4 +346,32 @@ test('the recipe is dated, and the proposed campaign goal is recorded but not sh
   assert.equal(OBJECTIVE_PROPOSED.optimiseFor, 'Maximise number of landing page views');
   assert.doesNotMatch(allText(), /landing page views/i);
   assert.match(guideStep('choose-traffic')!.action, /Traffic/);
+});
+
+// ── Batch 55 step 5 (Phase 3): the location follows the lead database pack's coverage ──
+
+test('audience location, lead database: nationwide says the UK with no note to narrow it; areas list each town with a radius', () => {
+  const uk = recipeItemsFor({ mode: 'uk' });
+  assert.equal(uk.length, 7);
+  assert.equal(recipeLine(uk[0]), 'Location: United Kingdom, living in or recently in.');
+  assert.doesNotMatch(recipeLine(uk[0]), /narrow/);
+  const areas = recipeItemsFor({ mode: 'areas', areas: ['Leeds', 'York', 'Harrogate'] });
+  assert.equal(AREA_RADIUS_MILES, 25);
+  assert.match(recipeLine(areas[0]), /^Location: Add each of these towns with a 25 mile radius: Leeds, York and Harrogate\./);
+  assert.match(recipeLine(areas[0]), /living in or recently in/);
+  assert.match(recipeLine(recipeItemsFor({ mode: 'areas', areas: ['Leeds'] })[0]), /^Location: Add this town with a 25 mile radius: Leeds\./);
+  assert.match(recipeLine(recipeItemsFor({ mode: 'areas', areas: ['Lenton, Nottingham', 'York'] })[0]), /Lenton, Nottingham and York\./);
+  // Every other line is the shared recipe, word for word.
+  for (const items of [uk, areas]) assert.deepEqual(items.slice(1).map(recipeLine), RECIPE_ITEMS.slice(1).map(recipeLine));
+  for (const text of [JSON.stringify(uk), JSON.stringify(areas)]) {
+    assert.doesNotMatch(text, /stayful|account|spend|results?\b|£|!|—/i);
+  }
+});
+
+test('audience location: the Academy guide is unchanged (no coverage passed), and the recipe date is not moved', () => {
+  assert.deepEqual(audienceChecklistFor(), RECIPE_ITEMS.map(recipeLine));
+  assert.deepEqual(audienceChecklistFor(), guideStep('set-audience')!.checklist);
+  assert.match(audienceChecklistFor()[0], /narrow this to your own area/);
+  assert.match(audienceChecklistFor({ mode: 'areas', areas: ['York'] })[0], /York/);
+  assert.equal(LAST_CHECKED, '2026-11-23');
 });

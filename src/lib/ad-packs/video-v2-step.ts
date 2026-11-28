@@ -20,6 +20,7 @@ import { buildBriefV2, briefV2Problems, outputsV2, posterV2, type LoupeTarget } 
 import { mergeLdPictureChecks, mergeVideoChecks, type CheckVideo } from './checks.ts';
 import { FALLBACK_FORMAT } from './concepts.ts';
 import { cleanLines } from './captions.ts';
+import type { Coverage } from './coverage.ts';
 import { renderLdTexts } from './ld-angles.ts';
 import type { PictureStats } from './ld-gate.ts';
 import {
@@ -391,4 +392,6 @@ async function fallBack(deps: RenderDeps, pack: PackRow, row: RenderRow, kind: '
 }
 
 /** The lines the 17 voiceover will say (for the tests that render it). */
-export const loupeLinesFor = (company: string, area: string, feePct: number | null) => renderLdTexts({ angle: '17', brand: { company, area, feePct }, figure: null }).script ?? [];
+/** Phase 3: `coverage` (coverage.ts) says where; absent, the one `area` as before. */
+export const loupeLinesFor = (company: string, area: string, feePct: number | null, coverage?: Coverage) =>
+  renderLdTexts({ angle: '17', brand: { company, area, feePct, ...(coverage ? { coverage } : {}) }, figure: null }).script ?? [];

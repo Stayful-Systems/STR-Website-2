@@ -15,7 +15,7 @@ import type { ChecksOutput } from './checks.ts';
 import { parseAdVideo } from './render-store.ts';
 
 export const PACK_COLUMNS =
-  'id, owner_id, website_id, status, route, operator_code, version, voice_key, voice_changes, regen_count, brand_hash, area_key, area_label, bedrooms, figures, photos, checks, error_code, cost_pence, generated_at, approved_at, created_at, updated_at';
+  'id, owner_id, website_id, status, route, operator_code, version, voice_key, voice_changes, regen_count, brand_hash, area_key, area_label, coverage, coverage_areas, bedrooms, figures, photos, checks, error_code, cost_pence, generated_at, approved_at, created_at, updated_at';
 export const AD_COLUMNS = 'id, pack_id, owner_id, version, angle, n, code, ad_name, link, texts, lead_form, files, superseded_at, created_at';
 export const RUN_COLUMNS = 'id, pack_id, version, by, dry, cost_pence, result, created_at';
 
@@ -30,6 +30,8 @@ export const PACK_COLUMN_OF: Record<keyof PackPatch, string> = {
   brandHash: 'brand_hash',
   areaKey: 'area_key',
   areaLabel: 'area_label',
+  coverage: 'coverage',
+  coverageAreas: 'coverage_areas',
   bedrooms: 'bedrooms',
   figures: 'figures',
   photos: 'photos',
@@ -63,6 +65,9 @@ export function toPackRow(r: Record<string, unknown>): PackRow {
     brandHash: str(r.brand_hash),
     areaKey: str(r.area_key),
     areaLabel: str(r.area_label),
+    // Batch 55 step 5 (Phase 3): null on the Academy and on lead database packs made before it (read by coverageOfPack).
+    coverage: r.coverage === 'uk' || r.coverage === 'areas' ? r.coverage : null,
+    coverageAreas: strings(r.coverage_areas),
     bedrooms: r.bedrooms === null || r.bedrooms === undefined ? null : int(r.bedrooms),
     figures: Array.isArray(r.figures) ? (r.figures as unknown[]) : null,
     photos: Array.isArray(r.photos) ? strings(r.photos) : null,

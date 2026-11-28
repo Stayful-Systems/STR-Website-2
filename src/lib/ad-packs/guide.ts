@@ -21,7 +21,7 @@
  * checks which screenshots exist in guide-server.ts).
  */
 
-import { RECIPE_ITEMS, recipeLine } from './targeting-recipe.ts';
+import { RECIPE_ITEMS, recipeItemsFor, recipeLine } from './targeting-recipe.ts';
 
 /** What a step's Copy button copies from the ad being set up. */
 export type GuideCopyKind = 'ad_name' | 'link' | 'primary' | 'headline' | 'description' | 'none';
@@ -198,6 +198,14 @@ export const GUIDE_STEPS: readonly GuideStep[] = [
     screenshot: shot('publish', 'The Publish button at the bottom right of Ads Manager'),
   },
 ];
+
+/**
+ * Batch 55 step 5 (Phase 3): the audience step's lines for one pack. A lead database pack passes its coverage, so the
+ * location says the UK or its own towns with a radius; the Academy passes nothing and gets the step's own lines.
+ */
+export function audienceChecklistFor(coverage?: { mode: 'uk' } | { mode: 'areas'; areas: readonly string[] }): string[] {
+  return (coverage ? recipeItemsFor(coverage) : RECIPE_ITEMS).map(recipeLine);
+}
 
 export function guideStep(id: string): GuideStep | null {
   return GUIDE_STEPS.find((s) => s.id === id) ?? null;

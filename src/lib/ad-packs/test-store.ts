@@ -4,6 +4,7 @@
  * code, unique ad code, every read and write filtered by the owner id. Nothing
  * in the app imports it.
  */
+import { UK_LOOK_KEY } from './coverage.ts';
 import type { Look } from './ld-angles.ts';
 import type { AdFormat } from './concepts.ts';
 import type { VoiceKey } from './voices.ts';
@@ -90,6 +91,8 @@ export class MemoryAdPackStore implements AdPackStore {
       brandHash: null,
       areaKey: null,
       areaLabel: null,
+      coverage: null,
+      coverageAreas: [],
       bedrooms: null,
       figures: null,
       photos: null,
@@ -249,7 +252,9 @@ export class MemoryAdPackStore implements AdPackStore {
   async otherLooksInArea(ownerId: string, areaKey: string) {
     const out: Look[] = [];
     for (const p of this.packs.values()) {
-      if (p.ownerId === ownerId || p.route !== 'leaddb' || p.areaKey !== areaKey) continue;
+      if (p.ownerId === ownerId || p.route !== 'leaddb') continue;
+      // Phase 3: the nationwide pool, or the packs of an area that are not nationwide (the real store filters the same way).
+      if (areaKey === UK_LOOK_KEY ? p.coverage !== 'uk' : p.areaKey !== areaKey || p.coverage === 'uk') continue;
       const ad = [...this.ads.values()].find((a) => a.packId === p.id && a.version === p.version && a.angle === '5b');
       if (ad?.texts.ld?.look) out.push({ ...ad.texts.ld.look });
     }

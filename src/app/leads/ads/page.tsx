@@ -10,6 +10,7 @@ import { readPushedBedrooms } from "@/lib/leaddb/ad-profile-server";
 import { listPackForOwner } from "@/lib/ad-packs/generate-server";
 import { signedPreviewUrls } from "@/lib/ad-packs/files-server";
 import { ownUploadRef } from "@/lib/ad-packs/photos";
+import { coverageOfPack } from "@/lib/ad-packs/coverage";
 import { LiveActions } from "./LiveActions";
 import { CannotUseScreen, GalleryScreen, MoreOptions, ProblemScreen, StartScreen, WorkingScreen } from "./Screens";
 import { StartForm, type PhotoItem } from "./StartForm";
@@ -70,6 +71,10 @@ export default async function AdsPage() {
   // The area pick list is needed to make ads and to change the area of the ones already made.
   const options = await listDistricts();
   const areas = options.map((o) => ({ areaKey: o.areaKey, label: o.label }));
+  // Batch 55 step 5 (Phase 3): the lead database route asks "Anywhere in the UK" or "Choose areas" instead; the
+  // customer's own areas (pushed from the lead database) are offered first.
+  const leadDb = elig.route === "leaddb";
+  const suggested = leadDb ? [...new Set(brand.areas.map((a) => matchArea([a], options)?.areaKey).filter((k): k is string => typeof k === "string"))] : [];
 
   // ── The first screen ──
   if (screen.kind === "start") {
@@ -92,6 +97,7 @@ export default async function AdsPage() {
             hasLogo={brand.logoUrl !== null}
             problems={problems.map(brandProblemText)}
             failedBefore={failedBefore}
+            {...(leadDb ? { coverage: { options: areas, suggested, initialMode: "uk" as const, initialKeys: [] } } : {})}
           />
         </StartScreen>
       </LiveActions>
@@ -111,6 +117,11 @@ export default async function AdsPage() {
   const currentKey = pack.areaKey ?? null;
   const regenAreas = currentKey && !areas.some((a) => a.areaKey === currentKey) ? [{ areaKey: currentKey, label: pack.areaLabel ?? currentKey }, ...areas] : areas;
   const regenPreview: AreaPreviewView | null = currentKey ? areaPreviewView(await areaPreview({ areaKey: currentKey })) : null;
+  // Phase 3: "Make new ads" starts from what the ads say now (a pack made before Phase 3 reads as its one area).
+  const packCoverage = coverageOfPack(pack);
+  const byAdLabel = new Map(options.map((o) => [o.adLabel, o.areaKey]));
+  const regenKeys = pack.coverage === null ? (currentKey ? [currentKey] : []) : packCoverage.areas.map((n) => byAdLabel.get(n)).filter((k): k is string => typeof k === "string");
+  const regenCoverage = pack.route === "leaddb" ? { options: regenAreas, suggested, initialMode: packCoverage.mode, initialKeys: regenKeys } : null;
   const regenerate = regen.left > 0 ? (
     <StartForm
       mode="again"
@@ -122,6 +133,7 @@ export default async function AdsPage() {
       hasLogo={brand.logoUrl !== null}
       problems={problems.map(brandProblemText)}
       blockReason={regen.reason}
+      {...(regenCoverage ? { coverage: regenCoverage } : {})}
     />
   ) : null;
   const intro = regen.left > 0 || regen.reason ? regenIntro(regen.left, regen.reason) : null;

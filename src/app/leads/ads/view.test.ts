@@ -467,3 +467,21 @@ test('Batch 55 step 5 (A7): each lead database ad says who it is for; the hint s
   assert.ok(!('concept' in academy));
   assert.equal(academy.video, null);
 });
+
+// ── Batch 55 step 5 (Phase 3): the coverage picker's lists ──
+
+test('coverage picker: the customer’s own areas first, chosen places left out, never more than ten', async () => {
+  const { addCoverageKey, coverageAddOptions, coverageCountText, coverageStart } = await import('./view.ts');
+  const options = ['LS', 'YO', 'HG', 'NG'].map((k) => ({ areaKey: k, label: k }));
+  const split = coverageAddOptions(options, ['HG', 'ZZ', 'LS'], ['LS']);
+  assert.deepEqual(split.yours.map((o) => o.areaKey), ['HG']);
+  assert.deepEqual(split.rest.map((o) => o.areaKey), ['YO', 'NG']);
+  assert.deepEqual(addCoverageKey(['LS'], 'LS'), ['LS']);
+  assert.deepEqual(addCoverageKey(['LS'], 'YO'), ['LS', 'YO']);
+  const ten = Array.from({ length: 10 }, (_, i) => `K${i}`);
+  assert.deepEqual(addCoverageKey(ten, 'X1'), ten);
+  assert.equal(coverageCountText(1), '1 of 10 place chosen.');
+  assert.equal(coverageCountText(3), '3 of 10 places chosen.');
+  assert.deepEqual(coverageStart({ mode: 'uk', keys: [], suggested: ['HG', 'ZZ'], options }), { mode: 'uk', keys: [], preset: ['HG'] });
+  assert.deepEqual(coverageStart({ mode: 'areas', keys: ['YO', 'ZZ', 'YO'], suggested: [], options }), { mode: 'areas', keys: ['YO'], preset: [] });
+});

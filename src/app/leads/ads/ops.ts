@@ -34,7 +34,8 @@
  * Pure: no network, no database, no server-only.
  */
 import type { ApproveResult, ChangeVoiceResult, GenerateRequest, GenerateResult, PackView, RetryVideoResult } from '../../../lib/ad-packs/generate-core.ts';
-import { parseAreaKey } from '../../../lib/ad-packs/area.ts';
+import { busiestArea, parseAreaKey, type AreaOption } from '../../../lib/ad-packs/area.ts';
+import { MAX_COVERAGE_AREAS, makeCoverage, type Coverage } from '../../../lib/ad-packs/coverage.ts';
 import type { AdRoute, PackEligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
 import { checkPhoto, cleanPhotoRefs, MAX_UPLOADS_PER_OWNER, PHOTO_MESSAGES, uploadRef } from '../../../lib/ad-packs/photos.ts';
 import type { PackAdRow } from '../../../lib/ad-packs/store-types.ts';
@@ -57,6 +58,9 @@ export const MESSAGES = {
   download: 'We could not make that download link. Please try again.',
   not_eligible: 'Your Facebook ads are not available for this account yet.',
   voice: 'Please choose one of the three voices.',
+  coverage: 'Please choose Anywhere in the UK, or choose your areas.',
+  coverage_none: 'Please choose at least one place, or pick Anywhere in the UK.',
+  coverage_many: `You can choose up to ${MAX_COVERAGE_AREAS} places.`,
 } as const;
 
 export type Session = { ok: true; ownerId: string; email: string | null; admin: boolean } | { ok: false; reason: 'signed_out' | 'member' };
@@ -105,6 +109,12 @@ export interface AdsDeps {
    * or null). Optional: absent, the lead database route behaves as before.
    */
   leadDbPackHints?(ownerId: string, areas: readonly string[]): Promise<{ bedrooms: number | null; mainAreaKey: string | null }>;
+  /**
+   * Batch 55 step 5 (Phase 3), the lead database route only: the place list the start screen offers (listDistricts).
+   * The chosen keys are checked against it and their names taken from it. Optional: absent, the lead database route
+   * takes one area as before.
+   */
+  areaOptions?(): Promise<AreaOption[]>;
 }
 
 const sessionError = (s: Extract<Session, { ok: false }>): string => MESSAGES[s.reason];
@@ -121,7 +131,51 @@ async function ownPack(deps: AdsDeps, ownerId: string, packId: unknown): Promise
 
 // ── Generate ──
 
-export type GenerateInput = { packId?: unknown; areaKey?: unknown; photoRefs?: unknown; typeOnly?: unknown; voiceKey?: unknown };
+/**
+ * `coverage` ('uk' | 'areas') and `coverageAreas` (the chosen keys, in order) are read on the lead database route only
+ * (Phase 3); the Academy route ignores them.
+ */
+export type GenerateInput = { packId?: unknown; areaKey?: unknown; photoRefs?: unknown; typeOnly?: unknown; voiceKey?: unknown; coverage?: unknown; coverageAreas?: unknown };
+
+export type CoverageChoice = { ok: true; areaKey: string; coverage: Coverage } | { ok: false; error: string };
+
+/**
+ * Batch 55 step 5 (Phase 3): the lead database start screen's choice, checked. "Anywhere in the UK" (or nothing sent)
+ * is nationwide, with the example figure from the customer's main area, else the place with the most reports.
+ * "Choose areas" needs 1 to MAX_COVERAGE_AREAS keys from the place list; the first is where the figure comes from and
+ * the names the ads say are the list's own. An older form that sends only `areaKey` is that one area.
+ */
+export function chooseCoverage(input: { coverage?: unknown; coverageAreas?: unknown; areaKey?: unknown }, options: readonly AreaOption[], mainAreaKey: string | null): CoverageChoice {
+  const sentKeys = Array.isArray(input.coverageAreas) ? input.coverageAreas : typeof input.coverageAreas === 'string' && input.coverageAreas !== '' ? [input.coverageAreas] : [];
+  const legacy = typeof input.areaKey === 'string' && input.areaKey.trim() !== '' ? input.areaKey : null;
+  const mode = input.coverage === undefined || input.coverage === null || input.coverage === '' ? (legacy ? 'areas' : 'uk') : input.coverage;
+  if (mode === 'uk') {
+    const byKey = new Map(options.map((o) => [o.areaKey, o]));
+    const main = mainAreaKey && byKey.has(mainAreaKey) ? mainAreaKey : null;
+    const areaKey = main ?? busiestArea(options)?.areaKey ?? null;
+    if (!areaKey) return { ok: false, error: MESSAGES.try_again };
+    return { ok: true, areaKey, coverage: { mode: 'uk', areas: [] } };
+  }
+  if (mode !== 'areas') return { ok: false, error: MESSAGES.coverage };
+  const keys: string[] = [];
+  for (const k of input.coverage === undefined || input.coverage === null || input.coverage === '' ? [legacy] : sentKeys) {
+    if (typeof k !== 'string' || parseAreaKey(k) === null) return { ok: false, error: MESSAGES.area };
+    const key = k.trim().toUpperCase();
+    if (!keys.includes(key)) keys.push(key);
+  }
+  if (keys.length === 0) return { ok: false, error: MESSAGES.coverage_none };
+  if (keys.length > MAX_COVERAGE_AREAS) return { ok: false, error: MESSAGES.coverage_many };
+  const byKey = new Map(options.map((o) => [o.areaKey, o]));
+  const names: string[] = [];
+  for (const k of keys) {
+    const o = byKey.get(k);
+    if (!o) return { ok: false, error: MESSAGES.area };
+    names.push(o.adLabel);
+  }
+  const coverage = makeCoverage('areas', names);
+  if (!coverage) return { ok: false, error: MESSAGES.area };
+  return { ok: true, areaKey: keys[0], coverage };
+}
 
 /** Make (or remake) the owner's pack. */
 export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<AdsState> {
@@ -140,8 +194,18 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
   // Batch 55 step 5: on the lead database route, no area picked means the customer's main area, and the figure rests on
   // the lowest bedroom count they take. The Academy route reads neither.
   const hints = leadDbRoute && deps.leadDbPackHints ? await deps.leadDbPackHints(s.ownerId, brand.areas ?? []) : null;
-  const picked = typeof input.areaKey === 'string' && input.areaKey.trim() !== '' ? input.areaKey : null;
-  const areaKey = picked ?? (leadDbRoute ? (hints?.mainAreaKey ?? null) : input.areaKey);
+  // Phase 3: on the lead database route, where to find landlords (anywhere in the UK, or the chosen areas).
+  let coverage: Coverage | null = null;
+  let areaKey: unknown;
+  if (leadDbRoute && deps.areaOptions) {
+    const choice = chooseCoverage(input, await deps.areaOptions(), hints?.mainAreaKey ?? null);
+    if (!choice.ok) return { error: choice.error };
+    coverage = choice.coverage;
+    areaKey = choice.areaKey;
+  } else {
+    const picked = typeof input.areaKey === 'string' && input.areaKey.trim() !== '' ? input.areaKey : null;
+    areaKey = picked ?? (leadDbRoute ? (hints?.mainAreaKey ?? null) : input.areaKey);
+  }
   if (typeof areaKey !== 'string' || parseAreaKey(areaKey) === null) return { error: MESSAGES.area };
   const photos = cleanPhotoRefs(s.ownerId, input.photoRefs);
   if (photos === null) return { error: MESSAGES.photos };
@@ -165,6 +229,7 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
       websiteId: elig.website.id,
       ...(leadDbRoute && elig.sitePath ? { route: 'leaddb' as const, sitePath: elig.sitePath } : {}),
       ...(leadDbRoute && typeof hints?.bedrooms === 'number' ? { bedrooms: hints.bedrooms } : {}),
+      ...(leadDbRoute && coverage ? { coverage } : {}),
       typeOnly: brand.logoUrl === null && typeOnly,
       ...(voiceKey ? { voiceKey } : {}),
     },

@@ -50,7 +50,7 @@ function visibleStrings(src: string): string[] {
   return out.filter((s) => s !== '');
 }
 
-const FILES = ['page.tsx', 'StartForm.tsx', 'VoicePicker.tsx', 'VideoBlock.tsx', 'Screens.tsx', 'Gallery.tsx', 'Downloads.tsx', 'ui.tsx', 'EntryCard.tsx', 'guide/page.tsx', 'guide/GuideWizard.tsx', 'view.ts', 'ops.ts', 'state.ts'];
+const FILES = ['page.tsx', 'StartForm.tsx', 'CoveragePicker.tsx', 'VoicePicker.tsx', 'VideoBlock.tsx', 'Screens.tsx', 'Gallery.tsx', 'Downloads.tsx', 'ui.tsx', 'EntryCard.tsx', 'guide/page.tsx', 'guide/GuideWizard.tsx', 'view.ts', 'ops.ts', 'state.ts'];
 
 test('no component, page or view model writes an internal word in a sentence', () => {
   let scanned = 0;

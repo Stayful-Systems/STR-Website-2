@@ -12,6 +12,8 @@ import { LiveActions } from "../LiveActions";
 import { packScreen } from "../state";
 import { btnPrimary, Calm, card, INK, PageFrame } from "../ui";
 import { ADS_PATH, adViewModel, eligibilityView, previewPathsOf } from "../view";
+import { audienceChecklistFor } from "@/lib/ad-packs/guide";
+import { coverageOfPack } from "@/lib/ad-packs/coverage";
 import { GuideWizard, type GuideAd } from "./GuideWizard";
 
 export const metadata: Metadata = { title: "Put your ads on Facebook — Stayful Intelligence", robots: { index: false, follow: false } };
@@ -83,7 +85,7 @@ export default async function GuidePage() {
   return (
     <PageFrame title={TITLE} back={BACK} compact>
       <LiveActions>
-        <GuideWizard ads={ads} shots={availableGuideShots()} packId={view.pack.id} />
+        <GuideWizard ads={ads} shots={availableGuideShots()} packId={view.pack.id} {...(view.pack.route === "leaddb" ? { audienceChecklist: audienceChecklistFor(coverageOfPack(view.pack)) } : {})} />
       </LiveActions>
     </PageFrame>
   );

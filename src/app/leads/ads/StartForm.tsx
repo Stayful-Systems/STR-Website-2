@@ -5,6 +5,7 @@ import { DEFAULT_VOICE_KEY, type VoiceKey } from "@/lib/ad-packs/voices";
 import { useAdsActions } from "./ActionsContext";
 import type { AdsState } from "./ops";
 import { VoicePicker } from "./VoicePicker";
+import { CoveragePicker, type CoveragePickerProps } from "./CoveragePicker";
 import { Alert, btnPrimary, btnSecondary, Calm, card, fieldCls, INK, SOFT, StickyBar } from "./ui";
 import { AREA_HINT, AREA_LABEL, AREA_PLACEHOLDER, areaPreviewView, MAKING_ADS_TEXT, NO_LOGO_TEXT, PHOTOS_HELP, PHOTOS_TITLE, REGEN_BUTTON, START_BUTTON, START_BUTTON_AGAIN, VOICE_STEP_HELP, VOICE_STEP_TITLE, type AreaPreviewView } from "./view";
 
@@ -69,6 +70,11 @@ export interface StartFormProps {
   failedBefore?: boolean;
   /** Making new ads only: why that is not possible right now (shown instead of the button unless the place or photos were changed). */
   blockReason?: string | null;
+  /**
+   * Batch 55 step 5 (Phase 3), the lead database route only: "Anywhere in the UK" or "Choose areas" replaces the one
+   * place list. Absent (the Academy), the form is exactly as before.
+   */
+  coverage?: Omit<CoveragePickerProps, "formId" | "onState">;
 }
 
 export function StartForm(p: StartFormProps) {
@@ -83,6 +89,8 @@ export function StartForm(p: StartFormProps) {
   const [voiceKey, setVoiceKey] = useState<VoiceKey>(DEFAULT_VOICE_KEY);
   const asked = useRef(0);
   const again = p.mode === "again";
+  const [coverageState, setCoverageState] = useState({ ready: true, dirty: false });
+  const usesCoverage = p.coverage !== undefined;
 
   async function pickArea(next: string) {
     setAreaKey(next);
@@ -131,9 +139,9 @@ export function StartForm(p: StartFormProps) {
     }
   }
 
-  const dirty = areaKey !== (p.initialAreaKey ?? "") || photos.map((x) => x.ref).join("|") !== p.initialPhotos.map((x) => x.ref).join("|");
+  const dirty = (usesCoverage ? coverageState.dirty : areaKey !== (p.initialAreaKey ?? "")) || photos.map((x) => x.ref).join("|") !== p.initialPhotos.map((x) => x.ref).join("|");
   const hidden = again && (p.blockReason ?? null) !== null && !dirty;
-  const blocked = p.problems.length > 0 || !areaKey || !preview?.ok || uploading || (!p.hasLogo && !typeOnly);
+  const blocked = p.problems.length > 0 || (usesCoverage ? !coverageState.ready : !areaKey || !preview?.ok) || uploading || (!p.hasLogo && !typeOnly);
   const button = pending ? "Making your ads…" : again ? REGEN_BUTTON : p.failedBefore ? START_BUTTON_AGAIN : START_BUTTON;
 
   const submit = (
@@ -150,6 +158,7 @@ export function StartForm(p: StartFormProps) {
       {p.packId ? <input type="hidden" name="packId" value={p.packId} /> : null}
       {photos.map((x) => <input key={x.ref} type="hidden" name="photoRef" value={x.ref} />)}
 
+      {p.coverage ? <CoveragePicker {...p.coverage} formId={p.mode} onState={setCoverageState} /> : (
       <section className={card}>
         <label htmlFor={`${p.mode}-area`} className={`block text-xl font-bold ${INK}`}>{AREA_LABEL}</label>
         <select id={`${p.mode}-area`} name="areaKey" value={areaKey} onChange={(e) => void pickArea(e.target.value)} className={fieldCls} required>
@@ -160,6 +169,7 @@ export function StartForm(p: StartFormProps) {
           {!areaKey ? AREA_HINT : preview ? preview.text : "Checking that place…"}
         </p>
       </section>
+      )}
 
       {again ? null : (
         <section className={`${card} min-w-0`} aria-labelledby="voice-title">

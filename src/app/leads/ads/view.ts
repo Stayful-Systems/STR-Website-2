@@ -12,6 +12,7 @@
  *
  * Pure: no network, no database, no server-only.
  */
+import { MAX_COVERAGE_AREAS } from '../../../lib/ad-packs/coverage.ts';
 import type { PackEligibilityReason } from '../../../lib/ad-packs/eligibility.ts';
 import type { Angle } from '../../../lib/ad-packs/codes.ts';
 import type { CheckId } from '../../../lib/ad-packs/checks.ts';
@@ -191,6 +192,55 @@ export const LOGO_REFUSAL = 'Please tick the box to show your company name inste
 export const AREA_LABEL = 'Where do you want to find landlords?';
 export const AREA_HINT = 'Pick the town or area you want your enquiries to come from.';
 export const AREA_PLACEHOLDER = 'Choose a place';
+// Batch 55 step 5 (Phase 3): the lead database start screen asks where to find landlords (anywhere in the UK, or areas).
+export const COVERAGE_UK_TITLE = 'Anywhere in the UK';
+export const COVERAGE_UK_HELP = 'Your ads tell landlords you work across the UK. This reaches the most people.';
+export const COVERAGE_AREAS_TITLE = 'Choose areas';
+export const COVERAGE_AREAS_HELP = `Pick from 1 to ${MAX_COVERAGE_AREAS} towns or areas. Your ads name them, so landlords can see where you work.`;
+export const COVERAGE_ADD_LABEL = 'Add a place';
+export const COVERAGE_ADD_PLACEHOLDER = 'Choose a place to add';
+export const COVERAGE_YOURS_GROUP = 'Your areas';
+export const COVERAGE_ALL_GROUP = 'All places';
+export const COVERAGE_NONE_YET = 'Add at least one place.';
+export const COVERAGE_FULL = `You have chosen ${MAX_COVERAGE_AREAS} places, the most you can choose.`;
+
+/** "2 of 10 places chosen." */
+export function coverageCountText(n: number): string {
+  return `${n} of ${MAX_COVERAGE_AREAS} ${n === 1 ? 'place' : 'places'} chosen.`;
+}
+
+export type CoverageFormMode = 'uk' | 'areas';
+export type CoverageFormOption = { areaKey: string; label: string };
+
+/**
+ * The place list of the coverage picker, split in two: the customer's own areas (from the lead database, in their
+ * order) first, then every other place. Keys already chosen are left out of both.
+ */
+export function coverageAddOptions(options: readonly CoverageFormOption[], suggested: readonly string[], chosen: readonly string[]): { yours: CoverageFormOption[]; rest: CoverageFormOption[] } {
+  const taken = new Set(chosen);
+  const byKey = new Map(options.map((o) => [o.areaKey, o]));
+  const yours = [...new Set(suggested)].filter((k) => !taken.has(k)).map((k) => byKey.get(k)).filter((o): o is CoverageFormOption => o !== undefined);
+  const mine = new Set(yours.map((o) => o.areaKey));
+  return { yours, rest: options.filter((o) => !taken.has(o.areaKey) && !mine.has(o.areaKey)) };
+}
+
+/** Add a key to the chosen list (no repeats, never more than the most allowed). */
+export function addCoverageKey(chosen: readonly string[], key: string): string[] {
+  if (!key || chosen.includes(key) || chosen.length >= MAX_COVERAGE_AREAS) return [...chosen];
+  return [...chosen, key];
+}
+
+/**
+ * The picker's starting point: the mode given (nationwide for new ads, what the ads say for new ones made again), the
+ * known keys only. `preset` is what "Choose areas" fills in when nothing is chosen yet: the customer's own areas.
+ */
+export function coverageStart(i: { mode: CoverageFormMode; keys: readonly string[]; suggested: readonly string[]; options: readonly CoverageFormOption[] }): { mode: CoverageFormMode; keys: string[]; preset: string[] } {
+  const known = new Set(i.options.map((o) => o.areaKey));
+  const keys = [...new Set(i.keys)].filter((k) => known.has(k)).slice(0, MAX_COVERAGE_AREAS);
+  const preset = [...new Set(i.suggested)].filter((k) => known.has(k)).slice(0, MAX_COVERAGE_AREAS);
+  return { mode: i.mode, keys, preset };
+}
+
 export const VOICE_STEP_TITLE = 'Pick a voice for your video';
 export const VOICE_STEP_HELP = 'Tap the play button to hear each voice.';
 export const PHOTOS_TITLE = 'Add your own photos (optional)';

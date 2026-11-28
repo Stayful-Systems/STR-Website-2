@@ -225,3 +225,11 @@ export function matchArea(areas: readonly string[], options: readonly AreaOption
   }
   return null;
 }
+
+/**
+ * Batch 55 step 5 (Phase 3): the pick-list entry with the most reports (the lower key on a tie), or null for an empty
+ * list. A nationwide lead database pack with no main area hint takes its example figure from here.
+ */
+export function busiestArea(options: readonly AreaOption[]): AreaOption | null {
+  return options.length === 0 ? null : [...options].sort(byBest)[0];
+}
