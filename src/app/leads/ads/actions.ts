@@ -54,6 +54,8 @@ function liveDeps(): AdsDeps {
       const [bedrooms, options] = await Promise.all([readPushedBedrooms(ownerId), areas.length > 0 ? listDistricts() : Promise.resolve([])]);
       return { bedrooms, mainAreaKey: areas.length > 0 ? (matchArea(areas, options)?.areaKey ?? null) : null };
     },
+    // Batch 55 step 5 (Phase 3): the place list the lead database start screen offers (cached market snapshot).
+    areaOptions: listDistricts,
   };
 }
 
@@ -68,6 +70,9 @@ export async function generatePackAction(_prev: AdsState, formData: FormData): P
     typeOnly: text(formData.get('typeOnly')) === 'on',
     // 38b: the voice picked in the form (a regenerate sends none and keeps the pack's voice); ops.ts checks it is one of the three.
     voiceKey: text(formData.get('voiceKey')),
+    // Batch 55 step 5 (Phase 3), the lead database route: anywhere in the UK, or the chosen places (ops.ts checks them).
+    coverage: text(formData.get('coverage')),
+    coverageAreas: formData.getAll('coverageArea').filter((v): v is string => typeof v === 'string'),
   });
   // Whether it worked or not the pack may have moved (made, failed, checks failed): the page reads it again.
   revalidatePath(ADS_PATH);

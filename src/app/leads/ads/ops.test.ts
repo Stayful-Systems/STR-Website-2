@@ -4,7 +4,7 @@ import { harness, type Harness } from '../../../lib/ad-packs/test-store.ts';
 import { signedDownloadUrlWith } from '../../../lib/ad-packs/download.ts';
 import { PHOTO_MAX_BYTES, uploadRef, MAX_UPLOADS_PER_OWNER } from '../../../lib/ad-packs/photos.ts';
 import { buildActivityCall } from '../../../lib/activity/event.ts';
-import { approveOp, areaPreviewOp, changeVoiceOp, copyOp, downloadOp, generateOp, MESSAGES, pollPackOp, retryVideoOp, uploadPhotoOp, videoUrlOp, type AdsDeps, type EligibilityFacts, type Session } from './ops.ts';
+import { approveOp, areaPreviewOp, changeVoiceOp, chooseCoverage, copyOp, downloadOp, generateOp, MESSAGES, pollPackOp, retryVideoOp, uploadPhotoOp, videoUrlOp, type AdsDeps, type EligibilityFacts, type Session } from './ops.ts';
 import { isCopyKind, PLAIN_CODES, VOICE_UNAVAILABLE_TEXT } from './view.ts';
 import { VIDEO_ACTION_CODES } from '../../../lib/ad-packs/generate-core.ts';
 
@@ -720,4 +720,91 @@ test('area preview, lead database route: the bedroom count shown is the one the 
   academy.deps.leadDbPackHints = async () => ({ bedrooms: 2, mainAreaKey: null });
   await areaPreviewOp(academy.deps, { areaKey: 'NG7' });
   assert.deepEqual(aSeen, [undefined]);
+});
+
+// ── Batch 55 step 5 (Phase 3): anywhere in the UK, or the chosen areas (lead database route) ──
+
+const OPT = (areaKey: string, adLabel: string, samples: number) => ({ areaKey, level: (areaKey.length <= 2 ? 'area' : 'district') as 'area' | 'district', label: adLabel, adLabel, areaCode: areaKey.replace(/\d.*$/, ''), areaName: adLabel, localities: [], samples });
+const OPTIONS = [OPT('LS', 'Leeds', 120), OPT('YO', 'York', 80), OPT('HG', 'Harrogate', 40), OPT('NG', 'Nottingham', 300), OPT('NG7', 'Lenton, Nottingham', 60)];
+const ELEVEN = Array.from({ length: 11 }, (_, i) => OPT(`B${i + 1}`, `Town ${i + 1}`, 10));
+
+test('coverage choice: nationwide by default, the figure from the main area, else the place with the most reports', () => {
+  assert.deepEqual(chooseCoverage({}, OPTIONS, 'LS'), { ok: true, areaKey: 'LS', coverage: { mode: 'uk', areas: [] } });
+  assert.deepEqual(chooseCoverage({ coverage: 'uk' }, OPTIONS, null), { ok: true, areaKey: 'NG', coverage: { mode: 'uk', areas: [] } });
+  // A main area that is not on the list is not used.
+  assert.deepEqual(chooseCoverage({ coverage: 'uk' }, OPTIONS, 'ZZ9'), { ok: true, areaKey: 'NG', coverage: { mode: 'uk', areas: [] } });
+  assert.deepEqual(chooseCoverage({ coverage: 'uk' }, [], null), { ok: false, error: MESSAGES.try_again });
+});
+
+test('coverage choice: chosen areas keep their order, the first is the figure area, and the names are the list’s own', () => {
+  assert.deepEqual(chooseCoverage({ coverage: 'areas', coverageAreas: ['yo', 'LS', 'YO', 'NG7'] }, OPTIONS, 'LS'), {
+    ok: true,
+    areaKey: 'YO',
+    coverage: { mode: 'areas', areas: ['York', 'Leeds', 'Lenton, Nottingham'] },
+  });
+  // An older form that sends only one area.
+  assert.deepEqual(chooseCoverage({ areaKey: 'hg' }, OPTIONS, null), { ok: true, areaKey: 'HG', coverage: { mode: 'areas', areas: ['Harrogate'] } });
+});
+
+test('coverage choice: no area, too many, an unknown place or an unknown choice is refused in plain words', () => {
+  assert.deepEqual(chooseCoverage({ coverage: 'areas', coverageAreas: [] }, OPTIONS, null), { ok: false, error: MESSAGES.coverage_none });
+  assert.deepEqual(chooseCoverage({ coverage: 'areas' }, OPTIONS, null), { ok: false, error: MESSAGES.coverage_none });
+  assert.deepEqual(chooseCoverage({ coverage: 'areas', coverageAreas: ELEVEN.map((o) => o.areaKey) }, ELEVEN, null), { ok: false, error: MESSAGES.coverage_many });
+  assert.deepEqual(chooseCoverage({ coverage: 'areas', coverageAreas: ['LS', 'ZZ9'] }, OPTIONS, null), { ok: false, error: MESSAGES.area });
+  assert.deepEqual(chooseCoverage({ coverage: 'areas', coverageAreas: ['LS', 'not a key'] }, OPTIONS, null), { ok: false, error: MESSAGES.area });
+  assert.deepEqual(chooseCoverage({ coverage: 'everywhere' }, OPTIONS, null), { ok: false, error: MESSAGES.coverage });
+  for (const m of [MESSAGES.coverage, MESSAGES.coverage_none, MESSAGES.coverage_many]) assert.doesNotMatch(m, /_|\bpacks?\b|\bcodes?\b/);
+});
+
+test('generate, lead database route: nationwide is sent with the main area as the figure area, and stored on the pack', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  s.deps.leadDbPackHints = async () => ({ bedrooms: null, mainAreaKey: 'NG7' });
+  s.deps.areaOptions = async () => OPTIONS;
+  assert.deepEqual(await generateOp(s.deps, { ...input, areaKey: '', coverage: 'uk' }), { ok: true });
+  const sent = s.calls.generated[0].input as { areaKey?: string; coverage?: unknown };
+  assert.equal(sent.areaKey, 'NG7');
+  assert.deepEqual(sent.coverage, { mode: 'uk', areas: [] });
+  const pack = await s.h.store.getPack(OWNER_A);
+  assert.equal(pack?.coverage, 'uk');
+  assert.deepEqual(pack?.coverageAreas, []);
+  const ads = await s.h.store.listAds(OWNER_A, pack!.id);
+  assert.ok(ads.every((a) => a.texts.primary.every((t) => t.includes('across the UK'))));
+});
+
+test('generate, lead database route: chosen areas are sent, stored in order, and every ad names them', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  s.deps.areaOptions = async () => OPTIONS;
+  assert.deepEqual(await generateOp(s.deps, { ...input, areaKey: '', coverage: 'areas', coverageAreas: ['LS', 'YO', 'HG'] }), { ok: true });
+  const sent = s.calls.generated[0].input as { areaKey?: string; coverage?: unknown };
+  assert.equal(sent.areaKey, 'LS');
+  assert.deepEqual(sent.coverage, { mode: 'areas', areas: ['Leeds', 'York', 'Harrogate'] });
+  const pack = await s.h.store.getPack(OWNER_A);
+  assert.equal(pack?.coverage, 'areas');
+  assert.deepEqual(pack?.coverageAreas, ['Leeds', 'York', 'Harrogate']);
+  const ads = await s.h.store.listAds(OWNER_A, pack!.id);
+  assert.ok(ads.every((a) => a.texts.primary.every((t) => t.includes('manages short lets in Leeds, York and Harrogate.'))));
+  // Refusals send nothing.
+  const t = setup();
+  t.eligible(LEADDB);
+  t.deps.areaOptions = async () => OPTIONS;
+  assert.deepEqual(await generateOp(t.deps, { ...input, coverage: 'areas', coverageAreas: [] }), { error: MESSAGES.coverage_none });
+  assert.equal(t.calls.generate, 0);
+});
+
+test('generate, Academy route: coverage sent by a form is ignored and nothing new is written on the pack', async () => {
+  const s = setup();
+  let asked = 0;
+  s.deps.areaOptions = async () => {
+    asked++;
+    return OPTIONS;
+  };
+  assert.deepEqual(await generateOp(s.deps, { ...input, coverage: 'uk', coverageAreas: ['LS'] }), { ok: true });
+  assert.equal(asked, 0);
+  assert.ok(!('coverage' in s.calls.generated[0].input));
+  const pack = await s.h.store.getPack(OWNER_A);
+  assert.equal(pack?.coverage, null);
+  assert.deepEqual(pack?.coverageAreas, []);
+  assert.ok(!s.h.store.writes.some((w) => w.includes('coverage')), 'the Academy update patch is unchanged');
 });
