@@ -1161,7 +1161,20 @@ export function createAdPackEngine(deps: GenerateDeps) {
       // 7: the video. Only a pack that passed its checks is rendered (no paid call for a pack nobody will see).
       let video: GenerateOk['video'] = { status: 'coming' };
       if (status === 'preview') {
-        const q = await queueVideo(ownerId, taken.id, version, voiceKey, stored.find((a) => a.angle === '5b')?.id ?? null);
+        // Batch 55 step 5 (55c A2): a lead database pack is built from its example report first (its own queued row);
+        // the worker then queues the phone and loupe videos, or the notice video as the fallback. Without that queue, or
+        // when it cannot be queued, the notice video is queued straight away (the fallback look), as before.
+        let queuedExample = false;
+        if (route === 'leaddb' && deps.exampleReports) {
+          try {
+            const e = await deps.exampleReports.enqueue({ packId: taken.id, version, voiceKey });
+            queuedExample = e.ok;
+            if (!e.ok) log('example_enqueue_failed', { packId: taken.id, code: e.code });
+          } catch {
+            log('example_enqueue_failed', { packId: taken.id, code: 'store_failed' });
+          }
+        }
+        const q = queuedExample ? ({ ok: true } as const) : await queueVideo(ownerId, taken.id, version, voiceKey, stored.find((a) => a.angle === '5b')?.id ?? null);
         video = q.ok ? { status: 'queued' } : { status: 'failed', code: q.code };
       }
 

@@ -5,6 +5,7 @@ import { adPackFetchImage } from './files-server';
 import { enqueueRender as enqueueCore, loadRendererFiles, runRenderQueue as runCore, type EnqueueResult, type RenderDeps, type RenderReport, type SandboxFactory, type SandboxLike } from './render-core.ts';
 import { createLiveRenderStore, createLiveStorage, readRenderSettings, readSandboxCpuSecondPence } from './render-store-server.ts';
 import { createVideoNotifier } from './notify-server.ts';
+import { createLiveExampleDeps } from './example-server.ts';
 import { createLiveStore } from './store-server.ts';
 import { synthesise } from './voice-server';
 
@@ -104,7 +105,9 @@ function realDeps(): RenderDeps {
     synth: (i) => synthesise({ voiceKey: i.voiceKey, lines: i.lines, packId: i.packId }),
     storage: createLiveStorage(),
     fetchImage: adPackFetchImage,
-    rendererFiles: () => loadRendererFiles(),
+    rendererFiles: (list) => loadRendererFiles(undefined, list),
+    // Batch 55 step 5 (Phase 2): the example report step and the lead database videos.
+    example: createLiveExampleDeps(),
     sandboxCpuSecondPence: readSandboxCpuSecondPence,
     renderSettings: readRenderSettings,
     now: () => new Date(),

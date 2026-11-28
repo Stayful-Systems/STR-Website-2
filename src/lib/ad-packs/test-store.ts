@@ -5,6 +5,8 @@
  * in the app imports it.
  */
 import type { Look } from './ld-angles.ts';
+import type { AdFormat } from './concepts.ts';
+import type { VoiceKey } from './voices.ts';
 import { DEFAULT_AD_PACK_SETTINGS, type AdPackSettings } from './settings.ts';
 import { sortAds } from './rows.ts';
 import {
@@ -234,6 +236,15 @@ export class MemoryAdPackStore implements AdPackStore {
     return { ...this.settings };
   }
 
+  /** Batch 55 step 5: rewrite one ad's format (the fallback look). */
+  async setAdFormat(ownerId: string, packAdId: string, format: AdFormat) {
+    const ad = this.ads.get(packAdId);
+    if (!ad || ad.ownerId !== ownerId) return false;
+    this.writes.push('setAdFormat');
+    ad.format = format;
+    return true;
+  }
+
   /** Batch 55 step 5: the looks of other owners' latest lead database packs in the area (the 5b ad of their current version). */
   async otherLooksInArea(ownerId: string, areaKey: string) {
     const out: Look[] = [];
@@ -325,7 +336,7 @@ export interface Harness {
   now: Date;
 }
 
-export function harness(opts: { pricing?: Pricing; now?: Date } = {}): Harness {
+export function harness(opts: { pricing?: Pricing; now?: Date; /** Batch 55 step 5: wire the example report queue. */ exampleReports?: boolean } = {}): Harness {
   const h = {} as Harness;
   h.now = opts.now ?? new Date('2026-11-20T10:00:00Z');
   h.store = new MemoryAdPackStore();
@@ -365,6 +376,7 @@ export function harness(opts: { pricing?: Pricing; now?: Date } = {}): Harness {
       return { ok: !h.deleteFails };
     },
     log: (event, fields) => h.logs.push({ event, fields }),
+    ...(opts.exampleReports ? { exampleReports: { enqueue: (i: { packId: string; version: number; voiceKey: VoiceKey }) => enqueueRender(h.renders, { ...i, kind: 'example_report' }) } } : {}),
   };
   h.finishVideo = async (ownerId, o = {}) => {
     const pack = await h.store.getPack(ownerId);

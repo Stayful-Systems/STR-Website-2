@@ -63,6 +63,11 @@ function realDeps(): GenerateDeps {
         requeue: (i) => renders.requeueRender(i),
       };
     })(),
+    // Batch 55 step 5 (Phase 2): a lead database pack queues its example report (the worker makes it and then the videos).
+    exampleReports: (() => {
+      const renders = createLiveRenderStore();
+      return { enqueue: (i) => enqueueRender(renders, { ...i, kind: 'example_report' }) };
+    })(),
     deleteFiles: (paths) => deleteFiles(paths),
     sandboxCpuSecondPence: readSandboxCpuSecondPence,
     log: (event, fields) => console.error(`[ad-packs] ${event}`, fields.packId ?? '-', fields.code ?? '-'),

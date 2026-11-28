@@ -89,6 +89,8 @@ export type RenderRow = {
   costPence: number;
   errorCode: string | null;
   files: AdVideoReady | null;
+  /** Batch 55 step 5: an example_report row's pages, once done (left out on every other row). */
+  example?: ExampleReady;
   createdAt: string;
   updatedAt: string;
   /**
@@ -141,7 +143,32 @@ export type RenderFinish = {
   sandboxId: string | null;
   finishedAt: string | null;
 };
-export type RenderDone = { costPence: number; sandboxId: string | null; files: AdVideoReady; finishedAt: string };
+export type RenderDone = { costPence: number; sandboxId: string | null; files: AdVideoReady | ExampleReady; finishedAt: string };
+
+/**
+ * Batch 55 step 5: what a finished example_report row holds (ad_pack_renders.files): the masked pages in the bucket,
+ * the loupe's three stops (fractions of a page), how many £ words were blurred, and whether the figures came from a
+ * fresh run or a stripped finished report. Never an address, a title or a figure.
+ */
+export type ExampleReady = {
+  status: 'example';
+  pages: AdFileRef[];
+  targets: { page: number; x: number; y: number; w: number; h: number }[];
+  masked: number;
+  source: 'run' | 'snapshot';
+};
+
+export function parseExampleReady(raw: unknown): ExampleReady | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (o.status !== 'example' || !Array.isArray(o.pages)) return null;
+  const pages = o.pages.map(fileRef).filter((f): f is AdFileRef => f !== null);
+  if (pages.length === 0) return null;
+  const targets = Array.isArray(o.targets)
+    ? (o.targets as Record<string, unknown>[]).map((t) => ({ page: int(t?.page), x: Number(t?.x), y: Number(t?.y), w: Number(t?.w), h: Number(t?.h) })).filter((t) => [t.x, t.y, t.w, t.h].every(Number.isFinite))
+    : [];
+  return { status: 'example', pages, targets, masked: int(o.masked), source: o.source === 'snapshot' ? 'snapshot' : 'run' };
+}
 
 export type RenderCounts = Record<RenderState, number>;
 
@@ -309,6 +336,7 @@ export function toRenderRow(r: Record<string, unknown>): RenderRow {
     costPence: int(r.cost_pence),
     errorCode: typeof r.error_code === 'string' && r.error_code !== '' ? r.error_code : null,
     files: video && video.status === 'ready' ? video : null,
+    ...(r.kind === 'example_report' && parseExampleReady(r.files) ? { example: parseExampleReady(r.files) as ExampleReady } : {}),
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
     notifiedAt: typeof r.notified_at === 'string' ? r.notified_at : null,

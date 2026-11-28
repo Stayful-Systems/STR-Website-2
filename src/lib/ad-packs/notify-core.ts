@@ -31,6 +31,7 @@
 import { approvalBlock } from './generate-core.ts';
 import type { AdPackStore, PackRow } from './store-types.ts';
 import type { NotifyOutcome, RenderRow, RenderStore } from './render-store.ts';
+import { kindOf } from './render-store.ts';
 import { videoEmailKey, type VideoEmailOutcome } from '../email/ad-pack-video.ts';
 
 /** How long after a render finished its email is still tried (bounds the tries of a send that keeps failing). */
@@ -61,6 +62,9 @@ type Decision = { outcome: NotifyOutcome; email: boolean };
 export async function decideVideoEmail(deps: Pick<NotifyDeps, 'packs'>, row: RenderRow, pack: PackRow | null): Promise<Decision> {
   const skip: Decision = { outcome: 'skipped', email: false };
   if (!pack || pack.id !== row.packId || pack.version !== row.version) return skip;
+  // Batch 55 step 5: ONE email, for the 5b video (notice or phone). The example report and the loupe video send none.
+  const kind = kindOf(row);
+  if (kind === 'example_report' || kind === 'loupe') return skip;
   if (row.state === 'done') {
     const ads = await deps.packs.listAds(pack.ownerId, pack.id);
     const slot = ads.find((a) => a.angle === '5b' && a.version === row.version)?.files.video ?? null;

@@ -113,7 +113,8 @@ export class MemoryRenderStore implements RenderStore {
     r.errorCode = null;
     r.costPence = patch.costPence;
     r.sandboxId = patch.sandboxId ?? r.sandboxId;
-    r.files = clone(patch.files);
+    if (patch.files.status === 'example') r.example = clone(patch.files);
+    else r.files = clone(patch.files);
     r.finishedAt = patch.finishedAt;
     r.leaseUntil = null;
     r.updatedAt = this.stamp();

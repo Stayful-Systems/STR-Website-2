@@ -75,7 +75,8 @@ import { isVoiceKey, type VoiceKey } from './voices.ts';
 import { estimateVoicePence, type SynthesiseResult, type VoiceCode } from './voice-core.ts';
 import { StoreError, type AdFileRef, type AdPackStore, type PackAdRow, type PackRow, type RunResult, type VideoBrand } from './store-types.ts';
 import type { AdVideo, AdVideoReady, RenderKind, RenderRow, RenderSettings, RenderStore } from './render-store.ts';
-import { isRenderKind } from './render-store.ts';
+import { isRenderKind, kindOf } from './render-store.ts';
+import { runExampleRow, type ExampleDeps } from './example-step.ts';
 
 // ── Interfaces ──
 
@@ -110,8 +111,10 @@ export type RenderDeps = {
   synth: (i: { voiceKey: VoiceKey; lines: readonly string[]; packId: string }) => Promise<SynthesiseResult>;
   storage: StorageLike;
   fetchImage: (ref: string) => Promise<FetchedImage>;
-  /** The files of ad-render/ that go into the sandbox (explicit list). */
-  rendererFiles: () => Promise<RendererFile[]>;
+  /** The files of ad-render/ that go into the sandbox (explicit list; RENDERER_FILES when none is given). */
+  rendererFiles: (list?: readonly string[]) => Promise<RendererFile[]>;
+  /** Batch 55 step 5 (Phase 2): the example report step and the new videos (example-step.ts). Left out: no example report is made (fallback look). */
+  example?: ExampleDeps;
   /** Raw pence per sandbox CPU-second (the unit_costs row; the seed when unreadable). */
   sandboxCpuSecondPence: () => Promise<number>;
   renderSettings: () => Promise<RenderSettings>;
@@ -180,7 +183,7 @@ const VOICE_CODE_OF: Record<VoiceCode, string> = {
   failed: 'voice_failed',
 };
 
-class RenderFail extends Error {
+export class RenderFail extends Error {
   readonly code: string;
   constructor(code: string) {
     super(code);
@@ -363,9 +366,9 @@ export function scriptLinesOf(ad: Pick<PackAdRow, 'texts'>): string[] {
 }
 
 /** Read ad-render/ files from disk (explicit list), relative to the process's working folder. */
-export async function loadRendererFiles(root: string = path.join(/*turbopackIgnore: true*/ process.cwd(), 'ad-render')): Promise<RendererFile[]> {
+export async function loadRendererFiles(root: string = path.join(/*turbopackIgnore: true*/ process.cwd(), 'ad-render'), list: readonly string[] = RENDERER_FILES): Promise<RendererFile[]> {
   const out: RendererFile[] = [];
-  for (const rel of RENDERER_FILES) {
+  for (const rel of list) {
     try {
       out.push({ path: `ad-render/${rel}`, content: new Uint8Array(await readFile(path.join(/*turbopackIgnore: true*/ root, rel))) });
     } catch {
@@ -479,6 +482,8 @@ export async function runRenderQueue(deps: RenderDeps, opts: { dry?: boolean; li
 
 /** One claimed row, start to finish. Never throws. */
 async function runOne(deps: RenderDeps, row: RenderRow, settings: RenderSettings): Promise<RenderLine> {
+  // Batch 55 step 5 (Phase 2): an example report row has its own step (example-step.ts).
+  if (kindOf(row) === 'example_report') return runExampleRow(deps, row, settings);
   const log = deps.log ?? (() => {});
   const spend: Spend = { voicePence: 0, sandboxSeconds: 0, sandboxId: null, videos: [], startedMs: deps.now().getTime() };
   let pack: PackRow | null = null;
@@ -590,7 +595,7 @@ async function applyVideoChecks(deps: RenderDeps, pack: PackRow, version: number
 }
 
 /** The cost on the pack and in the month's runs (the generator's cap reads ad_pack_runs). Never throws. */
-async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean, errorCode: string | undefined, version: number, seconds: number): Promise<void> {
+export async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean, errorCode: string | undefined, version: number, seconds: number, kind?: string): Promise<void> {
   const log = deps.log ?? (() => {});
   try {
     const fresh = await deps.packs.getPack(pack.ownerId);
@@ -599,7 +604,7 @@ async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean
     log('render_pack_cost_failed', { packId: pack.id, code: 'store_failed' });
   }
   try {
-    const result: RunResult & { kind: 'render'; renderSeconds: number } = {
+    const result: RunResult & { kind: 'render'; renderSeconds: number; renderKind?: string } = {
       outcome: ok ? 'preview' : 'failed',
       ...(errorCode ? { errorCode } : {}),
       version,
@@ -611,6 +616,8 @@ async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean
       checkWarnings: 0,
       kind: 'render',
       renderSeconds: Math.round(seconds),
+      // Batch 55 step 5: which render row it was (left out for the notice video, as before).
+      ...(kind && kind !== 'notice' ? { renderKind: kind } : {}),
     };
     await deps.packs.insertRun(pack.ownerId, { packId: pack.id, version, by: 'admin', costPence: cost, result });
   } catch {
@@ -618,9 +625,9 @@ async function settle(deps: RenderDeps, pack: PackRow, cost: number, ok: boolean
   }
 }
 
-type Asset = { path: string; content: Uint8Array };
+export type Asset = { path: string; content: Uint8Array };
 
-async function fetchAsset(deps: RenderDeps, ref: string, base: string): Promise<Asset | null> {
+export async function fetchAsset(deps: RenderDeps, ref: string, base: string): Promise<Asset | null> {
   try {
     const got = await deps.fetchImage(ref);
     const bytes = got.bytes;

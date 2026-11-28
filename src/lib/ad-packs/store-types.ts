@@ -228,4 +228,9 @@ export interface AdPackStore {
    * area is `areaKey` (nothing else about those packs). Optional: a store without it reads as "nobody else here".
    */
   otherLooksInArea?(ownerId: string, areaKey: string): Promise<Look[]>;
+  /**
+   * Batch 55 step 5: rewrite one lead database pack ad's format (the fallback look after a failed example report, or a
+   * failed carousel), only if the ad is the owner's. Optional: a store without it leaves the planned format.
+   */
+  setAdFormat?(ownerId: string, packAdId: string, format: AdFormat): Promise<boolean>;
 }

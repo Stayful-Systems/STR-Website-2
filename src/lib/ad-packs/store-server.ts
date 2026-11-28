@@ -5,6 +5,7 @@ import { DEFAULT_AD_PACK_SETTINGS, AD_PACK_KEYS, parseAdPackSettings, type AdPac
 import { AD_COLUMNS, adInsertRow, PACK_COLUMN_OF, PACK_COLUMNS, parseFiles, parseTexts, RUN_COLUMNS, sortAds, toAdRow, toPackRow, toRunRow } from './rows.ts';
 import { signedDownloadUrlWith } from './download.ts';
 import type { Look } from './ld-angles.ts';
+import { isAdFormat } from './concepts.ts';
 import {
   PackConflict,
   StoreError,
@@ -251,6 +252,13 @@ export function createLiveStore(): AdPackStore {
         if (look) out.push(look);
       }
       return out;
+    },
+
+    async setAdFormat(ownerId, packAdId, format) {
+      if (!UUID.test(ownerId) || !UUID.test(packAdId) || !isAdFormat(format)) return false;
+      const { data, error } = await admin().from('ad_pack_ads').update({ format }).eq('id', packAdId).eq('owner_id', ownerId).select('id');
+      if (error) fail('ad_pack_ads format', error);
+      return (data ?? []).length > 0;
     },
 
     async useRoundGrant(ownerId, grantId, atIso) {

@@ -35,7 +35,14 @@ const AD_PACK_GUIDE_SHOTS = ["public/ad-packs/guide/*.png"];
  * disk by the render worker and written into a Vercel Sandbox. Only the files
  * it needs (render-core.ts RENDERER_FILES); the sample folder stays out.
  */
-const AD_RENDER_FILES = ["ad-render/*.py", "ad-render/*.txt", "ad-render/fonts/*"];
+const AD_RENDER_FILES = [
+  "ad-render/*.py",
+  "ad-render/*.txt",
+  "ad-render/fonts/*",
+  // Batch 55 step 5: the worker also draws the example report (the PDF's fonts) and the 3a carousel (the card fonts).
+  ...PDF_ASSETS,
+  ...AD_PACK_FONTS,
+];
 
 const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
