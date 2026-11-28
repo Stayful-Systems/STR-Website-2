@@ -10815,8 +10815,11 @@ do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'ad_pack_renders_pack_version_kind_key' and conrelid = 'public.ad_pack_renders'::regclass) then
     alter table public.ad_pack_renders add constraint ad_pack_renders_pack_version_kind_key unique (pack_id, version, kind);
-    alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_pack_version_key;
   end if;
 end $$;
+-- Dropped on EVERY run, not only the first: the Batch 38b block above re-adds the old
+-- (pack_id, version) key whenever it is missing, so a re-run must drop it again or a
+-- second render kind for the same pack version would be refused.
+alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_pack_version_key;
 
 notify pgrst, 'reload schema';
