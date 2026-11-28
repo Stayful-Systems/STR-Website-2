@@ -6,6 +6,8 @@
  *     forecast, nearby comparable listings, local demand
  *   - that it is free and takes about a minute
  *   - the customer's company, their areas, their own fee (only when set) and contact details
+ *   - Phase 3: where they find landlords (the pack's coverage): "across the UK", or the chosen area names and the
+ *     phrases made from them (coverage.ts coverageFacts). Area names may carry digits ("Nottingham NG7"): not claims
  *   - "you stay the owner"
  *   - the one labelled area example (figures.ts), unchanged
  *
@@ -21,12 +23,16 @@
  */
 import { bannedClaimHits } from '../websites/checks.ts';
 import { FIGURE_LABEL_RE, type Figure } from './figures.ts';
+import { coverageFacts, type Coverage } from './coverage.ts';
 
 export const REPORT_CONTENTS = ['gross and net income', 'occupancy', 'short let vs long let', '12-month forecast', 'nearby comparable listings', 'local demand'] as const;
 
 export type AdFacts = {
   company: string;
+  /** Every area name the ads may say (the customer's areas, the figure's area, the chosen coverage areas). */
   areas: string[];
+  /** Phase 3: the coverage phrases the ads may say ("across the UK", "in Leeds, York and more"). */
+  coverage: string[];
   /** The customer's own fee percent, or null (then no percentage may appear at all). */
   feePct: number | null;
   /** The labelled example the pack rests on, or null. */
@@ -45,6 +51,8 @@ export function factsFor(i: {
   feePct: number | null;
   figure: Figure | null;
   bedrooms?: { min: number; max: number } | number | null;
+  /** Phase 3: the pack's coverage (its area names and phrases become facts). */
+  coverage?: Coverage | null;
 }): AdFacts {
   const beds: number[] = [];
   if (typeof i.bedrooms === 'number' && Number.isInteger(i.bedrooms)) beds.push(i.bedrooms);
@@ -52,7 +60,8 @@ export function factsFor(i: {
   if (i.figure) beds.push(i.figure.bedrooms);
   return {
     company: String(i.company ?? '').replace(/\s+/g, ' ').trim(),
-    areas: i.areas.map((a) => String(a).trim()).filter(Boolean),
+    areas: [...new Set([...i.areas, ...(i.coverage ? coverageFacts(i.coverage).names : [])].map((a) => String(a).trim()).filter(Boolean))],
+    coverage: i.coverage ? coverageFacts(i.coverage).phrases : [],
     feePct: typeof i.feePct === 'number' && Number.isFinite(i.feePct) && i.feePct > 0 && i.feePct <= 100 ? i.feePct : null,
     figure: i.figure ? { amount: i.figure.amount, bedrooms: i.figure.bedrooms, sampleCount: i.figure.sampleCount, label: i.figure.label } : null,
     bedrooms: [...new Set(beds)],
@@ -103,7 +112,8 @@ export function checkLineAgainstFacts(line: string, f: AdFacts): FactProblem[] {
   for (const h of bannedClaimHits(text)) out.push({ rule: h.id, detail: `It makes ${h.what}.` });
   // The company name and the area may carry digits of their own ("Flat 9 Lets", "NG7"): they are not claims.
   let scan = text;
-  for (const own of [f.company, ...f.areas]) if (own) scan = scan.split(own).join(' ');
+  // Longest first, so "Lenton, Nottingham" goes before "Lenton".
+  for (const own of [f.company, ...(f.coverage ?? []), ...f.areas].filter(Boolean).sort((a, b) => b.length - a.length)) scan = scan.split(own).join(' ');
   // The labelled example sentence may carry its own numbers, and only inside its label.
   const labelled = f.figure !== null && FIGURE_LABEL_RE.test(scan);
   if (labelled && f.figure) scan = scan.replace(FIGURE_LABEL_RE, ' ');

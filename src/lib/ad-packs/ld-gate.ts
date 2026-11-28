@@ -11,12 +11,15 @@
  *                per channel colour histogram and a small grey thumbnail). Run where the pictures exist: the render
  *                step (mergeLdPictureChecks), not at generation (the videos are made afterwards)
  *   ld_facts     every copy, on-screen and spoken line passes the customer's facts list (facts.ts)
- *   ld_offer     every primary text names the audience, the area, "free" and "report" in its first 125 characters,
- *                with no question mark in its first sentence, and says "you stay the owner"
+ *   ld_offer     every primary text names the audience, the coverage, "free" and "report" in its first 125
+ *                characters, with no question mark in its first sentence, and says "you stay the owner". The coverage
+ *                (Phase 3) is the word "UK" for a nationwide pack, else the first chosen area (coverage.ts
+ *                namesCoverage); without a coverage, the pack's one area as before
  *
  * SAME AREA (55c A5): chooseLook picks the base (cream or white) and the frame-one wording (a or b) so the pack never
  * starts like the latest pack of ANOTHER customer with the same main area. It is free: no new voice, no new report,
- * and it never uses up the customer's round.
+ * and it never uses up the customer's round. Phase 3: "the same main area" is keyed by coverage.ts lookKey: every
+ * nationwide pack shares one pool (UK_LOOK_KEY), and an areas pack is keyed by its first chosen area's figure key.
  *
  * Pure: no network, no database, no server-only.
  */
@@ -25,6 +28,7 @@ import { isAdFormat, type AdFormat } from './concepts.ts';
 import { checkLineAgainstFacts, type AdFacts } from './facts.ts';
 import { CTA_LINE, LOOK_BASES, type Look, type HookVariant } from './ld-angles.ts';
 import { firstSentence, AD_LIMITS } from './limits.ts';
+import { namesCoverage, type Coverage } from './coverage.ts';
 
 export const LD_CHECK_IDS = ['ld_format', 'ld_message', 'ld_picture', 'ld_facts', 'ld_offer'] as const;
 export type LdCheckId = (typeof LD_CHECK_IDS)[number];
@@ -59,8 +63,10 @@ export type LdGateAd = {
 export type LdGateInput = {
   ads: LdGateAd[];
   facts: AdFacts;
-  /** The pack's main area (the offer check looks for it). */
+  /** The pack's main area (the offer check looks for it when there is no coverage). */
   areaLabel: string;
+  /** Phase 3: the pack's coverage. When set, the offer check looks for "UK" or the first chosen area instead. */
+  coverage?: Coverage;
   /** Run the picture check (only when every ad has its picture stats). */
   pictures?: boolean;
 };
@@ -192,13 +198,15 @@ export function ldGateChecks(input: LdGateInput): LdFailure[] {
 
   // Offer first.
   const area = String(input.areaLabel ?? '').trim().toLowerCase();
+  const coverage = input.coverage;
+  const namesWhere = (text: string): boolean => (coverage ? namesCoverage(text, coverage) : !area || text.includes(area));
   for (const a of ads) {
     a.texts.primary.forEach((t, i) => {
       const where = `ad ${a.angle} primary text ${i + 1}`;
       const head = String(t ?? '').slice(0, AD_LIMITS.primary.visible).toLowerCase();
       const missing: string[] = [];
       if (!/\b(?:landlords?|homeowners?)\b/.test(head)) missing.push('who it is for');
-      if (area && !head.includes(area)) missing.push('the area');
+      if (!namesWhere(head)) missing.push(coverage?.mode === 'uk' ? 'the UK' : 'the area');
       if (!/\bfree\b/.test(head)) missing.push('"free"');
       if (!/\breport\b/.test(head)) missing.push('"report"');
       if (missing.length > 0) fail('ld_offer', 'offer_late', where, `The first lines do not say ${missing.join(', ')}.`);
@@ -206,7 +214,7 @@ export function ldGateChecks(input: LdGateInput): LdFailure[] {
       if (!/\byou stay the owner\b/i.test(String(t ?? ''))) fail('ld_offer', 'owner_missing', where, 'It does not say you stay the owner.');
     });
     const frameOne = String(a.screenLines[0] ?? '').toLowerCase();
-    if (!/\bfree\b/.test(frameOne) || !/\breport\b/.test(frameOne) || (area && !frameOne.includes(area))) fail('ld_offer', 'frame_one', `ad ${a.angle} frame one`, 'Frame one must name the area and the free report.');
+    if (!/\bfree\b/.test(frameOne) || !/\breport\b/.test(frameOne) || !namesWhere(frameOne)) fail('ld_offer', 'frame_one', `ad ${a.angle} frame one`, 'Frame one must name the area and the free report.');
     const last = a.screenLines[a.screenLines.length - 1];
     if (norm(last ?? '') !== CTA_NORM) fail('ld_offer', 'cta_last', `ad ${a.angle} last frame`, `The last frame must say "${CTA_LINE}".`);
     if (a.script && a.script.length > 0) {

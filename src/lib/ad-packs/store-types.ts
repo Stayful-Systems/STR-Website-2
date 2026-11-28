@@ -234,7 +234,8 @@ export interface AdPackStore {
   readSettings(): Promise<AdPackSettings>;
   /**
    * Batch 55 step 5 (55c A5, same area): the looks of the latest version of every OTHER owner's lead database pack whose
-   * area is `areaKey` (nothing else about those packs). Optional: a store without it reads as "nobody else here".
+   * area is `areaKey` (nothing else about those packs). Phase 3: `areaKey` is coverage.ts lookKey, so UK_LOOK_KEY reads
+   * every other nationwide pack, and an area key the packs of that area that are not nationwide. Optional: a store without it reads as "nobody else here".
    */
   otherLooksInArea?(ownerId: string, areaKey: string): Promise<Look[]>;
   /**

@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { UK_LOOK_KEY } from './coverage.ts';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { DEFAULT_AD_PACK_SETTINGS, AD_PACK_KEYS, parseAdPackSettings, type AdPackSettings } from './settings.ts';
 import { AD_COLUMNS, adInsertRow, PACK_COLUMN_OF, PACK_COLUMNS, parseFiles, parseTexts, RUN_COLUMNS, sortAds, toAdRow, toPackRow, toRunRow } from './rows.ts';
@@ -240,7 +241,10 @@ export function createLiveStore(): AdPackStore {
     async otherLooksInArea(ownerId, areaKey) {
       // Batch 55 step 5 (55c A5): only the look of each other owner's current lead database version in this area, nothing else.
       if (!UUID.test(ownerId) || typeof areaKey !== 'string' || areaKey === '') return [];
-      const { data: packs, error } = await admin().from('ad_packs').select('id, version').eq('route', 'leaddb').eq('area_key', areaKey).neq('owner_id', ownerId).limit(50);
+      // Phase 3 (coverage.ts lookKey): UK_LOOK_KEY is the pool of every nationwide pack; an area key is the packs that start
+      // from that area and are not nationwide (coverage null, a pack made before Phase 3, counts as that area's).
+      const base = admin().from('ad_packs').select('id, version').eq('route', 'leaddb').neq('owner_id', ownerId);
+      const { data: packs, error } = await (areaKey === UK_LOOK_KEY ? base.eq('coverage', 'uk') : base.eq('area_key', areaKey).or('coverage.is.null,coverage.eq.areas')).limit(50);
       if (error) {
         console.error('[ad-packs] area looks read failed:', error.code ?? 'error');
         return [];

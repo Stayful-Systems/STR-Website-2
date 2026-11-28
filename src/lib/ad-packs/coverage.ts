@@ -149,17 +149,16 @@ export function manageSentence(company: string, c: Coverage, opts: { short?: boo
   return `${who} manages short lets ${where}.`;
 }
 
-/** The short headline audience for `who` ('landlords' | 'homeowners'), as candidates longest first (the caller fits one in 40). */
-export function audienceCandidates(c: Coverage, who: 'landlords' | 'homeowners'): string[] {
-  if (c.mode === 'uk') return [`UK ${who}`];
+/** The place names of a headline, as candidates longest first (the caller fits one in 40): "Leeds and York", "Leeds, York and more", "Leeds and more", "Leeds", "your area". */
+export function placeCandidates(c: Coverage): string[] {
+  if (c.mode === 'uk') return ['the UK'];
   const names = spokenNames(c);
-  if (names.length === 0) return [`local ${who}`];
   const out: string[] = [];
-  if (names.length <= 2) out.push(`${who} in ${joinNatural(names)}`);
-  if (names.length >= 2) out.push(`${who} in ${names.slice(0, 2).join(', ')} and more`);
-  if (names.length >= 2) out.push(`${who} in ${names[0]} and more`);
-  if (names.length === 1) out.push(`${who} in ${names[0]}`);
-  out.push(`local ${who}`);
+  if (names.length >= 1 && names.length <= 2) out.push(joinNatural(names));
+  if (names.length >= 3) out.push(`${names.slice(0, 2).join(', ')} and more`);
+  if (names.length >= 2) out.push(`${names[0]} and more`);
+  if (names.length >= 1) out.push(names[0]);
+  out.push('your area');
   return out;
 }
 

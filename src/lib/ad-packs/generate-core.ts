@@ -60,6 +60,7 @@ import { buildFigure, type Figure, type FigureAgg } from './figures.ts';
 import { factsFor } from './facts.ts';
 import { DEFAULT_LOOK, ldFallbackCards, renderLdTexts, type Look } from './ld-angles.ts';
 import { chooseLook } from './ld-gate.ts';
+import { coverageColumns, coverageOfPack, lookKey, makeCoverage, type Coverage } from './coverage.ts';
 import { AD_ROUTES, type AdRoute } from './eligibility.ts';
 import { adLink, adName } from './links.ts';
 import { isRetryableRenderCode, type AdVideo, type RenderKind, type RenderRequeue, type RenderRow, type RenderState } from './render-store.ts';
@@ -222,6 +223,12 @@ export type GenerateInput = {
   sitePath?: string;
   /** The operator chose to run the ads with their name in type only (no logo). */
   typeOnly?: boolean;
+  /**
+   * Batch 55 step 5 (Phase 3), the lead database route only: where the customer finds landlords (coverage.ts). 'uk' or
+   * 1 to 10 area names; refused on the Academy route. Absent: the pack's stored coverage, else the one figure area
+   * (the Phase 2 wording). `areaKey` stays the area the example figure comes from.
+   */
+  coverage?: Coverage;
   /**
    * The voiceover (38b). Default DEFAULT_VOICE_KEY. Used on the first generation only: a regenerate keeps the pack's
    * stored voice (an unknown key is invalid_input either way). changeVoice is how the voice changes afterwards.
@@ -512,10 +519,16 @@ function validate(req: GenerateRequest): boolean {
   if (i.bedrooms !== undefined && i.bedrooms !== null && !(Number.isInteger(i.bedrooms) && i.bedrooms >= 0 && i.bedrooms <= 10)) return false;
   if (i.route === 'leaddb') {
     if (typeof i.sitePath !== 'string' || !SITE_PATH_RE.test(i.sitePath)) return false;
-  } else if (i.sitePath !== undefined) {
+    if (i.coverage !== undefined && makeCoverage(i.coverage?.mode, i.coverage?.areas) === null) return false;
+  } else if (i.sitePath !== undefined || i.coverage !== undefined) {
     return false;
   }
   return true;
+}
+
+/** Phase 3: the coverage a lead database pack's copy says: the input's, else the one figure area (Phase 2 wording). */
+function coverageFor(input: GenerateInput, areaLabel: string | null | undefined): Coverage {
+  return input.coverage ?? coverageOfPack({ coverage: null, areaLabel: areaLabel ?? null });
 }
 
 /** Batch 55 step 5: the bedroom preference handed to areaFigureSource, on the lead database route only (empty otherwise). */
@@ -557,7 +570,7 @@ function planAds(a: { input: GenerateInput; source: AreaSource; figure: Figure |
     if (ld) {
       // Batch 55 step 5 (Phase 2): the lead database copy (ld-angles.ts). The cards are the type-only fallback (3a, 17)
       // until the example report's pages replace them; 5b and 17 are videos with a voiceover.
-      const r = renderLdTexts({ angle, brand: { company: brand.company, area: brand.area, feePct: brand.feePct }, figure: a.figure, look: a.look ?? DEFAULT_LOOK });
+      const r = renderLdTexts({ angle, brand: { company: brand.company, area: brand.area, feePct: brand.feePct, coverage: coverageFor(a.input, a.source.areaLabel) }, figure: a.figure, look: a.look ?? DEFAULT_LOOK });
       texts = { primary: r.primary, headlines: r.headlines, descriptions: r.descriptions, ld: { screenLines: r.screenLines, look: a.look ?? DEFAULT_LOOK, ...(r.script ? { scriptLines: r.script } : {}) } };
       if (r.script) texts.script = r.script.join('\n\n');
       if (angle !== '5b') {
@@ -631,6 +644,7 @@ function ldGateInputOf(a: { input: GenerateInput; source: AreaSource; figure: Fi
   const company = a.input.brand.company.trim();
   const areas = [a.source.areaLabel, ...(a.input.brand.areas ?? [])];
   const bedrooms = typeof a.input.bedrooms === 'number' ? a.input.bedrooms : a.source.bedrooms;
+  const coverage = coverageFor(a.input, a.source.areaLabel);
   return {
     ads: a.planned.map((p) => ({
       angle: p.angle,
@@ -639,8 +653,9 @@ function ldGateInputOf(a: { input: GenerateInput; source: AreaSource; figure: Fi
       screenLines: p.texts.ld?.screenLines ?? [],
       script: p.texts.ld?.scriptLines ?? null,
     })),
-    facts: factsFor({ company, areas, feePct: a.input.brand.feePct ?? null, figure: a.figure, bedrooms }),
+    facts: factsFor({ company, areas, feePct: a.input.brand.feePct ?? null, figure: a.figure, bedrooms, coverage }),
     areaLabel: a.source.areaLabel,
+    coverage,
   };
 }
 
@@ -694,6 +709,8 @@ export type DryPlan = {
   brandHash: string;
   areaKey: string;
   areaLabel: string;
+  /** Phase 3: the lead database route only, the coverage the ads say. */
+  coverage?: Coverage;
   bedrooms: number;
   fellBack: boolean;
   figure: Figure | null;
@@ -850,7 +867,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
    * ad_pack_max_raw_pence like every generation.
    */
   async function leadDbEstimate(settings: AdPackSettings, input: GenerateInput, source: AreaSource | null, figure: Figure | null, voiceKey: VoiceKey): Promise<number> {
-    const brand = { company: input.brand.company.trim(), area: source?.areaLabel ?? input.areaKey, feePct: input.brand.feePct ?? null };
+    const brand = { company: input.brand.company.trim(), area: source?.areaLabel ?? input.areaKey, feePct: input.brand.feePct ?? null, coverage: coverageFor(input, source?.areaLabel ?? input.areaKey) };
     // Without an example report queue (deps.exampleReports) nothing but the 5b video is made (the fallback look), so
     // only that is priced; with it, the report, its picture sandbox and the loupe video (17) as well.
     const angles = deps.exampleReports ? (['5b', '17'] as const) : (['5b'] as const);
@@ -917,7 +934,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
 
   async function generatePack(req: GenerateRequest): Promise<GenerateResult> {
     if (!validate(req)) return fail('invalid_input');
-    const { ownerId, by, input } = req;
+    const { ownerId, by } = req;
+    let input = req.input;
     const dry = req.dry === true;
     const now = deps.now();
     let held: PackRow | null = null;
@@ -931,6 +949,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
       const pack = await store.getPack(ownerId);
       // A pack keeps the route it was made on: the ads already running carry its links.
       if (pack && pack.route !== route) return fail('invalid_input', pack.id);
+      // Phase 3: a lead database regenerate that sends no coverage keeps the pack's own (an admin run, for one).
+      if (route === 'leaddb' && input.coverage === undefined && pack && pack.coverage !== null) input = { ...input, coverage: coverageOfPack(pack) };
       const settings = await store.readSettings();
       // The market snapshot is cached and costs nothing to read (no paid lookup runs here), so it is resolved first: the brand hash uses the area the pack will STORE (after
       // a fall-back from a district to its postcode area), so asking for the same district again is not a "brand change".
@@ -984,7 +1004,9 @@ export function createAdPackEngine(deps: GenerateDeps) {
 
       // Batch 55 step 5 (55c A5, same area): the base and frame one, chosen so the pack never starts like another
       // customer's latest pack in the same main area. Free: no new voice, no new report, never a round.
-      const look: Look | undefined = route === 'leaddb' ? chooseLook(store.otherLooksInArea ? await store.otherLooksInArea(ownerId, source.areaKey) : []).look : undefined;
+      // Phase 3: keyed by coverage.ts lookKey (every nationwide pack shares one pool; an areas pack its first area's key).
+      const look: Look | undefined =
+        route === 'leaddb' ? chooseLook(store.otherLooksInArea ? await store.otherLooksInArea(ownerId, lookKey(coverageFor(input, source.areaLabel), source.areaKey)) : []).look : undefined;
 
       // A dry run: the whole plan, nothing written, nothing rendered, nothing uploaded.
       if (dry) {
@@ -1005,6 +1027,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
             brandHash: hash,
             areaKey: source.areaKey,
             areaLabel: source.areaLabel,
+            ...(route === 'leaddb' ? { coverage: coverageFor(input, source.areaLabel) } : {}),
             bedrooms: source.bedrooms,
             fellBack: source.fellBack,
             figure,
@@ -1105,6 +1128,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
           brandHash: hash,
           areaKey: source.areaKey,
           areaLabel: source.areaLabel,
+          // Phase 3: only on the lead database route, so an Academy pack is written exactly as before.
+          ...(route === 'leaddb' ? coverageColumns(coverageFor(input, source.areaLabel)) : {}),
           bedrooms: source.bedrooms,
           figures: figure ? [figureEntry(figure, source)] : [],
           photos: [...input.photos],
