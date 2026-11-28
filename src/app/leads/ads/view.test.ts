@@ -485,3 +485,17 @@ test('coverage picker: the customer’s own areas first, chosen places left out,
   assert.deepEqual(coverageStart({ mode: 'uk', keys: [], suggested: ['HG', 'ZZ'], options }), { mode: 'uk', keys: [], preset: ['HG'] });
   assert.deepEqual(coverageStart({ mode: 'areas', keys: ['YO', 'ZZ', 'YO'], suggested: [], options }), { mode: 'areas', keys: ['YO'], preset: [] });
 });
+
+test('brand problems: the lead database route says what to set and where, never "get in touch"; the Academy wording is unchanged', async () => {
+  const { BRAND_FIRST_LINK, CALCULATOR_SETTINGS_HREF } = await import('./view.ts');
+  for (const p of ['company', 'colour'] as const) {
+    const ld = brandProblemText(p, 'leaddb');
+    assert.match(ld, /calculator page first/);
+    assert.doesNotMatch(ld, /get in touch/i);
+    assert.equal(brandProblemText(p), brandProblemText(p, 'academy'));
+    assert.match(brandProblemText(p), /get in touch/);
+  }
+  assert.match(brandProblemText('colour', 'leaddb'), /brand colour/);
+  assert.match(brandProblemText('company', 'leaddb'), /company name/);
+  assert.deepEqual({ ...BRAND_FIRST_LINK }, { href: CALCULATOR_SETTINGS_HREF, label: 'Set your branding' });
+});

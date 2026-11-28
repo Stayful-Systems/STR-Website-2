@@ -810,3 +810,14 @@ test('generate, Academy route: coverage sent by a form is ignored and nothing ne
   assert.deepEqual(pack?.coverageAreas, []);
   assert.ok(!s.h.store.writes.some((w) => w.includes('coverage')), 'the Academy update patch is unchanged');
 });
+
+test('generate, lead database route: a missing colour or company name points to their calculator page, never "get in touch"', async () => {
+  const s = setup();
+  s.eligible({ ...LEADDB, website: { id: 'calc-site-1', settings: { ...SETTINGS, brandColour: null } } });
+  const colour = (await generateOp(s.deps, input)).error ?? '';
+  assert.match(colour, /brand colour on your calculator page first/);
+  assert.doesNotMatch(colour, /get in touch/i);
+  s.eligible({ ...LEADDB, website: { id: 'calc-site-1', settings: { ...SETTINGS, companyName: ' ' } } });
+  assert.match((await generateOp(s.deps, input)).error ?? '', /company name on your calculator page first/);
+  assert.equal(s.calls.generate, 0);
+});
