@@ -125,9 +125,12 @@ async function colourFromUrl(src: string): Promise<string | null> {
 const isSwatch = (c: string) => BRAND_SWATCHES.some((s) => s.toUpperCase() === c.toUpperCase());
 const validHex = (c: string | null | undefined): c is string => typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c);
 
-/** The eight swatches, "Custom" and the picker. `onPick` says the member chose it by hand. */
+/**
+ * The eight swatches, "Custom" and the picker. `onPick` says the member chose it by hand. An empty value (no colour
+ * yet: the lead database ads screen's brand card) shows nothing chosen; "Custom" then starts from the first swatch.
+ */
 export function ColourPicker({ value, onPick }: { value: string; onPick: (hex: string) => void }) {
-  const [custom, setCustom] = useState(!isSwatch(value));
+  const [custom, setCustom] = useState(value !== "" && !isSwatch(value));
   return (
     <fieldset>
       <legend className={labelCls}>Brand colour</legend>
@@ -146,7 +149,14 @@ export function ColourPicker({ value, onPick }: { value: string; onPick: (hex: s
             style={{ background: c }}
           />
         ))}
-        <button type="button" aria-pressed={custom} onClick={() => setCustom(true)} className={`h-9 rounded-full border px-3 text-xs font-medium ${custom ? "border-foreground" : "border-border"}`}>
+        <button
+          type="button"
+          aria-pressed={custom}
+          onClick={() => {
+            setCustom(true);
+            if (!validHex(value)) onPick(BRAND_SWATCHES[0]);
+          }}
+          className={`h-9 rounded-full border px-3 text-xs font-medium ${custom ? "border-foreground" : "border-border"}`}>
           Custom
         </button>
       </div>

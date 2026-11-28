@@ -50,7 +50,7 @@ function visibleStrings(src: string): string[] {
   return out.filter((s) => s !== '');
 }
 
-const FILES = ['page.tsx', 'StartForm.tsx', 'CoveragePicker.tsx', 'VoicePicker.tsx', 'VideoBlock.tsx', 'Screens.tsx', 'Gallery.tsx', 'Downloads.tsx', 'ui.tsx', 'EntryCard.tsx', 'guide/page.tsx', 'guide/GuideWizard.tsx', 'view.ts', 'ops.ts', 'state.ts'];
+const FILES = ['page.tsx', 'StartForm.tsx', 'BrandCard.tsx', 'CoveragePicker.tsx', 'VoicePicker.tsx', 'VideoBlock.tsx', 'Screens.tsx', 'Gallery.tsx', 'Downloads.tsx', 'ui.tsx', 'EntryCard.tsx', 'guide/page.tsx', 'guide/GuideWizard.tsx', 'view.ts', 'ops.ts', 'state.ts'];
 
 test('no component, page or view model writes an internal word in a sentence', () => {
   let scanned = 0;
@@ -110,7 +110,7 @@ const looksLikeClasses = (s: string) => s.split(/\s+/).filter((t) => /^(?:[a-z0-
 test('the reading level stays low: no sentence on the screens is long', () => {
   // A sentence of more than 30 words is hard to read on a phone.
   const long: string[] = [];
-  for (const f of ['view.ts', 'Screens.tsx', 'StartForm.tsx', 'VideoBlock.tsx', 'Gallery.tsx', 'guide/GuideWizard.tsx']) {
+  for (const f of ['view.ts', 'Screens.tsx', 'StartForm.tsx', 'BrandCard.tsx', 'VideoBlock.tsx', 'Gallery.tsx', 'guide/GuideWizard.tsx']) {
     for (const s of visibleStrings(read(`./${f}`))) {
       if (looksLikeClasses(s)) continue;
       for (const sentence of s.split(/[.!?]\s+/)) if (sentence.trim().split(/\s+/).length > 30) long.push(`${f}: ${sentence}`);
@@ -119,15 +119,13 @@ test('the reading level stays low: no sentence on the screens is long', () => {
   assert.deepEqual(long, []);
 });
 
-test('Batch 55 step 5 (A7): the concept lines, the calculator hint and the gate’s reasons are plain', async () => {
+test('Batch 55 step 5 (A7): the concept lines, the logo hint and the gate’s reasons are plain', async () => {
   const { conceptLine, profileHint, LD_CHECK_PLAIN } = await import('./view.ts');
   const { LD_CHECK_IDS } = await import('../../../lib/ad-packs/ld-gate.ts');
   const said: string[] = [];
   for (const a of ['5b', '3a', '17'] as const) said.push(conceptLine(a));
-  for (const p of [{ logoUrl: null, areas: [] }, { logoUrl: null, areas: ['Leeds'] }, { logoUrl: 'https://x.test/l.png', areas: [] }]) {
-    const h = profileHint(p)!;
-    said.push(h.text, h.label ?? '');
-  }
+  const h = profileHint({ logoUrl: null })!;
+  said.push(h.text);
   for (const id of LD_CHECK_IDS) said.push(LD_CHECK_PLAIN[id]);
   const problem = problemView({ failures: LD_CHECK_IDS.map((check) => ({ check })) });
   said.push(...problem.lines);
@@ -136,4 +134,12 @@ test('Batch 55 step 5 (A7): the concept lines, the calculator hint and the gate�
     assert.doesNotMatch(s, BANNED, s);
   }
   assert.equal(problem.lines.length, LD_CHECK_IDS.length, 'every gate reason has its own plain line');
+});
+
+test('Batch 55: the brand card says nothing about a website, a calculator, settings or a page', () => {
+  const said = visibleStrings(read('./BrandCard.tsx'));
+  assert.ok(said.length > 0);
+  for (const s of said) assert.doesNotMatch(s, /website|calculator|settings|\bpages?\b/i, s);
+  // Its words come from view.ts, which view.test.ts checks one by one.
+  assert.match(read('./BrandCard.tsx'), /BRAND_NAME_MISSING/);
 });

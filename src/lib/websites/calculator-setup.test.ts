@@ -84,6 +84,7 @@ const dir = '../../app/leads/setup/website/';
 const page = code(read(`${dir}page.tsx`));
 const actions = code(read(`${dir}actions.ts`));
 const calcActions = code(read(`${dir}calculator-actions.ts`));
+const brandServer = code(read('./calculator-brand-server.ts'));
 const context = code(read(`${dir}context.ts`));
 const ui = code(read(`${dir}CalculatorBrand.tsx`));
 
@@ -137,13 +138,17 @@ test('the calculator actions are owner-only, validate with the setup rules, and 
   assert.match(calcActions, /validateCompany\(/);
   assert.match(calcActions, /validateAreas\(/);
   assert.match(calcActions, /validateContact\(/);
-  // The gate sits between the validators and the save.
-  assert.ok(calcActions.indexOf('settingsPatchFor(actor.site.mode') < calcActions.indexOf('saveSettings(actor.userId, gate.patch)'));
+  // The gate sits between the validators and the save: both writes go through the shared helper (also used by /leads/ads).
+  assert.ok(calcActions.indexOf('validateContact(') < calcActions.indexOf('saveCalculatorPatch(actor,'));
+  assert.match(calcActions, /storeCalculatorLogo\(actor, bytes\)/);
+  assert.ok(brandServer.indexOf('calculatorSavePlan(actor.site.mode') < brandServer.indexOf('markCalculatorFieldsEdited(actor.userId, plan.edited)'));
+  assert.ok(brandServer.indexOf('markCalculatorFieldsEdited(actor.userId, plan.edited)') < brandServer.indexOf('saveSettings(actor.userId, plan.patch)'), 'edited fields are marked before the settings are written');
   // No page copy, approval, address or status write; no id from the form; no lead or personal detail logged.
   assert.doesNotMatch(calcActions, /savePages|setStatus|goLive|generateSiteCopy|rollbackToPreview|saveChecks|chooseName|createAdminClient|from\('websites'\)/);
   assert.doesNotMatch(calcActions, /formData\.get\('(?:id|websiteId|website_id|funnelId|funnel_id|siteId|userId|user_id|ownerId|owner_id|slug|status)'\)/);
   assert.doesNotMatch(calcActions, /console\.|recordActivity/);
-  assert.match(calcActions, /uploadLogo\(\{ userId: actor\.userId, funnelId: actor\.site\.funnelId, bytes \}\)/);
+  assert.match(brandServer, /uploadLogo\(\{ userId: actor\.userId, funnelId: actor\.site\.funnelId, bytes \}\)/);
+  assert.doesNotMatch(brandServer, /console\.|recordActivity|formData/);
   assert.match(calcActions, /formData\.get\('kind'\) === 'photo'/);
 });
 
@@ -152,4 +157,20 @@ test('the other website flows refuse a calculator site through websiteActor', ()
     assert.match(code(read(f)), /await websiteActor\(\)/, f);
   }
   assert.match(code(read('../../app/leads/website/edit/edit-actions.ts')), /calculator_site:/);
+});
+
+test('the shared brand save plan: only calculator fields, and only really changed profile fields are marked edited', async () => {
+  const { calculatorSavePlan } = await import('./calculator-brand.ts');
+  const before = { logoUrl: 'https://ours.test/l.png', brandColour: '#1f4e79', areas: ['Leeds'], managementFeePct: 15 };
+  const same = calculatorSavePlan('calculator', before, { companyName: 'Acme Lets', brandColour: '#1F4E79' });
+  assert.ok(same.ok);
+  if (same.ok) {
+    assert.deepEqual(same.patch, { companyName: 'Acme Lets', brandColour: '#1F4E79' });
+    assert.deepEqual(same.edited, [], 'the same colour in other letters is not a change; the company name is never pushed');
+  }
+  const changed = calculatorSavePlan('calculator', before, { companyName: 'Acme Lets', brandColour: '#000000' });
+  assert.ok(changed.ok && changed.edited.join() === 'brandColour');
+  const logo = calculatorSavePlan('calculator', before, { logoUrl: 'https://ours.test/new.png' });
+  assert.ok(logo.ok && logo.edited.join() === 'logoUrl');
+  assert.equal(calculatorSavePlan('calculator', before, { aboutText: 'x' } as never).ok, false, 'a calculator refuses any other field');
 });

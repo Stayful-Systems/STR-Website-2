@@ -47,6 +47,7 @@ const SCREENS: Record<string, Entry> = {
   "cannot-use": { label: "Cannot use yet (no address)", render: () => <CannotUseScreen view={eligibilityView(["no_domain"])} /> },
   "cannot-use-owner": { label: "Cannot use yet (not the owner)", render: () => <CannotUseScreen view={eligibilityView(["not_owner"])} /> },
   start: { label: "Start (website has no logo)", render: () => <StartScreen failed={false}><StartForm mode="start" packId={null} areas={AREAS} initialAreaKey="NG7" initialAreaPreview={AREA_PREVIEW} initialPhotos={[]} hasLogo={false} problems={[]} /></StartScreen> },
+  "start-leaddb": { label: "Start (lead database customer, no colour yet)", render: () => <StartScreen failed={false}><StartForm mode="start" packId={null} areas={AREAS} initialAreaKey="NG7" initialAreaPreview={AREA_PREVIEW} initialPhotos={[]} hasLogo={false} problems={[]} brand={{ companyName: "Brightstone Stays", brandColour: null, logoUrl: null }} /></StartScreen> },
   "start-logo": { label: "Start (website has a logo)", render: () => <StartScreen failed={false}><StartForm mode="start" packId={null} areas={AREAS} initialAreaKey={null} initialAreaPreview={null} initialPhotos={[]} hasLogo problems={[]} /></StartScreen> },
   "start-failed": { label: "Start (last try failed)", render: () => <StartScreen failed><StartForm mode="start" packId="pack-1" areas={AREAS} initialAreaKey="NG7" initialAreaPreview={AREA_PREVIEW} initialPhotos={[]} hasLogo problems={[]} failedBefore /></StartScreen> },
   working: { label: "Pictures being made", render: () => <WorkingScreen /> },

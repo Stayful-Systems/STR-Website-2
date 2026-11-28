@@ -13,7 +13,9 @@ import { approvePack, changeVoice, generatePack, listPackForOwner, retryVideo } 
 import { createLiveStore, signedDownloadUrl, uploadFile } from '@/lib/ad-packs/store-server';
 import { countUploads, signedPreviewUrl } from '@/lib/ad-packs/files-server';
 import { PHOTO_MAX_BYTES, PHOTO_MESSAGES } from '@/lib/ad-packs/photos';
-import { approveOp, areaPreviewOp, changeVoiceOp, copyOp, downloadOp, generateOp, pollPackOp, retryVideoOp, uploadPhotoOp, videoUrlOp, type AdsDeps, type AdsState, type DownloadState, type PollState, type Session, type UploadState } from './ops';
+import { saveCalculatorPatch, storeCalculatorLogo } from '@/lib/websites/calculator-brand-server';
+import { calculatorActor } from '../setup/website/context';
+import { approveOp, brandLogoOp, BRAND_LOGO_MAX_BYTES, MESSAGES, areaPreviewOp, changeVoiceOp, copyOp, downloadOp, generateOp, pollPackOp, retryVideoOp, uploadPhotoOp, videoUrlOp, type AdsDeps, type AdsState, type DownloadState, type LogoState, type PollState, type Session, type UploadState } from './ops';
 import { ADS_PATH, type AreaPreviewView } from './view';
 
 /**
@@ -56,6 +58,22 @@ function liveDeps(): AdsDeps {
     },
     // Batch 55 step 5 (Phase 3): the place list the lead database start screen offers (cached market snapshot).
     areaOptions: listDistricts,
+    // Batch 55 (brand on the ads screen): the brand card writes through the calculator's own save and upload path, on
+    // the signed-in owner's own calculator site only (calculatorActor), so changed fields are marked edited first.
+    saveBrand: async (ownerId, brand) => {
+      const r = await calculatorActor();
+      if (!r.ok || r.actor.userId !== ownerId) return { ok: false };
+      const out = await saveCalculatorPatch(r.actor, { companyName: brand.companyName, brandColour: brand.brandColour });
+      if (out.ok) revalidatePath('/leads/setup/website', 'layout');
+      return { ok: out.ok };
+    },
+    uploadBrandLogo: async (ownerId, bytes) => {
+      const r = await calculatorActor();
+      if (!r.ok || r.actor.userId !== ownerId) return { ok: false };
+      const out = await storeCalculatorLogo(r.actor, bytes);
+      if (out.ok) revalidatePath('/leads/setup/website', 'layout');
+      return out.ok ? { ok: true, url: out.url } : { ok: false };
+    },
   };
 }
 
@@ -73,6 +91,9 @@ export async function generatePackAction(_prev: AdsState, formData: FormData): P
     // Batch 55 step 5 (Phase 3), the lead database route: anywhere in the UK, or the chosen places (ops.ts checks them).
     coverage: text(formData.get('coverage')),
     coverageAreas: formData.getAll('coverageArea').filter((v): v is string => typeof v === 'string'),
+    // Batch 55: the brand card's name and colour (lead database route only; ops.ts checks them, the Academy ignores them).
+    ...(formData.has('companyName') ? { companyName: text(formData.get('companyName')) } : {}),
+    ...(formData.has('brandColour') ? { brandColour: text(formData.get('brandColour')) } : {}),
   });
   // Whether it worked or not the pack may have moved (made, failed, checks failed): the page reads it again.
   revalidatePath(ADS_PATH);
@@ -129,6 +150,16 @@ export async function uploadPhotoAction(formData: FormData): Promise<UploadState
   if (!(file instanceof File)) return { ok: false, error: PHOTO_MESSAGES.type };
   if (file.size > PHOTO_MAX_BYTES) return { ok: false, error: PHOTO_MESSAGES.too_big };
   return uploadPhotoOp(liveDeps(), { bytes: new Uint8Array(await file.arrayBuffer()), declaredType: file.type || null });
+}
+
+/** Batch 55: the brand card's logo (lead database route only), PNG or JPEG under 1 MB, saved as the owner's own logo. */
+export async function uploadBrandLogoAction(formData: FormData): Promise<LogoState> {
+  const file = formData.get('logo');
+  if (!(file instanceof File)) return { ok: false, error: MESSAGES.logo_failed };
+  if (file.size > BRAND_LOGO_MAX_BYTES) return { ok: false, error: MESSAGES.logo_too_big };
+  const out = await brandLogoOp(liveDeps(), { bytes: new Uint8Array(await file.arrayBuffer()) });
+  if (out.ok) revalidatePath(ADS_PATH);
+  return out;
 }
 
 /** The bedroom size and area an ad will use, for the area pick list. */

@@ -21,6 +21,7 @@ const downloads = code(read('./Downloads.tsx'));
 const wizard = code(read('./guide/GuideWizard.tsx'));
 const live = code(read('./LiveActions.tsx'));
 const context = code(read('./ActionsContext.tsx'));
+const brandCard = code(read('./BrandCard.tsx'));
 
 test('actions.ts is a server-actions file that only exports async functions, each a thin wrapper over ops.ts', () => {
   assert.match(read('./actions.ts'), /^'use server';/);
@@ -28,8 +29,9 @@ test('actions.ts is a server-actions file that only exports async functions, eac
   assert.ok(exports.length >= 6);
   assert.ok(exports.every((e) => e === 'async'), `only async functions are exported, got ${exports.join(', ')}`);
   for (const op of ['generateOp', 'approveOp', 'downloadOp', 'copyOp', 'uploadPhotoOp', 'areaPreviewOp', 'changeVoiceOp', 'retryVideoOp', 'pollPackOp', 'videoUrlOp']) assert.match(actions, new RegExp(`${op}\\(liveDeps\\(\\)`), op);
-  // The owner is the session's: no action reads an owner, user or brand from the form.
-  assert.doesNotMatch(actions, /formData\.get\('(owner|user|member|brand|domain|company|website)/i);
+  // The owner is the session's: no action reads an owner, user or brand from the form. The one exception (Batch 55) is
+  // the brand card's company name and colour, which ops.ts checks and uses on the lead database route only.
+  assert.doesNotMatch(actions, /formData\.get\('(?!companyName'\)|brandColour'\))(owner|user|member|brand|domain|company|website)/i);
   assert.match(actions, /ownerIdOrNull\(user\)/);
   assert.match(actions, /isAdminEmail\(user\.email\)/);
 });
@@ -193,4 +195,31 @@ test('the new actions keep the rules: the owner is the session’s, and only a p
 test('no new activity kind is added for the video', async () => {
   const { isActivityKind } = await import('../../../lib/activity/kinds.ts');
   for (const k of ['ad_voice_changed', 'ad_video_retried', 'ad_video_ready']) assert.equal(isActivityKind(k), false, k);
+});
+
+// ── Batch 55: the brand is set on the ads screen (lead database route only) ──
+
+test('the brand card: first in the form, name and colour posted with Make my ads, the logo through the context, no tick and no link', () => {
+  assert.match(startForm, /\{p\.brand \? <BrandCard formId=\{p\.mode\} initial=\{p\.brand\} onChange=\{setBrand\} \/> : null\}/);
+  assert.ok(startForm.indexOf('<BrandCard formId') < startForm.indexOf('<CoveragePicker {'), 'the brand card sits above the coverage picker');
+  assert.match(startForm, /const askTick = brand === null && !p\.hasLogo/, 'no tick box for a lead database customer');
+  assert.match(startForm, /!brandReady/, 'Make my ads stays off until the name and colour are there');
+  assert.doesNotMatch(startForm, /problemLink|href=/);
+  assert.match(brandCard, /name="companyName"/);
+  assert.match(brandCard, /name="brandColour"/);
+  assert.match(brandCard, /maxLength=\{80\}/);
+  assert.match(brandCard, /<ColourPicker/);
+  assert.match(brandCard, /useAdsActions\(\)/);
+  assert.match(brandCard, /uploadBrandLogo\(body\)/);
+  assert.doesNotMatch(brandCard, /from "\.\/actions"|href=|console\./);
+  // The page hands the card the stored brand on the lead database route only; the Academy keeps its sentences.
+  assert.match(page, /const brandCard = elig\.route === "leaddb" \?/);
+  assert.match(page, /problems=\{brandCard \? \[\] : problems\.map\(\(pr\) => brandProblemText\(pr\)\)\}/);
+  assert.doesNotMatch(page, /BRAND_FIRST_LINK|problemLink|setup\/website|<Link/);
+  // The live actions save through the calculator's own path, on the owner's own calculator site only.
+  assert.match(actions, /saveCalculatorPatch\(r\.actor,/);
+  assert.match(actions, /storeCalculatorLogo\(r\.actor, bytes\)/);
+  assert.match(actions, /r\.actor\.userId !== ownerId/);
+  assert.match(actions, /brandLogoOp\(liveDeps\(\)/);
+  assert.match(live, /uploadBrandLogo: uploadBrandLogoAction/);
 });

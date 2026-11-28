@@ -6,6 +6,7 @@ import { useAdsActions } from "./ActionsContext";
 import type { AdsState } from "./ops";
 import { VoicePicker } from "./VoicePicker";
 import { CoveragePicker, type CoveragePickerProps } from "./CoveragePicker";
+import { BrandCard, brandCardProblems, type BrandCardValue } from "./BrandCard";
 import { Alert, btnPrimary, btnSecondary, Calm, card, fieldCls, INK, SOFT, StickyBar } from "./ui";
 import { AREA_HINT, AREA_LABEL, AREA_PLACEHOLDER, areaPreviewView, MAKING_ADS_TEXT, NO_LOGO_TEXT, PHOTOS_HELP, PHOTOS_TITLE, REGEN_BUTTON, START_BUTTON, START_BUTTON_AGAIN, VOICE_STEP_HELP, VOICE_STEP_TITLE, type AreaPreviewView } from "./view";
 
@@ -16,6 +17,9 @@ import { AREA_HINT, AREA_LABEL, AREA_PLACEHOLDER, areaPreviewView, MAKING_ADS_TE
  * button sticks to the bottom of a phone. Made again later (under "More options")
  * it asks the same, without the voice. Every rule is enforced in ops.ts; this
  * file only lays the form out.
+ *
+ * Batch 55, the lead database route: the first card is the brand (BrandCard: company name, colour, logo), set right
+ * here; there is no tick box (no logo simply shows the company name) and no link away.
  */
 
 const INITIAL: AdsState = {};
@@ -66,8 +70,11 @@ export interface StartFormProps {
   hasLogo: boolean;
   /** Things the operator cannot fix here, in plain sentences. The button is off while there are any. */
   problems: string[];
-  /** Lead database route: where the operator fixes those problems themselves (their calculator page). */
-  problemLink?: { href: string; label: string } | null;
+  /**
+   * Batch 55, the lead database route only: the brand as stored now, shown in the brand card at the top. Present, the
+   * card's own field messages replace `problems` and the no-logo tick box is never shown.
+   */
+  brand?: { companyName: string; brandColour: string | null; logoUrl: string | null };
   /** A first try that did not work. */
   failedBefore?: boolean;
   /** Making new ads only: why that is not possible right now (shown instead of the button unless the place or photos were changed). */
@@ -93,6 +100,10 @@ export function StartForm(p: StartFormProps) {
   const again = p.mode === "again";
   const [coverageState, setCoverageState] = useState({ ready: true, dirty: false });
   const usesCoverage = p.coverage !== undefined;
+  const [brand, setBrand] = useState<BrandCardValue | null>(p.brand ? { companyName: p.brand.companyName, brandColour: p.brand.brandColour ?? "", logoUrl: p.brand.logoUrl, uploading: false } : null);
+  const brandProblems = brand ? brandCardProblems(brand) : null;
+  const brandReady = brand === null || (!brandProblems?.name && !brandProblems?.colour && !brand.uploading);
+  const brandDirty = brand !== null && p.brand !== undefined && (brand.companyName.trim() !== p.brand.companyName.trim() || brand.brandColour.toLowerCase() !== (p.brand.brandColour ?? "").toLowerCase() || brand.logoUrl !== p.brand.logoUrl);
 
   async function pickArea(next: string) {
     setAreaKey(next);
@@ -141,9 +152,10 @@ export function StartForm(p: StartFormProps) {
     }
   }
 
-  const dirty = (usesCoverage ? coverageState.dirty : areaKey !== (p.initialAreaKey ?? "")) || photos.map((x) => x.ref).join("|") !== p.initialPhotos.map((x) => x.ref).join("|");
+  const dirty = brandDirty || (usesCoverage ? coverageState.dirty : areaKey !== (p.initialAreaKey ?? "")) || photos.map((x) => x.ref).join("|") !== p.initialPhotos.map((x) => x.ref).join("|");
   const hidden = again && (p.blockReason ?? null) !== null && !dirty;
-  const blocked = p.problems.length > 0 || (usesCoverage ? !coverageState.ready : !areaKey || !preview?.ok) || uploading || (!p.hasLogo && !typeOnly);
+  const askTick = brand === null && !p.hasLogo;
+  const blocked = (brand === null && p.problems.length > 0) || !brandReady || (usesCoverage ? !coverageState.ready : !areaKey || !preview?.ok) || uploading || (askTick && !typeOnly);
   const button = pending ? "Making your ads…" : again ? REGEN_BUTTON : p.failedBefore ? START_BUTTON_AGAIN : START_BUTTON;
 
   const submit = (
@@ -159,6 +171,8 @@ export function StartForm(p: StartFormProps) {
     <form action={action} className="space-y-5">
       {p.packId ? <input type="hidden" name="packId" value={p.packId} /> : null}
       {photos.map((x) => <input key={x.ref} type="hidden" name="photoRef" value={x.ref} />)}
+
+      {p.brand ? <BrandCard formId={p.mode} initial={p.brand} onChange={setBrand} /> : null}
 
       {p.coverage ? <CoveragePicker {...p.coverage} formId={p.mode} onState={setCoverageState} /> : (
       <section className={card}>
@@ -212,19 +226,14 @@ export function StartForm(p: StartFormProps) {
         </div>
       </details>
 
-      {!p.hasLogo ? (
+      {askTick ? (
         <label className={`${card} flex min-h-14 cursor-pointer items-start gap-3`}>
           <input type="checkbox" name="typeOnly" checked={typeOnly} onChange={(e) => setTypeOnly(e.target.checked)} className="mt-1 size-6 shrink-0 accent-[#3b5735]" />
           <span className={`text-base leading-relaxed ${INK}`}>{NO_LOGO_TEXT}</span>
         </label>
       ) : null}
 
-      {p.problems.map((t) => <Alert key={t}>{t}</Alert>)}
-      {p.problems.length > 0 && p.problemLink ? (
-        <a href={p.problemLink.href} className={`${btnSecondary} inline-flex w-full items-center justify-center sm:w-auto`}>
-          {p.problemLink.label}
-        </a>
-      ) : null}
+      {brand === null ? p.problems.map((t) => <Alert key={t}>{t}</Alert>) : null}
       {state.error ? <Alert>{state.error}</Alert> : null}
 
       {hidden ? <Calm live={false}>{p.blockReason}</Calm> : again ? <div className="space-y-3">{submit}</div> : <StickyBar>{submit}</StickyBar>}

@@ -2,11 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { LOGO_MAX_BYTES } from '@/lib/funnels/brand';
-import { deleteLogoIfOurs, uploadLogo } from '@/lib/funnels/storage';
-import { changedProfileFields } from '@/lib/leaddb/ad-profile';
-import { markCalculatorFieldsEdited } from '@/lib/leaddb/ad-profile-server';
-import { settingsPatchFor } from '@/lib/websites/calculator-setup';
-import { saveSettings } from '@/lib/websites/store-server';
+import { saveCalculatorPatch, storeCalculatorLogo } from '@/lib/websites/calculator-brand-server';
 import type { WebsiteState } from './actions';
 import { calculatorActor, type CalculatorActor } from './context';
 import { validateAreas, validateCompany, validateContact } from './steps';
@@ -33,7 +29,9 @@ import { validateAreas, validateCompany, validateContact } from './steps';
  * Batch 55 step 5 (55c A1): a save marks each of logo, colour, areas and fee
  * that the customer really CHANGED (websites.settings_edited), before the
  * settings are written, so a later push from the lead database never fills
- * that field again: the customer's own choice always wins.
+ * that field again: the customer's own choice always wins. The writes live in
+ * calculator-brand-server.ts, shared with the lead database ads screen
+ * (/leads/ads), which sets the name, colour and logo too.
  */
 
 const DENIAL = {
@@ -66,11 +64,8 @@ export async function saveCalculatorBrandAction(_prev: WebsiteState, formData: F
   const contact = validateContact({ email: formData.get('email'), phone: formData.get('phone') });
   if (!contact.ok) return { error: contact.error };
 
-  const gate = settingsPatchFor(actor.site.mode, { ...company.value, ...areas.value, ...contact.value });
-  if (!gate.ok) return { error: gate.message };
-  await markCalculatorFieldsEdited(actor.userId, changedProfileFields(actor.site.settings, gate.patch));
-  const saved = await saveSettings(actor.userId, gate.patch);
-  if (!saved.ok) return { error: 'We could not save that just now. Please try again.' };
+  const saved = await saveCalculatorPatch(actor, { ...company.value, ...areas.value, ...contact.value });
+  if (!saved.ok) return { error: saved.message ?? 'We could not save that just now. Please try again.' };
   refresh();
   return { saved: true };
 }
@@ -88,19 +83,9 @@ export async function uploadCalculatorLogoAction(_prev: WebsiteState, formData: 
   if (file.size > LOGO_MAX_BYTES) return { error: `That file is too large. Images have to be under ${Math.round(LOGO_MAX_BYTES / (1024 * 1024))} MB.` };
 
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const result = await uploadLogo({ userId: actor.userId, funnelId: actor.site.funnelId, bytes });
-  if (!result.ok || !result.url) return { error: result.error ?? 'That image could not be uploaded.' };
-
-  const gate = settingsPatchFor(actor.site.mode, { logoUrl: result.url });
-  if (gate.ok) await markCalculatorFieldsEdited(actor.userId, ['logoUrl']);
-  const saved = gate.ok ? await saveSettings(actor.userId, gate.patch) : null;
-  if (!saved || !saved.ok) {
-    // The save failed, so the file just stored is unreferenced: take it out again.
-    await deleteLogoIfOurs(result.url);
-    return { error: 'We could not save that image just now. Please try again.' };
-  }
-  // Only once the new one is safely stored. A URL that was never ours is left alone.
-  await deleteLogoIfOurs(actor.site.settings.logoUrl);
+  // A failed save takes the file just stored out again; the old logo goes only once the new one is safely stored.
+  const result = await storeCalculatorLogo(actor, bytes);
+  if (!result.ok) return { error: result.stage === 'upload' ? (result.error ?? 'That image could not be uploaded.') : 'We could not save that image just now. Please try again.' };
   refresh();
   return { saved: true, url: result.url };
 }

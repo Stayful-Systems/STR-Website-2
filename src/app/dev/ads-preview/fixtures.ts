@@ -137,5 +137,6 @@ export const FAKE_ACTIONS: AdsActions = {
   download: async (_adId, fileName) => ({ ok: true, url: `data:text/plain;charset=utf-8,${encodeURIComponent(`Preview of ${fileName}`)}` }),
   recordCopy: async () => undefined,
   uploadPhoto: async () => ({ ok: false, error: "This is only a preview." }),
+  uploadBrandLogo: async () => ({ ok: false, error: "This is only a preview." }),
   areaPreview: async (areaKey) => areaPreviewView({ areaKey, areaLabel: AREAS.find((a) => a.areaKey === areaKey)?.label ?? areaKey, fellBack: false, bedrooms: 2, samples: 18 }),
 };
