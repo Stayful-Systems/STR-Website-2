@@ -296,3 +296,11 @@ and brief v1 are unchanged. Spec `docs/build/55c-customer-ad-creative.md` in lea
 - **Tests.** Python: `python3 -m unittest discover -s ad-render/tests` (run with `PYTHONDONTWRITEBYTECODE=1`: a `__pycache__`
   under ad-render fails `render-assets.test.ts`).
 - **Knowledge.** Draft `adpack_ld_creative` in `seed.ts` (no figure) and an "Ad creative" line in `service-facts.ts`.
+- **Phase 3: coverage.** A lead database pack covers `ad_packs.coverage = 'uk'` (the start screen's default, "Anywhere in
+  the UK") or `'areas'` with `coverage_areas` (1 to 10 names from the place list, the customer's pushed areas first;
+  `CoveragePicker.tsx`, checked by `chooseCoverage` in `ops.ts`). Null (Academy, older packs) reads as `'areas'` with
+  `[area_label]` (`coverageOfPack`). Wording in `coverage.ts`: the first 125 characters say "across the UK" or up to 3
+  areas ("and nearby areas"); `{manage}` names every area after the offer; frame one and the fifth headline up to 2 then
+  "and more". `area_key`/`area_label` stay the example figure's area (first chosen, else the main area, else
+  `busiestArea`). The look pool keys on `lookKey` (`'uk'`, else the first area's key); the guide's location line comes from
+  `recipeItemsFor` (UK, or each town with a 25 mile radius; the Academy keeps `RECIPE_ITEMS`). Draft `adpack_ld_coverage`.
