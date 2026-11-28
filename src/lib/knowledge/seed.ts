@@ -1204,6 +1204,21 @@ export const SEED: readonly SeedEntry[] = [
     answer: 'We bring your logo, brand colour, areas and fee across from your lead database account when your calculator is set up and whenever you press Make my ads, but only into parts that are still empty or still hold what came across last time. Anything you change on the brand screen stays as you set it. If we could not read your logo, your company name is shown instead; you can upload one on the brand screen. Your ads cover the whole UK unless you choose areas; their example figure uses your main area or first chosen area, at your smallest bedroom size when there is enough data.',
   },
   {
+    slug: 'adpack_ld_brand_first',
+    from: 'Batch 55, lead database ad route (Make my ads needs a company name and a brand colour on the calculator; when either is missing the ads screen says which and links to the calculator page, where the customer sets it themselves)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Why can I not make my Facebook ads yet?',
+    variants: [
+      'It says to choose a brand colour before making my ads',
+      'Where do I set my brand colour for my ads?',
+      'Where do I add my company name for my ads?',
+      'The Make my ads button is greyed out',
+    ],
+    answer: 'Your ads are made in your own brand, so they need your company name and a brand colour first. If either is missing, the ads screen tells you which one. Press Set your branding, add it on your calculator page, then come back and press Make my ads. A logo is optional: without one, your company name is shown instead.',
+  },
+  {
     slug: 'adpack_ld_coverage',
     from: 'Batch 55 step 5 (Phase 3), lead database ad route (the start screen asks where to find landlords: Anywhere in the UK, picked to begin with, or Choose areas, several towns or areas from the place list with the customer’s own areas first; the ads say which: across the UK, or the areas by name with one sentence naming every area; the example figure comes from the main area or the first area chosen; the Facebook guide’s location follows the choice)',
     category: 'how_it_works',

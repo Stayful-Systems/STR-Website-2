@@ -86,7 +86,7 @@ test('every sentence the view models can produce is plain', () => {
   const problem = problemView({ failures: CHECK_IDS.map((check) => ({ check })) });
   said.push(problem.title, ...problem.lines, problem.contact, ...problemView(null).lines);
   said.push(areaPreviewView({ areaKey: 'NG7', areaLabel: 'Nottingham', fellBack: false, bedrooms: 3, samples: 9 }).text, areaPreviewView({ areaKey: 'NG', areaLabel: 'Nottingham', fellBack: true, bedrooms: 3, samples: 9 }).text, areaPreviewView({ error: 'not_enough_data' }).text);
-  said.push(brandProblemText('company'), brandProblemText('colour'), regenIntro(1, null), regenIntro(2, null), regenIntro(0, null), KEPT_NOTICE, ...Object.values(MESSAGES));
+  said.push(brandProblemText('company'), brandProblemText('colour'), brandProblemText('company', 'leaddb'), brandProblemText('colour', 'leaddb'), regenIntro(1, null), regenIntro(2, null), regenIntro(0, null), KEPT_NOTICE, ...Object.values(MESSAGES));
   for (const status of ['queued', 'making', 'ready', 'failed', 'coming'] as const) {
     for (const code of [null, 'voice_unavailable', 'sandbox_failed']) {
       for (const canRetry of [true, false]) {

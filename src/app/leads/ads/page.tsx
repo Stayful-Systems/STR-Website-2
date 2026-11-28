@@ -18,7 +18,7 @@ import { Calm } from "./ui";
 import { ConnectSheet } from "./ConnectSheet";
 import { YourAds } from "./YourAds";
 import { packScreen, regenView } from "./state";
-import { adViewModel, approvalVm, profileHint, areaPreviewView, brandOfSettings, brandProblemText, eligibilityView, figureCallout, previewPathsOf, problemView, regenIntro, stageOf, voiceVm, type AreaPreviewView } from "./view";
+import { adViewModel, approvalVm, BRAND_FIRST_LINK, profileHint, areaPreviewView, brandOfSettings, brandProblemText, eligibilityView, figureCallout, previewPathsOf, problemView, regenIntro, stageOf, voiceVm, type AreaPreviewView } from "./view";
 
 export const metadata: Metadata = { title: "Your Facebook ads — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -95,7 +95,8 @@ export default async function AdsPage() {
             initialAreaPreview={initialAreaPreview}
             initialPhotos={[]}
             hasLogo={brand.logoUrl !== null}
-            problems={problems.map(brandProblemText)}
+            problems={problems.map((pr) => brandProblemText(pr, leadDb ? "leaddb" : "academy"))}
+            {...(leadDb ? { problemLink: BRAND_FIRST_LINK } : {})}
             failedBefore={failedBefore}
             {...(leadDb ? { coverage: { options: areas, suggested, initialMode: "uk" as const, initialKeys: [] } } : {})}
           />
@@ -131,7 +132,8 @@ export default async function AdsPage() {
       initialAreaPreview={regenPreview}
       initialPhotos={initialPhotos}
       hasLogo={brand.logoUrl !== null}
-      problems={problems.map(brandProblemText)}
+      problems={problems.map((pr) => brandProblemText(pr, pack.route === "leaddb" ? "leaddb" : "academy"))}
+      {...(pack.route === "leaddb" ? { problemLink: BRAND_FIRST_LINK } : {})}
       blockReason={regen.reason}
       {...(regenCoverage ? { coverage: regenCoverage } : {})}
     />

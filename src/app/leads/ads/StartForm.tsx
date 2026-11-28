@@ -66,6 +66,8 @@ export interface StartFormProps {
   hasLogo: boolean;
   /** Things the operator cannot fix here, in plain sentences. The button is off while there are any. */
   problems: string[];
+  /** Lead database route: where the operator fixes those problems themselves (their calculator page). */
+  problemLink?: { href: string; label: string } | null;
   /** A first try that did not work. */
   failedBefore?: boolean;
   /** Making new ads only: why that is not possible right now (shown instead of the button unless the place or photos were changed). */
@@ -218,6 +220,11 @@ export function StartForm(p: StartFormProps) {
       ) : null}
 
       {p.problems.map((t) => <Alert key={t}>{t}</Alert>)}
+      {p.problems.length > 0 && p.problemLink ? (
+        <a href={p.problemLink.href} className={`${btnSecondary} inline-flex w-full items-center justify-center sm:w-auto`}>
+          {p.problemLink.label}
+        </a>
+      ) : null}
       {state.error ? <Alert>{state.error}</Alert> : null}
 
       {hidden ? <Calm live={false}>{p.blockReason}</Calm> : again ? <div className="space-y-3">{submit}</div> : <StickyBar>{submit}</StickyBar>}

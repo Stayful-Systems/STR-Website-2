@@ -210,7 +210,7 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
   const photos = cleanPhotoRefs(s.ownerId, input.photoRefs);
   if (photos === null) return { error: MESSAGES.photos };
 
-  if (problems.length > 0) return { error: brandProblemText(problems[0]) };
+  if (problems.length > 0) return { error: brandProblemText(problems[0], leadDbRoute ? 'leaddb' : 'academy') };
   const typeOnly = input.typeOnly === true || input.typeOnly === 'on' || input.typeOnly === 'true';
   if (brand.logoUrl === null && !typeOnly) return { error: LOGO_REFUSAL };
   // 38b: the voice for the video. Absent (a regenerate keeps the pack's voice) is fine; anything else must be one of the three.

@@ -180,8 +180,17 @@ const PROBLEM_TEXT: Record<BrandProblem, string> = {
   colour: `Your website has no brand colour yet, so we cannot colour your ads. ${GET_IN_TOUCH}`,
 };
 
-export function brandProblemText(p: BrandProblem): string {
-  return PROBLEM_TEXT[p];
+/**
+ * Batch 55 (lead database route): the customer sets their own company name, colour and logo on their calculator page,
+ * so the sentence says what to set and where, never "get in touch". The Academy wording above is unchanged.
+ */
+const LD_PROBLEM_TEXT: Record<BrandProblem, string> = {
+  company: 'Add your company name on your calculator page first. Your ads show it.',
+  colour: 'Choose your brand colour on your calculator page first. Your ads use it.',
+};
+
+export function brandProblemText(p: BrandProblem, route: 'academy' | 'leaddb' = 'academy'): string {
+  return route === 'leaddb' ? LD_PROBLEM_TEXT[p] : PROBLEM_TEXT[p];
 }
 
 export const NO_LOGO_TEXT = 'Your website has no logo, so we’ll show your company name instead.';
@@ -615,6 +624,9 @@ export function conceptLine(angle: Angle): string {
 }
 
 export const CALCULATOR_SETTINGS_HREF = '/leads/setup/website';
+
+/** The lead database route's way to fix a brand problem: their own calculator page. */
+export const BRAND_FIRST_LINK = { href: CALCULATOR_SETTINGS_HREF, label: 'Set your branding' } as const;
 
 /**
  * One line when the ads were made with little to go on (no logo, or no area): what to add and where. Never blocks
