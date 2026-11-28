@@ -11,8 +11,11 @@
  *   report_carousel  55c Phase 2: real example report pages, one per card (3a)
  *   loupe            55c Phase 2: a report page under a moving magnifier (17)
  *
- * PHASE 1 writes the batch 38 look: 5b → notice_video, 3a and 17 → type_cards, concept `<angle>-v1`. Phase 2 changes
- * conceptFor. The Academy route stores neither (null): its rows are byte-identical to before.
+ * PHASE 1 wrote the batch 38 look (5b-v1 notice_video, 3a-v1 / 17-v1 type_cards). PHASE 2 (55c A2 to A5) writes the
+ * three concepts in three formats (ld-angles.ts): 5b-tenant-leaving phone_recording, 3a-moving-abroad report_carousel,
+ * 17-rules-changed loupe. When the example report fails, the worker rewrites the row to the fallback it really made
+ * (notice_video / type_cards, FALLBACK_FORMAT) and records why. The Academy route stores neither (null): its rows are
+ * byte-identical to before.
  *
  * Pure: no network, no database, no server-only.
  */
@@ -28,7 +31,16 @@ export function isAdFormat(v: unknown): v is AdFormat {
   return typeof v === 'string' && (AD_FORMATS as readonly string[]).includes(v);
 }
 
-/** The concept and format of one lead database pack ad (Phase 1: the batch 38 look). */
+/** The concept and format of one lead database pack ad (Phase 2: the three 55c concepts, ld-angles.ts). */
 export function conceptFor(angle: Angle): { conceptId: string; format: AdFormat } {
-  return { conceptId: `${angle}-v1`, format: angle === '5b' ? 'notice_video' : 'type_cards' };
+  return CONCEPTS[angle];
 }
+
+const CONCEPTS: Record<Angle, { conceptId: string; format: AdFormat }> = {
+  '5b': { conceptId: '5b-tenant-leaving', format: 'phone_recording' },
+  '3a': { conceptId: '3a-moving-abroad', format: 'report_carousel' },
+  '17': { conceptId: '17-rules-changed', format: 'loupe' },
+};
+
+/** What an ad really is when the example report failed (55c section 8): the old look. */
+export const FALLBACK_FORMAT: Record<Angle, AdFormat> = { '5b': 'notice_video', '3a': 'type_cards', '17': 'type_cards' };

@@ -34,6 +34,7 @@ import { parseCode, type Angle } from './codes.ts';
 import { figureIsLabelled, POUND_RE } from './figures.ts';
 import { adLink, adName, AD_ID_PLACEHOLDER } from './links.ts';
 import { checkLength } from './limits.ts';
+import { LD_CHECK_IDS, LD_CHECK_LABELS, ldGateChecks, ldPictureFailures, type LdCheckId, type LdGateInput, type PictureStats } from './ld-gate.ts';
 
 // ── Colour ──
 
@@ -150,6 +151,11 @@ export type CheckInput = {
    * then has nothing to say. Given (also as an empty list) it is checked: all three sizes must be there.
    */
   videos?: CheckVideo[];
+  /**
+   * Batch 55 step 5 (Phase 2, 55c A5): the lead database route's gate (ld-gate.ts). Absent on the Academy route, whose
+   * output is then exactly as before (no ld_* result rows).
+   */
+  ld?: LdGateInput;
 };
 
 export const CHECK_IDS = ['brand', 'source_brand', 'figures', 'length', 'claims', 'links', 'files', 'video'] as const;
@@ -166,10 +172,12 @@ export const CHECK_LABELS: Record<CheckId, string> = {
   video: 'The video is made properly',
 };
 
-export type CheckFailure = { check: CheckId; rule: string; where: string; detail: string };
-export type CheckWarning = { check: CheckId; where: string; detail: string };
+/** A check of either set: the batch 38 checks, or the lead database gate's (only on that route). */
+export type AnyCheckId = CheckId | LdCheckId;
+export type CheckFailure = { check: AnyCheckId; rule: string; where: string; detail: string };
+export type CheckWarning = { check: AnyCheckId; where: string; detail: string };
 /** `ran` is on the `video` entry only, and only when the video check was really run on rendered files (38b): its absence means "not checked yet". */
-export type CheckResult = { check: CheckId; label: string; ok: boolean; failures: number; warnings: number; ran?: true };
+export type CheckResult = { check: AnyCheckId; label: string; ok: boolean; failures: number; warnings: number; ran?: true };
 
 export type ChecksOutput = {
   ok: boolean;
@@ -260,11 +268,34 @@ export function videoChecks(videos: readonly CheckVideo[]): { failures: CheckFai
   return { failures, warnings: [] };
 }
 
-function resultsOf(failures: readonly CheckFailure[], warnings: readonly CheckWarning[], videoRan = false): CheckResult[] {
-  return CHECK_IDS.map((check) => {
+function resultsOf(failures: readonly CheckFailure[], warnings: readonly CheckWarning[], videoRan = false, ld = false): CheckResult[] {
+  const base: CheckResult[] = CHECK_IDS.map((check) => {
     const fs = failures.filter((f) => f.check === check).length;
     return { check, label: CHECK_LABELS[check], ok: fs === 0, failures: fs, warnings: warnings.filter((w) => w.check === check).length, ...(check === 'video' && videoRan ? { ran: true as const } : {}) };
   });
+  if (!ld) return base;
+  // Batch 55 step 5: the lead database gate's rows, after the batch 38 ones (only on that route).
+  return [
+    ...base,
+    ...LD_CHECK_IDS.map((check) => {
+      const fs = failures.filter((f) => f.check === check).length;
+      return { check, label: LD_CHECK_LABELS[check], ok: fs === 0, failures: fs, warnings: warnings.filter((w) => w.check === check).length };
+    }),
+  ];
+}
+
+const hasLdRows = (prev: ChecksOutput | null | undefined): boolean => (prev?.results ?? []).some((r) => (LD_CHECK_IDS as readonly string[]).includes(r.check));
+
+/**
+ * Batch 55 step 5 (55c A5): the picture check, run in the render step once every ad of a lead database pack has its
+ * first frame measured. Earlier ld_picture failures are dropped, the new ones added, `ok` and `results` recomputed.
+ */
+export function mergeLdPictureChecks(prev: ChecksOutput | null | undefined, ads: readonly { angle: Angle; picture?: PictureStats | null }[]): ChecksOutput {
+  const p = ldPictureFailures(ads);
+  const failures = [...(prev?.failures ?? []).filter((f) => f.check !== 'ld_picture'), ...p];
+  const warnings = [...(prev?.warnings ?? [])];
+  const videoRan = (prev?.results ?? []).some((r) => r.check === 'video' && r.ran === true);
+  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings, videoRan, true) };
 }
 
 /**
@@ -275,7 +306,7 @@ export function mergeVideoChecks(prev: ChecksOutput | null | undefined, videos: 
   const v = videoChecks(videos);
   const failures = [...(prev?.failures ?? []).filter((f) => f.check !== 'video'), ...v.failures];
   const warnings = [...(prev?.warnings ?? []).filter((w) => w.check !== 'video'), ...v.warnings];
-  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings, true) };
+  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings, true, hasLdRows(prev)) };
 }
 
 // ── The checks ──
@@ -478,5 +509,8 @@ export function runChecks(input: CheckInput): ChecksOutput {
     warnings.push(...v.warnings);
   }
 
-  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings, Array.isArray(input.videos)) };
+  // (i) Batch 55 step 5: the lead database route's gate.
+  if (input.ld) failures.push(...ldGateChecks(input.ld));
+
+  return { ok: failures.length === 0, failures, warnings, results: resultsOf(failures, warnings, Array.isArray(input.videos), input.ld !== undefined) };
 }

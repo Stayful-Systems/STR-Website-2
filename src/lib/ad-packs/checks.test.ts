@@ -259,7 +259,7 @@ test('every failure says where and what, in words', () => {
   const r = runChecks(c);
   assert.equal(r.ok, false);
   for (const f of r.failures) {
-    assert.ok(f.where.length > 0 && f.detail.length > 0 && CHECK_IDS.includes(f.check), JSON.stringify(f));
+    assert.ok(f.where.length > 0 && f.detail.length > 0 && (CHECK_IDS as readonly string[]).includes(f.check), JSON.stringify(f));
   }
   assert.equal(r.results.find((x) => x.check === 'source_brand')?.ok, false);
   assert.equal(r.results.find((x) => x.check === 'files')?.ok, true);

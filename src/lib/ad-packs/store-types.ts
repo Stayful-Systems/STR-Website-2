@@ -24,6 +24,7 @@ import type { ChecksOutput } from './checks.ts';
 import type { AdPackSettings } from './settings.ts';
 import type { AdVideo } from './render-store.ts';
 import type { AdRoute } from './eligibility.ts';
+import type { Look } from './ld-angles.ts';
 
 export const PACK_STATUSES = ['draft', 'generating', 'checks_failed', 'preview', 'approved', 'failed'] as const;
 export type PackStatus = (typeof PACK_STATUSES)[number];
@@ -94,8 +95,15 @@ export type VideoBrand = {
   figure: Record<string, unknown> | null;
 };
 
+/**
+ * Batch 55 step 5 (Phase 2): what a LEAD DATABASE ad shows on screen, pinned when its version is made (never on the
+ * Academy route). `screenLines` is frame one, the scene lines and the CTA (the renderers draw exactly these); `look` is
+ * the base and frame-one wording the same-area rule chose (ld-gate.ts chooseLook); `scriptLines` the voiceover lines.
+ */
+export type LdTexts = { screenLines: string[]; look: Look; scriptLines?: string[] };
+
 /** Everything an operator copies. `script` is the 5b voiceover; `cardsText` is one string per image card; `brand` is the video's pinned look (never shown or copied). */
-export type AdTexts = { primary: string[]; headlines: string[]; descriptions: string[]; script?: string; cardsText?: string[]; brand?: VideoBrand };
+export type AdTexts = { primary: string[]; headlines: string[]; descriptions: string[]; script?: string; cardsText?: string[]; brand?: VideoBrand; ld?: LdTexts };
 
 export type PackAdRow = {
   id: string;
@@ -215,4 +223,9 @@ export interface AdPackStore {
   /** Batch 55 (A8): mark one of the owner's grants used, only while it is unused. False when it was already used (or is not theirs). */
   useRoundGrant(ownerId: string, grantId: string, atIso: string): Promise<boolean>;
   readSettings(): Promise<AdPackSettings>;
+  /**
+   * Batch 55 step 5 (55c A5, same area): the looks of the latest version of every OTHER owner's lead database pack whose
+   * area is `areaKey` (nothing else about those packs). Optional: a store without it reads as "nobody else here".
+   */
+  otherLooksInArea?(ownerId: string, areaKey: string): Promise<Look[]>;
 }

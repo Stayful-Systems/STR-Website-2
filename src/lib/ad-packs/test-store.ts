@@ -4,6 +4,7 @@
  * code, unique ad code, every read and write filtered by the owner id. Nothing
  * in the app imports it.
  */
+import type { Look } from './ld-angles.ts';
 import { DEFAULT_AD_PACK_SETTINGS, type AdPackSettings } from './settings.ts';
 import { sortAds } from './rows.ts';
 import {
@@ -231,6 +232,17 @@ export class MemoryAdPackStore implements AdPackStore {
 
   async readSettings() {
     return { ...this.settings };
+  }
+
+  /** Batch 55 step 5: the looks of other owners' latest lead database packs in the area (the 5b ad of their current version). */
+  async otherLooksInArea(ownerId: string, areaKey: string) {
+    const out: Look[] = [];
+    for (const p of this.packs.values()) {
+      if (p.ownerId === ownerId || p.route !== 'leaddb' || p.areaKey !== areaKey) continue;
+      const ad = [...this.ads.values()].find((a) => a.packId === p.id && a.version === p.version && a.angle === '5b');
+      if (ad?.texts.ld?.look) out.push({ ...ad.texts.ld.look });
+    }
+    return out;
   }
 }
 

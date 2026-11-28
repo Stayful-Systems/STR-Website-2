@@ -2,8 +2,9 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { DEFAULT_AD_PACK_SETTINGS, AD_PACK_KEYS, parseAdPackSettings, type AdPackSettings } from './settings.ts';
-import { AD_COLUMNS, adInsertRow, PACK_COLUMN_OF, PACK_COLUMNS, parseFiles, RUN_COLUMNS, sortAds, toAdRow, toPackRow, toRunRow } from './rows.ts';
+import { AD_COLUMNS, adInsertRow, PACK_COLUMN_OF, PACK_COLUMNS, parseFiles, parseTexts, RUN_COLUMNS, sortAds, toAdRow, toPackRow, toRunRow } from './rows.ts';
 import { signedDownloadUrlWith } from './download.ts';
+import type { Look } from './ld-angles.ts';
 import {
   PackConflict,
   StoreError,
@@ -233,6 +234,23 @@ export function createLiveStore(): AdPackStore {
       const { data, error } = await admin().from('ad_pack_round_grants').select('id, owner_id, created_at, used_at').eq('owner_id', ownerId).is('used_at', null).order('created_at', { ascending: true });
       if (error) fail('ad_pack_round_grants read', error);
       return ((data ?? []) as { id: string; owner_id: string; created_at: string; used_at: string | null }[]).map((r) => ({ id: String(r.id), ownerId: String(r.owner_id), createdAt: String(r.created_at), usedAt: r.used_at ?? null }));
+    },
+
+    async otherLooksInArea(ownerId, areaKey) {
+      // Batch 55 step 5 (55c A5): only the look of each other owner's current lead database version in this area, nothing else.
+      if (!UUID.test(ownerId) || typeof areaKey !== 'string' || areaKey === '') return [];
+      const { data: packs, error } = await admin().from('ad_packs').select('id, version').eq('route', 'leaddb').eq('area_key', areaKey).neq('owner_id', ownerId).limit(50);
+      if (error) {
+        console.error('[ad-packs] area looks read failed:', error.code ?? 'error');
+        return [];
+      }
+      const out: Look[] = [];
+      for (const p of (packs ?? []) as { id: string; version: number }[]) {
+        const { data: ad } = await admin().from('ad_pack_ads').select('texts').eq('pack_id', p.id).eq('version', p.version).eq('angle', '5b').maybeSingle();
+        const look = parseTexts((ad as { texts?: unknown } | null)?.texts).ld?.look;
+        if (look) out.push(look);
+      }
+      return out;
     },
 
     async useRoundGrant(ownerId, grantId, atIso) {
