@@ -15,7 +15,7 @@ const read = (name: string) => readFileSync(new URL(`./${name}/route.ts`, import
 /** Source with comments removed, so a rule about code is not met (or broken) by prose. */
 const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '');
 
-const NAMES = ['provision', 'state', 'signin', 'unpaid-hold'] as const;
+const NAMES = ['provision', 'state', 'signin', 'unpaid-hold', 'profile'] as const;
 const sources = Object.fromEntries(NAMES.map((n) => [n, { raw: read(n), code: code(read(n)) }])) as Record<(typeof NAMES)[number], { raw: string; code: string }>;
 
 for (const name of NAMES) {
@@ -116,8 +116,21 @@ test('unpaid-hold: unknown customer is 404, a stale call is 200, and the hold go
   assert.doesNotMatch(c, /\.(from|insert|update|upsert|delete|rpc)\(|setAdAccountAllowed|createAdAccount|allowed|pause/i);
 });
 
-test('the routes sit under /api/internal/si/ad-route and are the only five (stage has its own test file: it writes leads)', () => {
+test('profile: unknown customer is 404, a stale push is 200, and the profile goes through applyAdProfile only', () => {
+  const c = sources.profile.code;
+  assert.match(c, /parseAdProfile\(body\?\.profile\)/);
+  assert.match(c, /readAdAccountByCustomerId\(ldCustomerId\)/);
+  assert.match(c, /code: 'unknown_customer' \}, \{ status: 404 \}/);
+  assert.match(c, /applyAdProfile\(account\.ownerId, profile\)/);
+  assert.ok(c.indexOf('parseAdProfile(') < c.indexOf('readAdAccountByCustomerId('));
+  assert.ok(c.indexOf('readAdAccountByCustomerId(') < c.indexOf('applyAdProfile('));
+  assert.match(c, /Response\.json\(\{ ok: true, code: result \}\)/);
+  // No other write path, never Zac's switch, and the logo link is never fetched or logged here.
+  assert.doesNotMatch(c, /\.(from|insert|update|upsert|delete|rpc)\(|setAdAccountAllowed|createAdAccount|allowed|fetch\(|logoUrl/);
+});
+
+test('the routes sit under /api/internal/si/ad-route and are the only six (stage has its own test file: it writes leads)', () => {
   const dir = new URL('./', import.meta.url);
   const entries = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
-  assert.deepEqual(entries, ['provision', 'signin', 'stage', 'state', 'unpaid-hold']);
+  assert.deepEqual(entries, ['profile', 'provision', 'signin', 'stage', 'state', 'unpaid-hold']);
 });

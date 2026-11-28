@@ -232,3 +232,33 @@ lead database account as an `si_ad` lead. The wire contract is `docs/build/55-CO
   The new table is not in `ACCESS_COLUMNS`. Lead panel wording for ad leads is in `lead-panel.ts` (site wording unchanged).
 - **Knowledge.** Draft `adpack_ld_ad_leads` in `seed.ts` (no price typed: the price setting is step 3) and an "Ad leads" line in
   the LEAD DATABASE AD PACKS block of `service-facts.ts`.
+
+# Batch 55 step 5 (Phase 1): the customer's brand comes across from the lead database; concept and format per ad
+
+The lead database pushes a customer's profile (contract `docs/build/55-CONTRACT.md` in lead-database, section 13, call 8, and
+an optional `profile` inside `provision`; spec `docs/build/55c-customer-ad-creative.md` A1 and A6). Code:
+`src/lib/leaddb/ad-profile*.ts`, `src/lib/ad-packs/concepts.ts`. Schema: the "Batch 55 step 5 (Phase 1)" block.
+
+- **Receiver.** `/api/internal/si/ad-route/profile` (`verifyInbound` first, codes only: `applied`, `stale`, `bad_request`,
+  `unknown_customer`, `server_error`). `parseAdProfile` is a closed field set (`logoUrl` safe public https or null,
+  `brandColour` #RRGGBB or null, `feePct` 0–100 or null, `areas` ≤ 10 of 1–80 chars main first, `bedrooms` {min,max} 0–10 or
+  null, `profileAsOf` ISO); anything else refuses the whole profile. Ordered by `profileAsOf` against
+  `leaddb_ad_accounts.profile_as_of` exactly like `stateAsOf`. A bad `profile` inside provision is a 400; a database error
+  applying it fails the provision (500, the lead database repeats it).
+- **Fill rule (A1).** `planProfileFill` writes logo, colour, areas and fee ONLY when the calculator field is empty or still
+  equals what this site last wrote from a push (`leaddb_ad_accounts.profile_pushed`), and NEVER a field marked in
+  `websites.settings_edited` (stamped by `calculator-actions.ts` before a save, only for fields that really changed). The
+  settings write is guarded by the row's `updated_at`. A pushed 0% fee is no fee line (the brand screen never accepts 0).
+- **Logo.** Fetched once server side (`ad-profile-logo.ts`: safe https only, 8 s, 2 MB cap, PNG/JPEG sniff), stored with the
+  calculator's existing `uploadLogo`, and `settings.logoUrl` is our own copy. A dead or non-image link: company name only,
+  a `logoCode` in `profile_pushed`. The signed link is never stored or logged; the same bytes again are not stored twice.
+- **Pack.** On the lead database route the main area (first of `settings.areas`, via `matchArea`) is used when no area is
+  picked, and `GenerateInput.bedrooms` (lowest pushed) makes `areaFigureSource` prefer that bedroom group when it has
+  enough reports (`chooseSourceFor`), else the most common as before. The Academy route never passes `bedrooms`.
+- **A6.** Lead database pack ads store `concept_id` and `format` (`conceptFor`: Phase 1 `5b-v1`/`notice_video`,
+  `3a-v1`/`17-v1`/`type_cards`); Academy rows carry neither (the insert is byte-identical). Format names: phone_recording,
+  report_carousel, loupe, notice_video, type_cards. `AD_COLUMNS` does not read them yet (Phase 4 will).
+- **Never.** `leads.status` / `leads.crm_pushed_at` are never written; no new column is in `ACCESS_COLUMNS`; logs carry a
+  code at most, never the logo link, colour, areas or fee.
+- **Knowledge.** Draft `adpack_ld_brand_from_leaddb` in `seed.ts` (no figure) and a "Brand from the lead database" line in
+  the LEAD DATABASE AD PACKS block of `service-facts.ts`.

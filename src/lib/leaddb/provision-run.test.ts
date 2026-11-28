@@ -222,3 +222,55 @@ test('the live settleMember writes the management stamp directly (never stampMan
   assert.ok(fn.indexOf('if (!isNew) return;') < fn.indexOf('welcome_checked_at'));
   assert.match(fn, /update\(\{ welcome_checked_at: nowIso, welcome_withheld_reason: 'leaddb_ad_route' \}\)[\s\S]*?\.is\('welcome_checked_at', null\)/);
 });
+
+// ── Batch 55 step 5: the optional profile inside provision (contract sections 9 and 13) ──
+
+const PROFILE = { logoUrl: 'https://store.example.test/sign/logo.png?token=t1', brandColour: '#1F4E79', feePct: 18, areas: ['Leicester'], bedrooms: { min: 2, max: 3 }, profileAsOf: '2026-11-26T10:00:00Z' };
+
+test('provision: no profile (absent or null) parses exactly as v1; a profile is parsed; a bad profile refuses the whole body', () => {
+  const v1 = parseProvisionBody(BODY);
+  assert.ok(v1 && !('profile' in v1));
+  const withNull = parseProvisionBody({ ...BODY, profile: null });
+  assert.deepEqual(withNull, v1);
+  const withProfile = parseProvisionBody({ ...BODY, profile: PROFILE });
+  assert.equal(withProfile?.profile?.brandColour, '#1f4e79');
+  assert.deepEqual(withProfile?.profile?.areas, ['Leicester']);
+  for (const bad of [{ ...PROFILE, logoUrl: 'http://x.test/a.png' }, { ...PROFILE, brandColour: 'red' }, { ...PROFILE, feePct: 150 }, { ...PROFILE, profileAsOf: undefined }, 'x']) {
+    assert.equal(parseProvisionBody({ ...BODY, profile: bad }), null, JSON.stringify(bad));
+  }
+});
+
+test('provision: the profile is applied once the site exists, on a new customer and on a repeat; never without one', async () => {
+  const applied: string[] = [];
+  const fresh = world();
+  fresh.deps.applyProfile = async (ownerId) => { fresh.w.calls.push('profile'); applied.push(ownerId); };
+  const input = parseProvisionBody({ ...BODY, profile: PROFILE });
+  assert.ok(input);
+  assert.equal((await runProvision(fresh.deps, input)).body.ok, true);
+  assert.deepEqual(fresh.w.calls, ['createMember', 'create', 'ensure', 'profile']);
+
+  const again = world();
+  again.w.byCustomer.set('cust_1', account());
+  again.deps.applyProfile = async () => { again.w.calls.push('profile'); };
+  assert.deepEqual(await runProvision(again.deps, input), { status: 200, body: { ok: true, code: 'exists' } });
+  assert.deepEqual(again.w.calls, ['apply', 'ensure', 'profile']);
+
+  const none = world();
+  none.deps.applyProfile = async () => { none.w.calls.push('profile'); };
+  await runProvision(none.deps, parsed());
+  assert.ok(!none.w.calls.includes('profile'));
+
+  // A site that could not be made: no profile is applied.
+  const failed = world({ ensure: { ok: false, reason: 'failed' } });
+  failed.deps.applyProfile = async () => { failed.w.calls.push('profile'); };
+  assert.equal((await runProvision(failed.deps, input)).status, 500);
+  assert.ok(!failed.w.calls.includes('profile'));
+});
+
+test('provision: a database error applying the profile reaches the route (server_error), so the lead database repeats it', async () => {
+  const { deps } = world();
+  deps.applyProfile = async () => { throw new Error('ad_profile_settings_failed:XX000'); };
+  const input = parseProvisionBody({ ...BODY, profile: PROFILE });
+  assert.ok(input);
+  await assert.rejects(() => runProvision(deps, input), /ad_profile_settings_failed/);
+});

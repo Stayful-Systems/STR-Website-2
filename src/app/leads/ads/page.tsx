@@ -5,6 +5,7 @@ import { ownerIdOrNull } from "@/lib/leads/scope";
 import { isAdminEmail } from "@/lib/admin";
 import { packEligibility, readAdPacksEnabled } from "@/lib/ad-packs/eligibility-server";
 import { areaPreview, listDistricts, matchArea } from "@/lib/ad-packs/area-server";
+import { readPushedBedrooms } from "@/lib/leaddb/ad-profile-server";
 import { listPackForOwner } from "@/lib/ad-packs/generate-server";
 import { signedPreviewUrls } from "@/lib/ad-packs/files-server";
 import { ownUploadRef } from "@/lib/ad-packs/photos";
@@ -57,7 +58,9 @@ export default async function AdsPage() {
   if (screen.kind === "start") {
     const matched = matchArea(brand.areas, options);
     const initialAreaKey = matched?.areaKey ?? null;
-    const initialAreaPreview: AreaPreviewView | null = initialAreaKey ? areaPreviewView(await areaPreview({ areaKey: initialAreaKey })) : null;
+    // Batch 55 step 5: on the lead database route the preview shows the bedroom count the pack will use (the lowest pushed).
+    const preferBeds = elig.route === "leaddb" ? await readPushedBedrooms(ownerId) : null;
+    const initialAreaPreview: AreaPreviewView | null = initialAreaKey ? areaPreviewView(await areaPreview(preferBeds !== null ? { areaKey: initialAreaKey, bedrooms: preferBeds } : { areaKey: initialAreaKey })) : null;
     const failedBefore = view?.pack.status === "failed" || screen.failedBefore;
     return (
       <LiveActions>

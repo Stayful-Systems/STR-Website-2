@@ -79,7 +79,8 @@ export interface AdsDeps {
   /** The signed-in account owner (ownerIdOrNull of the session's user); never from the browser. */
   session(): Promise<Session>;
   eligibility(userId: string, opts: { admin: boolean }): Promise<EligibilityFacts>;
-  areaPreview(areaKey: string): Promise<AreaPreviewDep>;
+  /** `bedrooms`: Batch 55 step 5, the lead database route's preferred count (absent on the Academy route). */
+  areaPreview(areaKey: string, opts?: { bedrooms?: number }): Promise<AreaPreviewDep>;
   listPack(ownerId: string): Promise<PackView | null>;
   generate(req: GenerateRequest): Promise<GenerateResult>;
   approve(req: { ownerId: string; expectedVersion?: number }): Promise<ApproveResult>;
@@ -98,6 +99,12 @@ export interface AdsDeps {
   /** Records activity. Resolves when written; never rejects. */
   record(ownerId: string, kind: 'ad_pack_approved' | 'ad_text_copied', opts: { extras: Record<string, string | number>; dedupeKey?: string }): Promise<void>;
   newId(): string;
+  /**
+   * Batch 55 step 5 (55c A1), the lead database route only: the bedroom count the pack prefers (the lowest in the
+   * customer's pushed range, or null) and the pick-list key of their main area (the first of their calculator areas,
+   * or null). Optional: absent, the lead database route behaves as before.
+   */
+  leadDbPackHints?(ownerId: string, areas: readonly string[]): Promise<{ bedrooms: number | null; mainAreaKey: string | null }>;
 }
 
 const sessionError = (s: Extract<Session, { ok: false }>): string => MESSAGES[s.reason];
@@ -129,11 +136,16 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
   const mine = await ownPack(deps, s.ownerId, input.packId);
   if (!mine.ok) return { error: MESSAGES.not_found };
 
-  if (typeof input.areaKey !== 'string' || parseAreaKey(input.areaKey) === null) return { error: MESSAGES.area };
+  const { brand, problems } = brandOfSettings(elig.website.settings);
+  // Batch 55 step 5: on the lead database route, no area picked means the customer's main area, and the figure rests on
+  // the lowest bedroom count they take. The Academy route reads neither.
+  const hints = leadDbRoute && deps.leadDbPackHints ? await deps.leadDbPackHints(s.ownerId, brand.areas ?? []) : null;
+  const picked = typeof input.areaKey === 'string' && input.areaKey.trim() !== '' ? input.areaKey : null;
+  const areaKey = picked ?? (leadDbRoute ? (hints?.mainAreaKey ?? null) : input.areaKey);
+  if (typeof areaKey !== 'string' || parseAreaKey(areaKey) === null) return { error: MESSAGES.area };
   const photos = cleanPhotoRefs(s.ownerId, input.photoRefs);
   if (photos === null) return { error: MESSAGES.photos };
 
-  const { brand, problems } = brandOfSettings(elig.website.settings);
   if (problems.length > 0) return { error: brandProblemText(problems[0]) };
   const typeOnly = input.typeOnly === true || input.typeOnly === 'on' || input.typeOnly === 'true';
   if (brand.logoUrl === null && !typeOnly) return { error: LOGO_REFUSAL };
@@ -146,12 +158,13 @@ export async function generateOp(deps: AdsDeps, input: GenerateInput): Promise<A
     ownerId: s.ownerId,
     by: 'operator',
     input: {
-      areaKey: input.areaKey.trim().toUpperCase(),
+      areaKey: areaKey.trim().toUpperCase(),
       photos,
       brand: { company: brand.company, logoUrl: brand.logoUrl, brandColour: brand.brandColour, feePct: brand.feePct, areas: brand.areas, photoUrl: brand.photoUrl },
       domain: elig.domain,
       websiteId: elig.website.id,
       ...(leadDbRoute && elig.sitePath ? { route: 'leaddb' as const, sitePath: elig.sitePath } : {}),
+      ...(leadDbRoute && typeof hints?.bedrooms === 'number' ? { bedrooms: hints.bedrooms } : {}),
       typeOnly: brand.logoUrl === null && typeOnly,
       ...(voiceKey ? { voiceKey } : {}),
     },
@@ -240,6 +253,11 @@ export async function areaPreviewOp(deps: AdsDeps, input: { areaKey?: unknown })
   const elig = await deps.eligibility(s.ownerId, { admin: s.admin });
   if (!elig.eligible) return { ok: false, bedrooms: null, text: eligibilityError(elig) };
   if (typeof input.areaKey !== 'string' || parseAreaKey(input.areaKey) === null) return { ok: false, bedrooms: null, text: MESSAGES.area };
+  // Batch 55 step 5: the lead database route previews the bedroom count the pack will really use.
+  if (elig.route === 'leaddb' && deps.leadDbPackHints) {
+    const hints = await deps.leadDbPackHints(s.ownerId, []);
+    if (typeof hints.bedrooms === 'number') return areaPreviewView(await deps.areaPreview(input.areaKey, { bedrooms: hints.bedrooms }));
+  }
   return areaPreviewView(await deps.areaPreview(input.areaKey));
 }
 

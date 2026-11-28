@@ -9,7 +9,7 @@ import { districtLabel } from '../market/labels';
 import { MIN_DISTRICT_SAMPLES } from '../market/confidence';
 import { modalBedrooms } from '../market/area-longlet';
 import type { MarketArea, MarketBedroomAgg, MarketSnapshot } from '../market/types';
-import { DEFAULT_MIN_AREA_SAMPLES, chooseSource, parseAreaKey, parseMinAreaSamples, type AreaOption } from './area.ts';
+import { DEFAULT_MIN_AREA_SAMPLES, chooseSourceFor, parseAreaKey, parseMinAreaSamples, type AreaOption } from './area.ts';
 
 export { NET_INCLUDES_MANAGEMENT_FEE, matchArea, type AreaOption } from './area.ts';
 
@@ -139,13 +139,13 @@ const NOT_ENOUGH: AreaFigureResult = { error: 'not_enough_data', message: 'There
 type Resolved = {
   area: MarketArea;
   district: NonNullable<MarketArea['districts']>[number] | null;
-  chosen: NonNullable<ReturnType<typeof chooseSource>>;
+  chosen: NonNullable<ReturnType<typeof chooseSourceFor>>;
   useDistrict: boolean;
   name: string;
 };
 
 /** District first, the postcode area when the district is too thin; null when neither has enough. Reads no paid data. */
-async function resolveSource(input: { areaKey: string; minSamples?: number }): Promise<Resolved | null> {
+async function resolveSource(input: { areaKey: string; minSamples?: number; bedrooms?: number | null }): Promise<Resolved | null> {
   const parsed = parseAreaKey(input.areaKey);
   if (!parsed) return null;
   const minSamples = input.minSamples && input.minSamples > 0 ? input.minSamples : await readMinAreaSamples();
@@ -154,7 +154,8 @@ async function resolveSource(input: { areaKey: string; minSamples?: number }): P
   const area = snap.areas.find((a) => a.postcode_area.toUpperCase() === parsed.areaCode) ?? null;
   if (!area) return null;
   const district = parsed.level === 'district' ? ((area.districts ?? []).find((d) => d.district.toUpperCase() === parsed.key) ?? null) : null;
-  const chosen = chooseSource({ district, area, minSamples });
+  // Batch 55 step 5: a preferred bedroom count (lead database route) is tried first; without one this is chooseSource.
+  const chosen = chooseSourceFor({ district, area, minSamples, bedrooms: input.bedrooms });
   if (!chosen) return null;
   return { area, district, chosen, useDistrict: chosen.level === 'district' && district !== null, name: areaMetaForCode(area.postcode_area).name };
 }
@@ -168,7 +169,7 @@ export type AreaPreviewResult = AreaPreview | { error: 'not_enough_data'; messag
  * (which is house-paid PropertyData): safe to call on every change of the pick
  * list. Phase 8's confirm-your-area step shows it.
  */
-export async function areaPreview(input: { areaKey: string; minSamples?: number }): Promise<AreaPreviewResult> {
+export async function areaPreview(input: { areaKey: string; minSamples?: number; bedrooms?: number | null }): Promise<AreaPreviewResult> {
   const r = await resolveSource(input);
   if (!r) return NOT_ENOUGH;
   const { area, district, chosen, useDistrict, name } = r;
@@ -179,7 +180,7 @@ export async function areaPreview(input: { areaKey: string; minSamples?: number 
     areaLabel: useDistrict && district ? (lead ? `${lead}, ${name}` : `${name} ${district.district}`) : name,
     level: useDistrict ? 'district' : 'area',
     fellBack: chosen.fellBack,
-    bedrooms: modalBedrooms(rentArea) ?? chosen.group.bedrooms,
+    bedrooms: chosen.preferred ? chosen.group.bedrooms : (modalBedrooms(rentArea) ?? chosen.group.bedrooms),
     samples: chosen.group.sample_count,
   };
 }
@@ -190,14 +191,15 @@ export async function areaPreview(input: { areaKey: string; minSamples?: number 
  * bedroom group has at least `minSamples` reports, otherwise its postcode
  * area; if that is too thin as well, `{ error: 'not_enough_data' }`.
  */
-export async function areaFigureSource(input: { areaKey: string; minSamples?: number }): Promise<AreaFigureResult> {
+export async function areaFigureSource(input: { areaKey: string; minSamples?: number; bedrooms?: number | null }): Promise<AreaFigureResult> {
   const r = await resolveSource(input);
   if (!r) return NOT_ENOUGH;
   const { area, district, chosen, useDistrict, name } = r;
 
   const lead = useDistrict && district ? (districtLocalities(district.district)[0] ?? null) : null;
   const rentArea: MarketArea = useDistrict && district ? { ...district, postcode_area: area.postcode_area } : area;
-  const bedrooms = modalBedrooms(rentArea) ?? chosen.group.bedrooms;
+  // A preferred count that has enough reports is the count the figure rests on; otherwise the most common, as before.
+  const bedrooms = chosen.preferred ? chosen.group.bedrooms : (modalBedrooms(rentArea) ?? chosen.group.bedrooms);
   // No long-let rent lookup here: it is house-paid PropertyData, no ad uses it, and this read also runs on refused
   // requests and dry runs, ahead of the cost caps. The field stays (null) so the shape does not change.
   const longLetRent: number | null = null;

@@ -10718,3 +10718,56 @@ alter table public.leaddb_ad_accounts add column if not exists pack_notice_sent_
 alter table public.leads add column if not exists ld_stage_as_of timestamptz;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 55 step 5 (Phase 1): the customer's brand comes across from the lead database
+-- =========================
+-- The lead database pushes a customer's profile (contract docs/build/55-CONTRACT.md
+-- in lead-database, section 13, call 8 `profile`, also inside `provision`): logo,
+-- brand colour, fee, areas (main first) and bedroom range. This site fills ONLY
+-- calculator settings that are still empty or still equal to the last value the
+-- lead database pushed, and never a field the customer edited here (55c A1).
+-- Each pack ad also records its concept and format (55c A6), so the Phase 4
+-- results can be grouped by them. Every statement is add column if not exists
+-- or a guarded constraint, so a re-run changes nothing. No table, function,
+-- policy or grant.
+--
+--   leaddb_ad_accounts.profile_as_of   when the lead database said the profile it
+--                                      last pushed was true: an older push is
+--                                      'stale' (the same rule as state_as_of).
+--   leaddb_ad_accounts.profile_pushed  what this site last WROTE from a push:
+--                                      { logoUrl (our own stored copy, never the
+--                                      lead database's signed link), logoSha256,
+--                                      logoCode, brandColour, feePct, areas,
+--                                      bedrooms {min,max} }. Read for the "still
+--                                      equal to the last pushed value" rule and
+--                                      for the pack's bedroom count.
+--   websites.settings_edited           per calculator field (logoUrl,
+--                                      brandColour, areas, managementFeePct):
+--                                      the time the CUSTOMER last changed it on
+--                                      the brand screen. A marked field is never
+--                                      filled from a push again.
+--   ad_pack_ads.concept_id / format    the ad's concept and format. Null on the
+--                                      Academy route. format is one of
+--                                      phone_recording, report_carousel, loupe,
+--                                      notice_video, type_cards (Phase 1 writes
+--                                      notice_video for 5b, type_cards for 3a/17).
+--
+-- leads.status and leads.crm_pushed_at are NEVER written by this. None of these
+-- columns is in ACCESS_COLUMNS.
+
+alter table public.leaddb_ad_accounts add column if not exists profile_as_of timestamptz;
+alter table public.leaddb_ad_accounts add column if not exists profile_pushed jsonb;
+
+alter table public.websites add column if not exists settings_edited jsonb not null default '{}'::jsonb;
+
+alter table public.ad_pack_ads add column if not exists concept_id text;
+alter table public.ad_pack_ads add column if not exists format text;
+alter table public.ad_pack_ads drop constraint if exists ad_pack_ads_format_check;
+alter table public.ad_pack_ads add constraint ad_pack_ads_format_check
+  check (format is null or format in ('phone_recording', 'report_carousel', 'loupe', 'notice_video', 'type_cards'));
+alter table public.ad_pack_ads drop constraint if exists ad_pack_ads_concept_check;
+alter table public.ad_pack_ads add constraint ad_pack_ads_concept_check
+  check (concept_id is null or concept_id ~ '^[a-z0-9][a-z0-9-]{0,39}$');
+
+notify pgrst, 'reload schema';

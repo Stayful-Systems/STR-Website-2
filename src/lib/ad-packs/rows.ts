@@ -6,6 +6,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { isAngle } from './codes.ts';
+import { CONCEPT_ID_RE, isAdFormat } from './concepts.ts';
 import type { AdFileRef, AdFiles, AdTexts, NewAd, PackAdRow, PackPatch, PackRow, PackStatus, RunBy, RunResult, RunRow, VideoBrand } from './store-types.ts';
 import { PACK_STATUSES } from './store-types.ts';
 import type { LeadFormQuestion } from './angles.ts';
@@ -130,6 +131,9 @@ export function toAdRow(r: Record<string, unknown>): PackAdRow {
     texts: parseTexts(r.texts),
     leadForm: Array.isArray(r.lead_form) ? (r.lead_form as LeadFormQuestion[]) : [],
     files: parseFiles(r.files),
+    // Batch 55 step 5: read only when the select carried them (AD_COLUMNS does not yet, so an older schema still reads).
+    ...(typeof r.concept_id === 'string' && CONCEPT_ID_RE.test(r.concept_id) ? { conceptId: r.concept_id } : {}),
+    ...(isAdFormat(r.format) ? { format: r.format } : {}),
     supersededAt: str(r.superseded_at),
     createdAt: String(r.created_at),
   };
@@ -148,6 +152,9 @@ export function adInsertRow(a: NewAd): Record<string, unknown> {
     texts: a.texts,
     lead_form: a.leadForm,
     files: a.files,
+    // Batch 55 step 5 (55c A6): only when set (the lead database route), so an Academy row is written exactly as before.
+    ...(a.conceptId ? { concept_id: a.conceptId } : {}),
+    ...(a.format ? { format: a.format } : {}),
   };
 }
 

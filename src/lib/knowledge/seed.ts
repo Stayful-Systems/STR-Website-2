@@ -1186,6 +1186,23 @@ export const SEED: readonly SeedEntry[] = [
     ],
     answer: 'Every landlord who uses your calculator goes into your lead database as an ad lead: their details first, then their report with its figures and the ad that brought them (or Ad unknown). Each report that runs is charged, including one labelled an early estimate because local data was limited, and a landlord who enquires again is charged as a separate lead. A report that could not be built is not charged, nor is a test made with your own details. Ad leads cannot be swapped or replaced; if something looks wrong, ask the team at {team_email}.',
   },
+  {
+    slug: 'adpack_ld_brand_from_leaddb',
+    from: 'Batch 55 step 5 (Phase 1), lead database ad route (the customer’s logo, colour, areas, fee and bedroom range come across from their lead database account into the calculator; a field the customer changes on the brand screen keeps their own choice; a logo that cannot be read means the company name only; the pack uses the main area and the lowest bedroom count)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'Where do the logo, colour, areas and fee on my calculator come from?',
+    variants: [
+      'Why does my calculator already have my logo?',
+      'I changed my colour on the calculator, will the lead database change it back?',
+      'Why is my logo missing from my calculator?',
+      'Which area are my Facebook ads made for?',
+      'Which bedroom size do my ads use?',
+      'How do I change the areas on my calculator?',
+    ],
+    answer: 'We bring your logo, brand colour, areas and fee across from your lead database account when your calculator is set up and whenever you press Make my ads, but only into parts that are still empty or still hold what came across last time. Anything you change on the brand screen stays as you set it. If we could not read your logo, your company name is shown instead; you can upload one on the brand screen. Your ads use your main area unless you pick another, and the smallest bedroom size you take when there is enough local data.',
+  },
   // ── Batch 35: Facebook lead forms through Google Sheets, attribution, one-tap outcomes and Your ads (drafts for Zac to approve; every figure is an ad_sheet_* setting) ──
   {
     slug: 'adsheet_what',

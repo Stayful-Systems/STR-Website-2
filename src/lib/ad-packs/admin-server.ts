@@ -4,6 +4,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { createSupabaseServerClient } from '../supabase/server';
 import { domainIsLiveFor, domainOfSite } from '../domains/store-server';
 import { ownSite, parseSiteSettings, siteById } from '../websites/store-server';
+import { readPushedBedrooms } from '../leaddb/ad-profile-server';
 import { linkMissingLeads } from './attribution-server';
 import { generatePack } from './generate-server';
 import { adPackAdminRunner, type AdPackAdminRunner, type RegenSource } from './admin-run.ts';
@@ -137,6 +138,7 @@ export async function readRegenSource(packId: string): Promise<RegenSource> {
       return { ok: false, code: 'unreadable' };
     }
     const c = site.settings;
+    const bedrooms = await readPushedBedrooms(pack.ownerId);
     return {
       ok: true,
       ownerId: pack.ownerId,
@@ -151,6 +153,8 @@ export async function readRegenSource(packId: string): Promise<RegenSource> {
         route: 'leaddb',
         sitePath: site.slug,
         typeOnly: c.logoUrl === null,
+        // Batch 55 step 5 (55c A1): the lowest bedroom count the lead database pushed, when there is one.
+        ...(bedrooms !== null ? { bedrooms } : {}),
       },
     };
   }

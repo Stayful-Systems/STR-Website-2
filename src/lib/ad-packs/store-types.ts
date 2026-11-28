@@ -18,6 +18,7 @@
  * Pure: no network, no database, no server-only.
  */
 import type { Angle } from './codes.ts';
+import type { AdFormat } from './concepts.ts';
 import type { LeadFormQuestion } from './angles.ts';
 import type { ChecksOutput } from './checks.ts';
 import type { AdPackSettings } from './settings.ts';
@@ -109,6 +110,12 @@ export type PackAdRow = {
   texts: AdTexts;
   leadForm: LeadFormQuestion[];
   files: AdFiles;
+  /**
+   * Batch 55 step 5 (55c A6): the ad's concept and format (concepts.ts), set on the lead database route only. Absent
+   * (or null) on the Academy route, whose rows are written exactly as before.
+   */
+  conceptId?: string | null;
+  format?: AdFormat | null;
   supersededAt: string | null;
   createdAt: string;
 };

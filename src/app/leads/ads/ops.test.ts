@@ -653,3 +653,71 @@ test('generate, Academy route: no route or slug is sent, so the request is exact
   assert.equal(pack?.route, 'academy');
   assert.ok((await s.h.store.listAds(OWNER_A, pack!.id)).every((a) => a.link.startsWith('https://brightstone.co.uk/?ad=')));
 });
+
+// ── Batch 55 step 5 (Phase 1, 55c A1): the main area and the lowest bedroom count on the lead database route ──
+
+test('generate, lead database route: no area picked uses the main area, and the lowest pushed bedroom count is sent', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  const hintCalls: { ownerId: string; areas: readonly string[] }[] = [];
+  s.deps.leadDbPackHints = async (ownerId, areas) => {
+    hintCalls.push({ ownerId, areas });
+    return { bedrooms: 2, mainAreaKey: 'NG7' };
+  };
+  assert.deepEqual(await generateOp(s.deps, { ...input, areaKey: '' }), { ok: true });
+  const sent = s.calls.generated[0].input as { areaKey?: string; bedrooms?: number };
+  assert.equal(sent.areaKey, 'NG7');
+  assert.equal(sent.bedrooms, 2);
+  assert.deepEqual(hintCalls, [{ ownerId: OWNER_A, areas: ['Nottingham'] }]);
+});
+
+test('generate, lead database route: an area the customer picked wins over the main area; no main area and no pick is refused', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  s.deps.leadDbPackHints = async () => ({ bedrooms: null, mainAreaKey: 'LE' });
+  assert.deepEqual(await generateOp(s.deps, { ...input, areaKey: 'ng7' }), { ok: true });
+  const sent = s.calls.generated[0].input as { areaKey?: string; bedrooms?: number };
+  assert.equal(sent.areaKey, 'NG7');
+  assert.ok(!('bedrooms' in sent), 'no pushed range: nothing is sent, the area’s most common count is used');
+  const t = setup();
+  t.eligible(LEADDB);
+  t.deps.leadDbPackHints = async () => ({ bedrooms: 2, mainAreaKey: null });
+  assert.deepEqual(await generateOp(t.deps, { ...input, areaKey: '' }), { error: MESSAGES.area });
+  assert.equal(t.calls.generate, 0);
+});
+
+test('generate, Academy route: the lead database hints are never read, and no area is never filled in', async () => {
+  const s = setup();
+  let asked = 0;
+  s.deps.leadDbPackHints = async () => {
+    asked++;
+    return { bedrooms: 2, mainAreaKey: 'NG7' };
+  };
+  assert.deepEqual(await generateOp(s.deps, { ...input, areaKey: '' }), { error: MESSAGES.area });
+  assert.deepEqual(await generateOp(s.deps, input), { ok: true });
+  assert.equal(asked, 0);
+  assert.ok(!('bedrooms' in s.calls.generated[0].input));
+});
+
+test('area preview, lead database route: the bedroom count shown is the one the pack will use', async () => {
+  const s = setup();
+  s.eligible(LEADDB);
+  const seen: unknown[] = [];
+  s.deps.areaPreview = async (areaKey, opts) => {
+    seen.push(opts);
+    return { areaKey, areaLabel: 'Lenton, Nottingham', fellBack: false, bedrooms: opts?.bedrooms ?? 3, samples: 14 };
+  };
+  s.deps.leadDbPackHints = async () => ({ bedrooms: 2, mainAreaKey: null });
+  const out = await areaPreviewOp(s.deps, { areaKey: 'NG7' });
+  assert.equal(out.bedrooms, 2);
+  assert.deepEqual(seen, [{ bedrooms: 2 }]);
+  const academy = setup();
+  const aSeen: unknown[] = [];
+  academy.deps.areaPreview = async (areaKey, opts) => {
+    aSeen.push(opts);
+    return { areaKey, areaLabel: 'Lenton, Nottingham', fellBack: false, bedrooms: 3, samples: 14 };
+  };
+  academy.deps.leadDbPackHints = async () => ({ bedrooms: 2, mainAreaKey: null });
+  await areaPreviewOp(academy.deps, { areaKey: 'NG7' });
+  assert.deepEqual(aSeen, [undefined]);
+});
