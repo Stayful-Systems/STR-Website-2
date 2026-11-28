@@ -4,14 +4,15 @@
 
 job.json (written by src/lib/ad-packs/example-step.ts):
     { "pdf": "example.pdf", "out_dir": "out/pages", "first": 1, "last": 4, "dpi": 144,
-      "stamp": "Example report", "pound": ["£"],
+      "stamp": "Example report", "pound": ["£"], "percent": true,
       "targets": [ { "id": "comparables", "headings": ["Other listings", ...] }, ... ],
       "brand_colour": "#RRGGBB" }
 
 What it does, in the sandbox, with poppler-utils:
   1. pdftoppm -r <dpi> -f <first> -l <last> -png      the pages as pictures (2x)
   2. pdftotext -bbox-layout                          the exact box of every word the PDF drew
-  3. every word carrying a £ (and a bare "£" with the number after it) is blurred until it cannot be read
+  3. every word carrying a £ (and a bare "£" with the number after it), and with "percent" every percentage
+     ("15%", and a bare "%" with the number before it), is blurred until it cannot be read
   4. "Example report" is stamped on every page
   5. the loupe's three stops are found from the section headings
 Writes <out_dir>/page-N.png and <out_dir>/pages.json:
@@ -75,6 +76,27 @@ def pound_boxes(lines, marks=("£",)):
                     box["x1"] = max(box["x1"], nxt["x1"])
                     box["y0"] = min(box["y0"], nxt["y0"])
                     box["y1"] = max(box["y1"], nxt["y1"])
+                out.append(box)
+    return out
+
+
+PERCENT_RE = re.compile(r"\d[\d.,]*\s*%")
+
+
+def percent_boxes(lines):
+    """The percentage boxes to blur on one page (Zac, 28 Nov: fee and occupancy percentages are figures too):
+    every word with a number then "%" in it, and a bare "%" together with the number word before it."""
+    out = []
+    for words in lines:
+        for i, w in enumerate(words):
+            if PERCENT_RE.search(w["text"]):
+                out.append(dict(w))
+            elif w["text"].strip() == "%" and i > 0 and re.search(r"\d", words[i - 1]["text"]):
+                prev = words[i - 1]
+                box = dict(w)
+                box["x0"] = min(box["x0"], prev["x0"])
+                box["y0"] = min(box["y0"], prev["y0"])
+                box["y1"] = max(box["y1"], prev["y1"])
                 out.append(box)
     return out
 
@@ -178,6 +200,8 @@ def run_job(job_path):
     for i, (raw, page) in enumerate(zip(raws, pages), start=1):
         img = Image.open(os.path.join(out_dir, raw)).convert("RGB")
         boxes = pound_boxes(page["lines"], tuple(job.get("pound", ["£"])))
+        if job.get("percent", True):
+            boxes += percent_boxes(page["lines"])
         for b in boxes:
             blur_region(img, scale_box(b, page["width"], page["height"], img.width, img.height))
         stamp(img, job.get("stamp", "Example report"), job.get("brand_colour", "#1F3A5F"))

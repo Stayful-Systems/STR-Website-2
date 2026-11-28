@@ -16,7 +16,8 @@
  *
  * MASKING (Zac: "choose the robust option"). The £ figures are blurred in the render sandbox, not guessed in image
  * space: poppler's `pdftotext -bbox-layout` gives the exact box of every word the PDF drew, and
- * ad-render/example_pages.py blurs the box of every word that carries a £ (EXAMPLE_MASK.pound), stamps "Example report"
+ * ad-render/example_pages.py blurs the box of every word that carries a £ (EXAMPLE_MASK.pound) and every percentage
+ * (EXAMPLE_MASK.percent), stamps "Example report"
  * on every page, and finds the loupe's three stops from the section headings (EXAMPLE_MASK.targets). The positions come
  * from the PDF itself, so nothing in the react-pdf components (and nothing in a customer's real report) changes.
  *
@@ -35,6 +36,8 @@ export const EXAMPLE_MASK = {
   stamp: EXAMPLE_STAMP,
   /** Every word carrying one of these is blurred (55c decision 1: blur every £ figure). */
   pound: ['£'],
+  /** Every percentage is blurred too (Zac, 28 Nov: "Management 15%", "Platform fees 15%", occupancy). */
+  percent: true,
   /** The loupe's three stops, in order, each found by the first heading that matches on any page. */
   targets: [
     { id: 'comparables', headings: ['Other listings', 'How it stacks up against the neighbours'] },

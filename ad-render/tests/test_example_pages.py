@@ -14,6 +14,7 @@ XHTML = """<html><body><doc>
 <line xMin="40" yMin="100" xMax="300" yMax="112"><word xMin="40" yMin="100" xMax="90" yMax="112">Gross</word><word xMin="92" yMin="100" xMax="140" yMax="112">revenue</word><word xMin="200" yMin="100" xMax="260" yMax="112">&#163;31,200</word></line>
 <line xMin="40" yMin="140" xMax="300" yMax="152"><word xMin="40" yMin="140" xMax="80" yMax="152">Net</word><word xMin="200" yMin="140" xMax="206" yMax="152">£</word><word xMin="207" yMin="140" xMax="250" yMax="152">1,950</word></line>
 <line xMin="40" yMin="300" xMax="300" yMax="312"><word xMin="40" yMin="300" xMax="120" yMax="312">OCCUPANCY</word><word xMin="200" yMin="300" xMax="230" yMax="312">71%</word></line>
+<line xMin="40" yMin="340" xMax="300" yMax="352"><word xMin="40" yMin="340" xMax="120" yMax="352">Management</word><word xMin="200" yMin="340" xMax="215" yMax="352">15</word><word xMin="216" yMin="340" xMax="224" yMax="352">%</word></line>
 </block></flow></page>
 <page width="595.0" height="842.0"><flow><block>
 <line xMin="40" yMin="200" xMax="300" yMax="212"><word xMin="40" yMin="200" xMax="80" yMax="212">Other</word><word xMin="82" yMin="200" xMax="140" yMax="212">listings</word></line>
@@ -42,9 +43,21 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(boxes[0]["text"], "£31,200")
         # A bare "£" takes the number after it.
         self.assertEqual(boxes[1]["x1"], 250.0)
-        # Occupancy and the section names stay readable.
+        # Percentages are percent_boxes' job; the section names stay readable.
         self.assertFalse(any("%" in b["text"] or "OCCUPANCY" in b["text"] for b in boxes))
         self.assertEqual(ep.pound_boxes(pages[1]["lines"]), [])
+
+    def test_every_percentage_is_masked_and_the_labels_stay(self):
+        pages = ep.parse_bbox(XHTML)
+        boxes = ep.percent_boxes(pages[0]["lines"])
+        self.assertEqual(len(boxes), 2)
+        self.assertEqual(boxes[0]["text"], "71%")
+        # A bare "%" takes the number before it.
+        self.assertEqual((boxes[1]["x0"], boxes[1]["x1"]), (200.0, 224.0))
+        self.assertFalse(any(b["text"] in ("OCCUPANCY", "Management") for b in boxes))
+        self.assertEqual(ep.percent_boxes(pages[1]["lines"]), [])
+        # A word with no number before the % is left alone.
+        self.assertEqual(ep.percent_boxes([[{"x0": 0, "y0": 0, "x1": 1, "y1": 1, "text": "%"}]]), [])
 
     def test_targets_come_from_the_headings_in_order(self):
         t = ep.find_targets(ep.parse_bbox(XHTML), SPECS)

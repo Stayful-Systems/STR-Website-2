@@ -167,6 +167,7 @@ async function makeExample(deps: RenderDeps, ex: ExampleDeps, row: RenderRow, pa
     dpi: EXAMPLE_PAGES.dpi,
     stamp: EXAMPLE_MASK.stamp,
     pound: [...EXAMPLE_MASK.pound],
+    percent: EXAMPLE_MASK.percent,
     targets: EXAMPLE_MASK.targets.map((t) => ({ id: t.id, headings: [...t.headings] })),
     brand_colour: normaliseColour(brand.colour ?? DEFAULT_BRAND_COLOUR),
   };

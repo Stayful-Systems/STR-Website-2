@@ -114,6 +114,7 @@ test('the example run: "Example property, <area>" at the representative postcode
   // The job asks for the £ blur, the stamp and the three loupe stops.
   const job = JSON.parse(new TextDecoder().decode(r.sandboxes.created[0].sandbox.files.get(EXAMPLE_JOB_PATH)!));
   assert.deepEqual(job.pound, ['£']);
+  assert.equal(job.percent, true, 'every percentage is blurred too');
   assert.equal(job.stamp, 'Example report');
   assert.equal(job.dpi, 144);
   assert.deepEqual(job.targets.map((t: { id: string }) => t.id), ['comparables', 'occupancy', 'demand']);
@@ -212,8 +213,9 @@ test('the example input and the made-safe result: no real address, title or emai
   assert.equal(strippedFromRow({ raw_response: { nope: true } }), null);
 });
 
-test('the mask asks for every £ figure and the stamp, never the occupancy or the section names', () => {
+test('the mask asks for every £ figure, every percentage and the stamp, never the section names', () => {
   assert.deepEqual([...EXAMPLE_MASK.pound], ['£']);
+  assert.equal(EXAMPLE_MASK.percent, true);
   assert.equal(EXAMPLE_MASK.stamp, 'Example report');
   for (const t of EXAMPLE_MASK.targets) for (const h of t.headings) assert.ok(!h.includes('£'));
 });
