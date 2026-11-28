@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_MIN_AREA_SAMPLES, NET_INCLUDES_MANAGEMENT_FEE, chooseSource, matchArea, modalGroup, parseAreaKey, parseMinAreaSamples, type AreaOption } from './area.ts';
+import { DEFAULT_MIN_AREA_SAMPLES, NET_INCLUDES_MANAGEMENT_FEE, chooseSource, chooseSourceFor, matchArea, modalGroup, parseAreaKey, parseMinAreaSamples, type AreaOption } from './area.ts';
 import type { MarketBedroomAgg } from '../market/types.ts';
 
 const opt = (o: Partial<AreaOption> & Pick<AreaOption, 'areaKey' | 'level' | 'areaName' | 'samples'>): AreaOption => ({
@@ -161,4 +161,25 @@ test('the generator never triggers the house-paid long-let lookup (it also runs 
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('./area-server.ts', import.meta.url), 'utf8');
   assert.ok(!/getAreaLongLetRent\s*\(/.test(src), 'area-server.ts must not call getAreaLongLetRent');
+});
+
+test('chooseSourceFor (Batch 55 step 5): the preferred bedroom count when it has enough reports, district then area, else chooseSource', () => {
+  const district = { by_bedrooms: [g(2, 6), g(3, 2)] };
+  const area = { by_bedrooms: [g(3, 14), g(2, 5), g(1, 9)] };
+  // No preference: exactly chooseSource.
+  for (const bedrooms of [undefined, null]) {
+    const plain = chooseSourceFor({ district, area, minSamples: 5, bedrooms });
+    assert.deepEqual(plain, { ...chooseSource({ district, area, minSamples: 5 }), preferred: false });
+  }
+  // 2 beds: the district has 6 reports at 2.
+  const two = chooseSourceFor({ district, area, minSamples: 5, bedrooms: 2 });
+  assert.deepEqual([two?.level, two?.group.bedrooms, two?.fellBack, two?.preferred], ['district', 2, false, true]);
+  // 1 bed: the district has none, the area has 9: the area, as a fall-back.
+  const one = chooseSourceFor({ district, area, minSamples: 5, bedrooms: 1 });
+  assert.deepEqual([one?.level, one?.group.bedrooms, one?.fellBack, one?.preferred], ['area', 1, true, true]);
+  // 3 beds: too thin in the district (2), enough in the area.
+  assert.equal(chooseSourceFor({ district, area, minSamples: 5, bedrooms: 3 })?.level, 'area');
+  // 5 beds: nowhere: the most common count, as before.
+  const five = chooseSourceFor({ district, area, minSamples: 5, bedrooms: 5 });
+  assert.deepEqual([five?.level, five?.group.bedrooms, five?.preferred], ['district', 2, false]);
 });

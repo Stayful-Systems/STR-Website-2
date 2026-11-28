@@ -123,3 +123,71 @@ test('a lead database pack that reaches preview calls onLeadDbPackGenerated; an 
   assert.ok(boom.logs.some((l) => l.event === 'pack_notice_not_marked' && l.fields.code === 'error'));
   assert.ok(!JSON.stringify(boom.logs).includes('secret'));
 });
+
+// ── Batch 55 step 5 (Phase 1, 55c A1 and A6) ──
+
+test('a lead database pack asks the market data for the lowest pushed bedroom count; the Academy route never does', async () => {
+  const h = harness();
+  const asked: unknown[] = [];
+  const area = h.deps.areaFigureSource;
+  h.deps.areaFigureSource = async (a) => {
+    asked.push(a);
+    return area(a);
+  };
+  ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb({ bedrooms: 2 }) }));
+  assert.deepEqual(asked[0], { areaKey: 'NG7', minSamples: 5, bedrooms: 2 });
+
+  const academy = harness();
+  const seen: unknown[] = [];
+  academy.deps.areaFigureSource = async (a) => {
+    seen.push(a);
+    return { areaKey: 'NG7', areaLabel: 'Lenton, Nottingham', level: 'district', fellBack: false, bedrooms: 3, agg: { bedrooms: 3, sample_count: 14, avg_adr: 100, avg_occupancy: 70, avg_gross_revenue: 40000, avg_net_revenue: 20000, avg_property_value_low: null, avg_property_value_high: null }, samples: 14 };
+  };
+  ok(await academy.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input({ bedrooms: 2 }) }));
+  assert.deepEqual(seen[0], { areaKey: 'NG7', minSamples: 5 }, 'the Academy route asks exactly as before');
+  // No pushed range on the lead database route: as before too.
+  const plain = harness();
+  const plainSeen: unknown[] = [];
+  const plainArea = plain.deps.areaFigureSource;
+  plain.deps.areaFigureSource = async (a) => {
+    plainSeen.push(a);
+    return plainArea(a);
+  };
+  ok(await plain.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb() }));
+  assert.deepEqual(plainSeen[0], { areaKey: 'NG7', minSamples: 5 });
+});
+
+test('the pack’s bedroom count and pinned brand come from what the market data chose and the calculator settings', async () => {
+  const h = harness();
+  h.area.result = { ...(h.area.result as Exclude<typeof h.area.result, { error: string }>), bedrooms: 2 };
+  const r = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb({ bedrooms: 2, brand: { company: 'Harbour & Pine', logoUrl: 'https://cdn.example.test/hp.png', brandColour: '#1f4e79', feePct: 18, areas: ['Leicester', 'Loughborough'], photoUrl: null } }) }));
+  const pack = await h.store.getPack(OWNER_A);
+  assert.equal(pack?.bedrooms, 2);
+  const ads = await h.store.listAds(OWNER_A, r.packId);
+  const brand = ads.find((a) => a.angle === '5b')?.texts.brand;
+  assert.equal(brand?.company, 'Harbour & Pine');
+  assert.equal(brand?.colour, '#1f4e79');
+  assert.equal(brand?.logoRef, 'https://cdn.example.test/hp.png');
+  assert.equal(brand?.bedrooms, 2);
+  assert.match(brand?.feeSentence ?? '', /18%/);
+});
+
+test('a bedroom count outside 0 to 10 is invalid input', async () => {
+  const h = harness();
+  for (const bedrooms of [-1, 11, 2.5]) assert.equal(code(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb({ bedrooms }) })), 'invalid_input', String(bedrooms));
+});
+
+test('A6: every lead database ad records its concept and format; Academy ads carry neither', async () => {
+  const h = harness();
+  const r = ok(await h.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: leadDb() }));
+  const ads = await h.store.listAds(OWNER_A, r.packId);
+  assert.deepEqual(
+    ads.map((a) => [a.angle, a.conceptId, a.format]).sort(),
+    [['17', '17-v1', 'type_cards'], ['3a', '3a-v1', 'type_cards'], ['5b', '5b-v1', 'notice_video']],
+  );
+  const academy = harness();
+  const ra = ok(await academy.engine.generatePack({ ownerId: OWNER_A, by: 'operator', input: input() }));
+  for (const a of await academy.store.listAds(OWNER_A, ra.packId)) {
+    assert.ok(!('conceptId' in a) && !('format' in a), 'an Academy row has no concept or format keys at all');
+  }
+});

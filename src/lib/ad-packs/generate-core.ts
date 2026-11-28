@@ -55,6 +55,7 @@ import { NET_INCLUDES_MANAGEMENT_FEE } from './area.ts';
 import { runChecks, type CheckInput, type ChecksOutput } from './checks.ts';
 import { ANGLES, operatorCode as allocateOperatorCode, packCode, type Angle } from './codes.ts';
 import { cleanLines } from './captions.ts';
+import { conceptFor } from './concepts.ts';
 import { buildFigure, type Figure, type FigureAgg } from './figures.ts';
 import { AD_ROUTES, type AdRoute } from './eligibility.ts';
 import { adLink, adName } from './links.ts';
@@ -197,7 +198,11 @@ export type GenerateBrand = {
 export type GenerateInput = {
   /** A market area key: a district ("NG7") or a postcode area ("NG"). */
   areaKey: string;
-  /** Reserved: the most common bedroom count of the area is always used (areaFigureSource). */
+  /**
+   * Batch 55 step 5 (55c A1): the lead database route only, the bedroom count the figure should rest on (the lowest in
+   * the customer's pushed range). Used when the area has enough reports at that count, else the area's most common
+   * count as before. Ignored on the Academy route, which always uses the most common count.
+   */
   bedrooms?: number | null;
   /** The operator's own photos, 4 at most. */
   photos: string[];
@@ -272,7 +277,8 @@ export type GenerateDeps = {
   now: () => Date;
   renderImages: ImageRenderer;
   upload: FileUploader;
-  areaFigureSource: (a: { areaKey: string; minSamples: number }) => Promise<AreaSourceResult>;
+  /** `bedrooms` is passed only on the lead database route with a pushed bedroom range (55c A1); absent, the most common count. */
+  areaFigureSource: (a: { areaKey: string; minSamples: number; bedrooms?: number }) => Promise<AreaSourceResult>;
   pricing?: Pricing;
   /** Log a line: an event name, a pack id and a code. Never anything else. */
   log?: (event: string, fields: { packId?: string; code?: string }) => void;
@@ -474,12 +480,18 @@ function validate(req: GenerateRequest): boolean {
   if (typeof i.domain !== 'string' || !HOST_RE.test(i.domain.trim().toLowerCase())) return false;
   if (i.voiceKey !== undefined && !isVoiceKey(i.voiceKey)) return false;
   if (i.route !== undefined && !(AD_ROUTES as readonly string[]).includes(i.route)) return false;
+  if (i.bedrooms !== undefined && i.bedrooms !== null && !(Number.isInteger(i.bedrooms) && i.bedrooms >= 0 && i.bedrooms <= 10)) return false;
   if (i.route === 'leaddb') {
     if (typeof i.sitePath !== 'string' || !SITE_PATH_RE.test(i.sitePath)) return false;
   } else if (i.sitePath !== undefined) {
     return false;
   }
   return true;
+}
+
+/** Batch 55 step 5: the bedroom preference handed to areaFigureSource, on the lead database route only (empty otherwise). */
+function preferredBedroomsOf(input: GenerateInput, route: AdRoute): { bedrooms?: number } {
+  return route === 'leaddb' && typeof input.bedrooms === 'number' ? { bedrooms: input.bedrooms } : {};
 }
 
 /** The file names an image ad will have: 3a-card1-4x5.png (mirrors imageName in images.tsx; a test pins it). */
@@ -832,7 +844,7 @@ export function createAdPackEngine(deps: GenerateDeps) {
       const settings = await store.readSettings();
       // The market snapshot is cached and costs nothing to read (no paid lookup runs here), so it is resolved first: the brand hash uses the area the pack will STORE (after
       // a fall-back from a district to its postcode area), so asking for the same district again is not a "brand change".
-      const source = await deps.areaFigureSource({ areaKey: input.areaKey, minSamples: settings.minAreaSamples });
+      const source = await deps.areaFigureSource({ areaKey: input.areaKey, minSamples: settings.minAreaSamples, ...preferredBedroomsOf(input, route) });
       const hash = brandHash({ ...input.brand, photos: input.photos, areaKey: 'error' in source ? input.areaKey : source.areaKey });
       regenerate = pack !== null && pack.generatedAt !== null;
       version = regenerate && pack ? pack.version + 1 : 1;
@@ -978,6 +990,8 @@ export function createAdPackEngine(deps: GenerateDeps) {
         leadForm: p.leadForm,
         // The 5b slot is 'queued' once the pack is good enough to render ('preview'), else 'coming' (no video is made for a failed pack).
         files: { images: imagesByAngle.get(p.angle) ?? [], video: p.video === 'coming' ? (status === 'preview' ? { status: 'queued' } : { status: 'coming' }) : null } satisfies AdFiles,
+        // Batch 55 step 5 (55c A6): the lead database route records each ad's concept and format; Academy rows carry neither.
+        ...(route === 'leaddb' ? conceptFor(p.angle) : {}),
       }));
       await store.clearAdsOfVersion(ownerId, taken.id, version);
       const stored = await store.insertAds(ownerId, newAds);

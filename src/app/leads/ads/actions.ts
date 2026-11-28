@@ -7,7 +7,8 @@ import { ownerIdOrNull } from '@/lib/leads/scope';
 import { isAdminEmail } from '@/lib/admin';
 import { recordActivity } from '@/lib/activity/log';
 import { packEligibility } from '@/lib/ad-packs/eligibility-server';
-import { areaPreview } from '@/lib/ad-packs/area-server';
+import { areaPreview, listDistricts, matchArea } from '@/lib/ad-packs/area-server';
+import { readPushedBedrooms } from '@/lib/leaddb/ad-profile-server';
 import { approvePack, changeVoice, generatePack, listPackForOwner, retryVideo } from '@/lib/ad-packs/generate-server';
 import { createLiveStore, signedDownloadUrl, uploadFile } from '@/lib/ad-packs/store-server';
 import { countUploads, signedPreviewUrl } from '@/lib/ad-packs/files-server';
@@ -35,7 +36,7 @@ function liveDeps(): AdsDeps {
   return {
     session,
     eligibility: (userId, opts) => packEligibility(userId, opts),
-    areaPreview: (areaKey) => areaPreview({ areaKey }),
+    areaPreview: (areaKey, opts) => areaPreview(typeof opts?.bedrooms === 'number' ? { areaKey, bedrooms: opts.bedrooms } : { areaKey }),
     listPack: listPackForOwner,
     generate: generatePack,
     approve: approvePack,
@@ -48,6 +49,11 @@ function liveDeps(): AdsDeps {
     previewUrl: signedPreviewUrl,
     record: (ownerId, kind, opts) => recordActivity(ownerId, kind, { extras: opts.extras, ...(opts.dedupeKey ? { dedupeKey: opts.dedupeKey } : {}) }),
     newId: randomUUID,
+    // Batch 55 step 5 (55c A1): the lead database route's default area (the main area, first of the calculator's areas) and bedroom count.
+    leadDbPackHints: async (ownerId, areas) => {
+      const [bedrooms, options] = await Promise.all([readPushedBedrooms(ownerId), areas.length > 0 ? listDistricts() : Promise.resolve([])]);
+      return { bedrooms, mainAreaKey: areas.length > 0 ? (matchArea(areas, options)?.areaKey ?? null) : null };
+    },
   };
 }
 

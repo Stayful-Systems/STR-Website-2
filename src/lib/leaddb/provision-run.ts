@@ -17,6 +17,7 @@
  *   details. The one log line the caller may write carries a code.
  */
 import { parseAdAccountState, type AdAccountState, type LeadDbAdAccount } from './ad-account.ts';
+import { parseAdProfile, type AdProfile } from './ad-profile.ts';
 import { asObject, parseLdCustomerId } from './inbound.ts';
 
 export interface ProvisionInput {
@@ -25,6 +26,11 @@ export interface ProvisionInput {
   company: string;
   phone: string | null;
   state: AdAccountState;
+  /**
+   * Batch 55 step 5 (contract sections 9 and 13): the customer's brand, optional. Absent or null: nothing about the
+   * brand changes (as in v1). A bad profile makes the whole body a 400, and nothing is applied.
+   */
+  profile?: AdProfile | null;
 }
 
 export type ProvisionCode = 'created' | 'exists' | 'bad_request' | 'has_website' | 'conflict' | 'server_error';
@@ -56,6 +62,12 @@ export interface ProvisionDeps {
    * (runProvision swallows it anyway), and a failure never fails the provision.
    */
   settleMember?(ownerId: string, isNew: boolean): Promise<void>;
+  /**
+   * Batch 55 step 5: fills the calculator from a pushed profile (ad-profile-run.ts), once the site exists. Called only
+   * when the body carried a profile. A database error throws, so the provision answers server_error and the lead
+   * database repeats it (a repeat is safe: 'exists', and the profile is applied then).
+   */
+  applyProfile?(ownerId: string, profile: AdProfile): Promise<unknown>;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -87,7 +99,13 @@ export function parseProvisionBody(raw: unknown): ProvisionInput | null {
   }
   const state = parseAdAccountState(r.state);
   if (!state) return null;
-  return { ldCustomerId, email, company, phone, state };
+  // Batch 55 step 5: optional; present (not null) it must pass the profile check, or the whole body is refused.
+  let profile: AdProfile | null = null;
+  if (r.profile !== undefined && r.profile !== null) {
+    profile = parseAdProfile(r.profile);
+    if (!profile) return null;
+  }
+  return { ldCustomerId, email, company, phone, state, ...(profile ? { profile } : {}) };
 }
 
 export async function runProvision(deps: ProvisionDeps, input: ProvisionInput): Promise<ProvisionOutcome> {
@@ -119,6 +137,7 @@ export async function runProvision(deps: ProvisionDeps, input: ProvisionInput): 
   // 4. The calculator site.
   const site = await deps.ensureSite({ ownerId, company: input.company, email: input.email, phone: input.phone });
   if (!site.ok) return site.reason === 'has_website' ? fail(409, 'has_website') : fail(500, 'server_error');
+  await applyProfile(deps, ownerId, input);
   return ok('created');
 }
 
@@ -138,5 +157,12 @@ async function finishExisting(deps: ProvisionDeps, ownerId: string, input: Provi
   const site = await deps.ensureSite({ ownerId, company: input.company, email: input.email, phone: input.phone });
   // A site-mode website that appeared since is not this call's problem: the account exists.
   if (!site.ok && site.reason === 'failed') return fail(500, 'server_error');
+  if (site.ok) await applyProfile(deps, ownerId, input);
   return ok('exists');
+}
+
+/** Batch 55 step 5: the profile inside provision, once the calculator site exists. A throw reaches the route (server_error). */
+async function applyProfile(deps: ProvisionDeps, ownerId: string, input: ProvisionInput): Promise<void> {
+  if (!input.profile || !deps.applyProfile) return;
+  await deps.applyProfile(ownerId, input.profile);
 }

@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { LOGO_MAX_BYTES } from '@/lib/funnels/brand';
 import { deleteLogoIfOurs, uploadLogo } from '@/lib/funnels/storage';
+import { changedProfileFields } from '@/lib/leaddb/ad-profile';
+import { markCalculatorFieldsEdited } from '@/lib/leaddb/ad-profile-server';
 import { settingsPatchFor } from '@/lib/websites/calculator-setup';
 import { saveSettings } from '@/lib/websites/store-server';
 import type { WebsiteState } from './actions';
@@ -27,6 +29,11 @@ import { validateAreas, validateCompany, validateContact } from './steps';
  *
  * Nothing here logs or records a name, email, phone or address, and no setup
  * step is logged: a calculator has no setup to finish.
+ *
+ * Batch 55 step 5 (55c A1): a save marks each of logo, colour, areas and fee
+ * that the customer really CHANGED (websites.settings_edited), before the
+ * settings are written, so a later push from the lead database never fills
+ * that field again: the customer's own choice always wins.
  */
 
 const DENIAL = {
@@ -61,6 +68,7 @@ export async function saveCalculatorBrandAction(_prev: WebsiteState, formData: F
 
   const gate = settingsPatchFor(actor.site.mode, { ...company.value, ...areas.value, ...contact.value });
   if (!gate.ok) return { error: gate.message };
+  await markCalculatorFieldsEdited(actor.userId, changedProfileFields(actor.site.settings, gate.patch));
   const saved = await saveSettings(actor.userId, gate.patch);
   if (!saved.ok) return { error: 'We could not save that just now. Please try again.' };
   refresh();
@@ -84,6 +92,7 @@ export async function uploadCalculatorLogoAction(_prev: WebsiteState, formData: 
   if (!result.ok || !result.url) return { error: result.error ?? 'That image could not be uploaded.' };
 
   const gate = settingsPatchFor(actor.site.mode, { logoUrl: result.url });
+  if (gate.ok) await markCalculatorFieldsEdited(actor.userId, ['logoUrl']);
   const saved = gate.ok ? await saveSettings(actor.userId, gate.patch) : null;
   if (!saved || !saved.ok) {
     // The save failed, so the file just stored is unreferenced: take it out again.

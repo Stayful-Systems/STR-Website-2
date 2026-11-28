@@ -1,5 +1,6 @@
 -- Batch 55 (Part A) checks: websites.mode, ad_packs.route, the two lead database route tables and the three seeds.
 -- Batch 55 step 2 checks: leaddb_ad_deliveries, the unpaid hold and pack notice columns, leads.ld_stage_as_of.
+-- Batch 55 step 5 (Phase 1) checks: the profile columns, websites.settings_edited, ad_pack_ads.concept_id / format.
 -- Run AFTER schema.sql: by hand in the Supabase SQL editor, or by CI (job "schema").
 -- Read only: it inserts nothing. A failing check raises; success prints a notice.
 begin;
@@ -111,6 +112,26 @@ begin
   select count(*) into n from information_schema.columns
    where table_schema = 'public' and table_name = 'leads' and column_name = 'ld_stage_as_of' and data_type = 'timestamp with time zone';
   if n <> 1 then raise exception 'leads.ld_stage_as_of (timestamptz) must exist'; end if;
+
+  -- ── Batch 55 step 5 (Phase 1) ──
+  select count(*) into n from information_schema.columns
+   where table_schema = 'public' and table_name = 'leaddb_ad_accounts'
+     and ((column_name = 'profile_as_of' and data_type = 'timestamp with time zone') or (column_name = 'profile_pushed' and data_type = 'jsonb'));
+  if n <> 2 then raise exception 'leaddb_ad_accounts.profile_as_of (timestamptz) and profile_pushed (jsonb) must exist (found %)', n; end if;
+  select count(*) into n from information_schema.columns
+   where table_schema = 'public' and table_name = 'websites' and column_name = 'settings_edited'
+     and data_type = 'jsonb' and is_nullable = 'NO' and column_default like '''{}''%';
+  if n <> 1 then raise exception 'websites.settings_edited (jsonb, not null, default {}) must exist'; end if;
+  select count(*) into n from information_schema.columns
+   where table_schema = 'public' and table_name = 'ad_pack_ads' and column_name in ('concept_id', 'format') and data_type = 'text' and is_nullable = 'YES';
+  if n <> 2 then raise exception 'ad_pack_ads.concept_id and format (text, nullable) must exist (found %)', n; end if;
+  select count(*) into n from pg_constraint
+   where conrelid = 'public.ad_pack_ads'::regclass and conname = 'ad_pack_ads_format_check'
+     and pg_get_constraintdef(oid) like '%phone_recording%' and pg_get_constraintdef(oid) like '%report_carousel%'
+     and pg_get_constraintdef(oid) like '%loupe%' and pg_get_constraintdef(oid) like '%notice_video%' and pg_get_constraintdef(oid) like '%type_cards%';
+  if n <> 1 then raise exception 'ad_pack_ads_format_check (the five formats) must exist'; end if;
+  select count(*) into n from pg_constraint where conrelid = 'public.ad_pack_ads'::regclass and conname = 'ad_pack_ads_concept_check';
+  if n <> 1 then raise exception 'ad_pack_ads_concept_check must exist'; end if;
 
   raise notice 'batch55 smoke: ok';
 end $$;

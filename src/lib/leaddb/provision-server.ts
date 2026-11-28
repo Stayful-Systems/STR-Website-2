@@ -4,6 +4,7 @@ import { createAdminClient } from '../supabase/admin';
 import { emailKey } from '../supabase/email-key';
 import { ensureCalculatorSite } from '../websites/store-server';
 import { applyAdAccountState, createAdAccount, readAdAccount, readAdAccountByCustomerId } from './ad-account-server';
+import { applyAdProfile } from './ad-profile-server';
 import type { ProvisionDeps } from './provision-run';
 
 /**
@@ -93,6 +94,9 @@ export function liveProvisionDeps(): ProvisionDeps {
     },
 
     ensureSite: (input) => ensureCalculatorSite(input),
+
+    // Batch 55 step 5: the profile inside provision fills the calculator exactly as the profile call does.
+    applyProfile: (ownerId, profile) => applyAdProfile(ownerId, profile),
 
     // Batch 55 step 2: the first sign-in lands on the ads, not the /welcome quiz: the management stamp, written only
     // while signup_path is null. Written directly, NOT through stampManagement: that records mc_signup and sends a Meta

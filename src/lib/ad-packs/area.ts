@@ -125,6 +125,30 @@ export function chooseSource(input: {
   return null;
 }
 
+/**
+ * Batch 55 step 5 (55c A1): the same choice with a preferred bedroom count (the lowest in a lead database customer's
+ * pushed range). The district's group at that count when it has `minSamples` reports, else the postcode area's, else
+ * exactly chooseSource (the most common count). `bedrooms` undefined or null is chooseSource unchanged.
+ */
+export function chooseSourceFor(input: {
+  district: { by_bedrooms: readonly MarketBedroomAgg[] } | null;
+  area: { by_bedrooms: readonly MarketBedroomAgg[] } | null;
+  minSamples: number;
+  bedrooms?: number | null;
+}): (ChosenSource & { preferred: boolean }) | null {
+  const b = input.bedrooms;
+  if (typeof b === 'number' && Number.isInteger(b)) {
+    const min = Number.isFinite(input.minSamples) && input.minSamples > 0 ? input.minSamples : DEFAULT_MIN_AREA_SAMPLES;
+    const at = (groups: readonly MarketBedroomAgg[] | undefined) => (groups ?? []).find((g) => g.bedrooms === b && g.sample_count >= min) ?? null;
+    const d = input.district ? at(input.district.by_bedrooms) : null;
+    if (d) return { level: 'district', group: d, fellBack: false, preferred: true };
+    const a = input.area ? at(input.area.by_bedrooms) : null;
+    if (a) return { level: 'area', group: a, fellBack: input.district !== null, preferred: true };
+  }
+  const chosen = chooseSource(input);
+  return chosen ? { ...chosen, preferred: false } : null;
+}
+
 /** The kind of key: 'NG7' is a district, 'NG' a postcode area, anything else null. Upper-cased. */
 export function parseAreaKey(raw: unknown): { key: string; level: 'district' | 'area'; areaCode: string } | null {
   const key = String(raw ?? '').trim().toUpperCase();
