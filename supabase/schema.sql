@@ -10823,3 +10823,50 @@ end $$;
 alter table public.ad_pack_renders drop constraint if exists ad_pack_renders_pack_version_key;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 55 step 5 (Phase 3): nationwide and multi-area coverage
+-- =========================
+-- A lead database pack (ad_packs.route = 'leaddb') says where the customer finds
+-- landlords: anywhere in the UK (the default on the start screen), or up to 10
+-- areas they pick. The ads say which ("Landlords across the UK", or "Landlords in
+-- Leeds, York and Harrogate" plus one sentence naming every area). Every statement
+-- is add column if not exists, create or replace, or a guarded constraint, so a
+-- re-run changes nothing. No table, index, policy or grant; one small immutable
+-- function for the entry-length check. The Academy route is unchanged: its packs
+-- keep coverage null.
+--
+--   ad_packs.coverage        null (Academy, and lead database packs made before
+--                            this block: read as 'areas' with [area_label]),
+--                            'uk' (anywhere in the UK) or 'areas'.
+--   ad_packs.coverage_areas  the place names the ads say, in the order chosen
+--                            (the first is the area the example figure comes
+--                            from). Empty for 'uk' and for the Academy. At most
+--                            10, each 1 to 80 characters.
+--
+-- area_key / area_label keep meaning "the area the example figure comes from".
+-- leads.status and leads.crm_pushed_at are NEVER written by this. Neither column
+-- is in ACCESS_COLUMNS.
+
+alter table public.ad_packs add column if not exists coverage text;
+alter table public.ad_packs add column if not exists coverage_areas text[] not null default '{}';
+alter table public.ad_packs drop constraint if exists ad_packs_coverage_check;
+alter table public.ad_packs add constraint ad_packs_coverage_check
+  check (coverage is null or coverage in ('uk', 'areas'));
+-- A check constraint cannot hold a subquery, so the per-entry length rule lives in
+-- one small immutable function (create or replace: re-runnable).
+create or replace function public.ad_pack_coverage_areas_ok(a text[])
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(array_length(a, 1), 0) <= 10
+     and coalesce(array_ndims(a), 1) = 1
+     and not exists (select 1 from unnest(a) as x where x is null or char_length(x) < 1 or char_length(x) > 80)
+$$;
+alter table public.ad_packs drop constraint if exists ad_packs_coverage_areas_check;
+alter table public.ad_packs add constraint ad_packs_coverage_areas_check
+  check (public.ad_pack_coverage_areas_ok(coverage_areas));
+
+notify pgrst, 'reload schema';

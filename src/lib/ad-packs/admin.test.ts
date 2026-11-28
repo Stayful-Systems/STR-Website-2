@@ -478,7 +478,7 @@ test('a failing link-missing read says so without an error body, and the run is 
 function pack(over: Partial<PackRow> & Pick<PackRow, 'id' | 'ownerId'>): PackRow {
   return {
     websiteId: null, status: 'approved', route: 'academy', operatorCode: 'AAAAAA', version: 2, voiceKey: null, voiceChanges: 0, regenCount: 1, brandHash: 'h',
-    areaKey: 'NG7', areaLabel: 'Lenton', bedrooms: 3, figures: [], photos: [], checks: null, errorCode: null, costPence: 125,
+    areaKey: 'NG7', areaLabel: 'Lenton', coverage: null, coverageAreas: [], bedrooms: 3, figures: [], photos: [], checks: null, errorCode: null, costPence: 125,
     generatedAt: '2026-11-10T10:00:00Z', approvedAt: '2026-11-11T10:00:00Z', createdAt: '2026-11-01T10:00:00Z', updatedAt: '2026-11-11T10:00:00Z',
     ...over,
   };

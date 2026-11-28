@@ -90,6 +90,8 @@ export class MemoryAdPackStore implements AdPackStore {
       brandHash: null,
       areaKey: null,
       areaLabel: null,
+      coverage: null,
+      coverageAreas: [],
       bedrooms: null,
       figures: null,
       photos: null,

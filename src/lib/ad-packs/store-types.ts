@@ -25,6 +25,7 @@ import type { AdPackSettings } from './settings.ts';
 import type { AdVideo } from './render-store.ts';
 import type { AdRoute } from './eligibility.ts';
 import type { Look } from './ld-angles.ts';
+import type { CoverageMode } from './coverage.ts';
 
 export const PACK_STATUSES = ['draft', 'generating', 'checks_failed', 'preview', 'approved', 'failed'] as const;
 export type PackStatus = (typeof PACK_STATUSES)[number];
@@ -45,8 +46,16 @@ export type PackRow = {
   regenCount: number;
   /** brandHash() of the last generated version. */
   brandHash: string | null;
+  /** The area the example figure comes from (on the lead database route too, whatever the coverage). */
   areaKey: string | null;
   areaLabel: string | null;
+  /**
+   * Batch 55 step 5 (Phase 3): ad_packs.coverage, the lead database route only ('uk' or 'areas'); null on the Academy and
+   * on lead database packs made before it (coverage.ts coverageOfPack reads null as 'areas' with [areaLabel]).
+   */
+  coverage: CoverageMode | null;
+  /** ad_packs.coverage_areas: the place names the ads say, in the order chosen. Empty for 'uk' and the Academy. */
+  coverageAreas: string[];
   bedrooms: number | null;
   /** The example figure(s) the last version rests on (one entry, or none). */
   figures: unknown[] | null;
