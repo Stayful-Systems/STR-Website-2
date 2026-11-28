@@ -108,8 +108,9 @@ test('render kinds: the schema block adds the column, its check word for word, a
   assert.ok(m);
   assert.deepEqual(m[1].split(',').map((s) => s.trim().replace(/'/g, '')), [...RENDER_KINDS]);
   assert.match(block, /unique \(pack_id, version, kind\)/);
-  // The old key is dropped only inside the guard that adds the new one.
-  assert.match(block, /if not exists[\s\S]*add constraint ad_pack_renders_pack_version_kind_key[\s\S]*drop constraint if exists ad_pack_renders_pack_version_key;\s*end if;/);
+  // The new key is added inside its guard first; the old key is then dropped on EVERY run (not only the first),
+  // because the batch 38b block re-adds it whenever it is missing and a re-run must stay idempotent.
+  assert.match(block, /if not exists[\s\S]*add constraint ad_pack_renders_pack_version_kind_key[\s\S]*end if;\s*end \$\$;[\s\S]*\nalter table public\.ad_pack_renders drop constraint if exists ad_pack_renders_pack_version_key;/);
   // The live store's upsert names the new key.
   const live = readFileSync(new URL('./render-store-server.ts', import.meta.url), 'utf8');
   assert.match(live, /onConflict: 'pack_id,version,kind'/);

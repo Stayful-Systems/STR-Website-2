@@ -10794,8 +10794,8 @@ notify pgrst, 'reload schema';
 --                                            report page under a magnifier):
 --                                            ad-render/loupe.py
 --   unique (pack_id, version, kind) replaces unique (pack_id, version): one row
---   per kind per version. The old constraint is dropped only when the new one
---   is not there yet, in the same block, so the table is never without a key.
+--   per kind per version. The new key is added first (guarded), then the old
+--   one is dropped on every run, so the table is never without a key.
 --
 -- The example report is NEVER saved to analyser_reports: it is house spend
 -- (billed to nobody), its cost goes on ad_pack_runs like a render, and its
