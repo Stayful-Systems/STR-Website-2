@@ -1188,7 +1188,7 @@ export const SEED: readonly SeedEntry[] = [
   },
   {
     slug: 'adpack_ld_brand_from_leaddb',
-    from: 'Batch 55 step 5 (Phase 1), lead database ad route (the customer’s logo, colour, areas, fee and bedroom range come across from their lead database account into the calculator; a field the customer changes on the brand screen keeps their own choice; a logo that cannot be read means the company name only; the pack uses the main area and the lowest bedroom count)',
+    from: 'Batch 55 step 5 (Phase 1), lead database ad route (the customer’s logo, colour, areas, fee and bedroom range come across from their lead database account into the calculator; a name, colour or logo the customer sets on the ads screen’s Your brand card, or changes on the brand screen, keeps their own choice; a logo that cannot be read means the company name only; the pack uses the main area and the lowest bedroom count)',
     category: 'how_it_works',
     channels: ['view', 'chat'],
     showWhen: null,
@@ -1201,11 +1201,11 @@ export const SEED: readonly SeedEntry[] = [
       'Which bedroom size do my ads use?',
       'How do I change the areas on my calculator?',
     ],
-    answer: 'We bring your logo, brand colour, areas and fee across from your lead database account when your calculator is set up and whenever you press Make my ads, but only into parts that are still empty or still hold what came across last time. Anything you change on the brand screen stays as you set it. If we could not read your logo, your company name is shown instead; you can upload one on the brand screen. Your ads cover the whole UK unless you choose areas; their example figure uses your main area or first chosen area, at your smallest bedroom size when there is enough data.',
+    answer: 'We bring your logo, brand colour, areas and fee across from your lead database account, but only into parts that are still empty or still hold what came across last time. Anything you set yourself, such as in the Your brand card on the ads screen, stays as you set it. If we could not read your logo, your company name is shown instead; you can add one in that card. Your ads cover the whole UK unless you choose areas; their example figure uses your main area or first chosen area, at your smallest bedroom size when there is enough data.',
   },
   {
     slug: 'adpack_ld_brand_first',
-    from: 'Batch 55, lead database ad route (Make my ads needs a company name and a brand colour on the calculator; when either is missing the ads screen says which and links to the calculator page, where the customer sets it themselves)',
+    from: 'Batch 55, lead database ad route (the brand is set on the ads screen itself: a Your brand card, first in making the ads, with company name and brand colour, both needed before Make my ads works, and an optional logo; saved as the customer’s own choice, which the lead database never changes back; no logo shows the company name)',
     category: 'how_it_works',
     channels: ['view', 'chat'],
     showWhen: null,
@@ -1215,8 +1215,9 @@ export const SEED: readonly SeedEntry[] = [
       'Where do I set my brand colour for my ads?',
       'Where do I add my company name for my ads?',
       'The Make my ads button is greyed out',
+      'How do I add my logo to my ads?',
     ],
-    answer: 'Your ads are made in your own brand, so they need your company name and a brand colour first. If either is missing, the ads screen tells you which one. Press Set your branding, add it on your calculator page, then come back and press Make my ads. A logo is optional: without one, your company name is shown instead.',
+    answer: 'Your ads are made in your own brand, so they need your company name and a brand colour. You set both on the ads screen itself, in the Your brand card at the top, and the Make my ads button works once both are there. A logo is optional: add it in the same card, or your company name is shown instead. What you set there is kept, and you can change it whenever you make new ads.',
   },
   {
     slug: 'adpack_ld_coverage',
