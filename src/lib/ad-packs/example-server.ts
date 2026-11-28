@@ -6,6 +6,8 @@ import { renderReportPdf } from '../pdf/render';
 import { pdfBrand } from '../pdf/theme';
 import { sniffPhoto } from './photos.ts';
 import type { ExampleDeps } from './example-step.ts';
+import { adPackFetchImage } from './files-server';
+import { measurePng, renderCarousel, renderPhoneFrames } from './ld-images';
 
 /**
  * Batch 55 step 5 (Phase 2, 55c A2): the live wiring of the example report step (example-step.ts).
@@ -46,6 +48,10 @@ export function createLiveExampleDeps(): ExampleDeps {
       }
       return (data as { raw_response: unknown } | null) ?? null;
     },
+    // The 3a carousel and the 5b phone frames (ld-images.tsx), and the picture measure.
+    renderCarousel: (a) => renderCarousel({ ...a, fetchImage: adPackFetchImage }),
+    renderPhoneFrames: (a) => renderPhoneFrames({ company: a.company, brandColour: a.brandColour, logoUrl: a.logoRef, areaLabel: a.areaLabel, bedrooms: a.bedrooms, fetchImage: adPackFetchImage }),
+    measurePng,
     async renderPdf(result, brand) {
       const kind = brand.logo ? sniffPhoto(brand.logo) : null;
       const logoDataUri = brand.logo && kind ? `data:image/${kind === 'png' ? 'png' : 'jpeg'};base64,${Buffer.from(brand.logo).toString('base64')}` : undefined;
